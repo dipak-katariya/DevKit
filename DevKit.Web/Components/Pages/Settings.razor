@@ -1,0 +1,352 @@
+@page "/settings"
+@inject SettingsService SettingsSvc
+@inject TfsApiService TfsApi
+@inject ILogger<SettingsService> Logger
+
+<div style="flex:1;display:flex;flex-direction:column;max-width:800px;margin:0 auto;overflow-y:auto;width:100%;padding-bottom:20px;">
+    <div class="gpanel">
+        <div class="phead">
+            <span class="ptitle">⚙ Configuration</span>
+        </div>
+        <div class="pbody">
+            <!-- TFS Connection -->
+            <h3 style="font-size:.82rem;font-weight:700;margin-bottom:14px;color:var(--text);">TFS / Azure DevOps Connection</h3>
+            <div class="settings-grid">
+                <div class="f-row">
+                    <div class="f-label">Server URL <span class="req-badge">required</span></div>
+                    <input class="fi" @bind="tfsUrl" placeholder="https://tfs.casepoint.in/tfs/Casepoint" />
+                </div>
+                <div class="f-row">
+                    <div class="f-label">Personal Access Token <span class="req-badge">required</span></div>
+                    <input class="fi" type="password" @bind="tfsPat" placeholder="Enter PAT" />
+                </div>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:12px;">
+                <button class="btn-ghost" @onclick="SaveAndConnect" disabled="@saving">
+                    @if (saving) { <span class="spin spin-sm"></span> } else { <span>💾</span> }
+                    Save & Connect
+                </button>
+                <button class="btn-ghost" @onclick="TestConnection" disabled="@testing">
+                    @if (testing) { <span class="spin spin-sm"></span> } else { <span>🔌</span> }
+                    Test Connection
+                </button>
+            </div>
+            @if (!string.IsNullOrEmpty(statusMsg))
+            {
+                <div style="margin-top:10px;font-size:.74rem;color:@(statusOk ? "var(--green)" : "var(--red)");">@statusMsg</div>
+            }
+
+            <hr style="border:none;border-top:1px solid rgba(255,255,255,.05);margin:20px 0;" />
+
+            <!-- Team Name & Default Selections -->
+            <h3 style="font-size:.82rem;font-weight:700;margin-bottom:6px;color:var(--text);">Team & Default Selections</h3>
+            <p style="font-size:.66rem;color:var(--muted);margin-bottom:10px;">
+                Configure your team name and default selections. These auto-fill in Branch Creator and Merge Tool.
+            </p>
+            <div class="f-row" style="max-width:400px;margin-bottom:14px;">
+                <div class="f-label">Team Name</div>
+                <input class="fi" value="@teamName" @onchange="OnTeamNameChange" placeholder="e.g. FOIA, Platform, Core…" />
+                <p style="font-size:.56rem;color:var(--muted);margin-top:4px;">Used in branch naming: <code style="font-size:.56rem;color:var(--cyan);">TeamName/sprint/id_title</code></p>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+                <div class="f-row">
+                    <div class="f-label">Default Area Path</div>
+                    <GlassDropdown CssClass="fi-size"
+                                   Value="@defaultAreaPath"
+                                   Placeholder="— None —"
+                                   EmptyLabel="— None —" EmptyValue=""
+                                   Disabled="@(areas.Count==0)"
+                                   Groups="@AreaGroups"
+                                   OnChange="OnDefaultAreaChange" />
+                </div>
+                <div class="f-row">
+                    <div class="f-label">Default Sprint</div>
+                    <GlassDropdown CssClass="fi-size"
+                                   Value="@defaultSprint"
+                                   Placeholder="— None —"
+                                   EmptyLabel="— None —" EmptyValue=""
+                                   Disabled="@(iterations.Count==0)"
+                                   Groups="@SprintGroups"
+                                   OnChange="OnDefaultSprintChange" />
+                </div>
+                <div class="f-row">
+                    <div class="f-label">Default Repository</div>
+                    <GlassDropdown CssClass="fi-size"
+                                   Value="@defaultRepoId"
+                                   Placeholder="— None —"
+                                   EmptyLabel="— None —" EmptyValue=""
+                                   Disabled="@(repos.Count==0)"
+                                   Groups="@RepoGroups"
+                                   OnChange="OnDefaultRepoChange" />
+                </div>
+            </div>
+
+            <hr style="border:none;border-top:1px solid rgba(255,255,255,.05);margin:20px 0;" />
+
+            <!-- Default Project Path -->
+            <h3 style="font-size:.82rem;font-weight:700;margin-bottom:6px;color:var(--text);">Default Project Path</h3>
+            <p style="font-size:.66rem;color:var(--muted);margin-bottom:10px;">
+                Base folder where your repositories are cloned. We'll scan for <code style="font-size:.64rem;color:var(--cyan);">.git</code> folders and auto-map them to TFS repos.
+            </p>
+            <div class="f-row" style="display:flex;gap:8px;align-items:flex-end;">
+                <div style="flex:1;">
+                    <input class="fi" @bind="defaultProjectPath" placeholder="D:\Projects\..." />
+                </div>
+                <button class="btn-ghost" @onclick="ScanAndApply" disabled="@(string.IsNullOrWhiteSpace(defaultProjectPath))">
+                    🔍 Scan & Map
+                </button>
+            </div>
+            @if (!string.IsNullOrEmpty(scanMsg))
+            {
+                <div style="margin-top:8px;font-size:.7rem;color:@(scanOk ? "var(--green)" : "var(--amber)");">@scanMsg</div>
+            }
+
+            <hr style="border:none;border-top:1px solid rgba(255,255,255,.05);margin:20px 0;" />
+
+            <!-- Local Repositories (auto-detected) -->
+            <h3 style="font-size:.82rem;font-weight:700;margin-bottom:6px;color:var(--text);">Local Repositories</h3>
+            <p style="font-size:.66rem;color:var(--muted);margin-bottom:10px;">
+                Only locally cloned repositories (with <code style="font-size:.64rem;color:var(--cyan);">.git</code> folder) are shown. Used for cherry-pick and merge operations.
+            </p>
+
+            @if (localRepos.Count == 0)
+            {
+                <div class="tbl-empty">@(string.IsNullOrWhiteSpace(defaultProjectPath) ? "Set a default project path above, then click Scan & Map." : "No local git repos found. Click Scan & Map to detect.")</div>
+            }
+            else
+            {
+                <table class="repo-path-table">
+                    <thead>
+                        <tr>
+                            <th style="width:25%;">Local Folder</th>
+                            <th style="width:30%;">Mapped TFS Repo</th>
+                            <th style="width:25%;">Remote URL</th>
+                            <th>Path</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var local in localRepos)
+                        {
+                            <tr>
+                                <td>
+                                    <div style="display:flex;align-items:center;gap:6px;">
+                                        <span style="color:@(local.IsMapped ? "var(--green)" : "var(--amber)");font-size:.7rem;">●</span>
+                                        <span style="font-weight:700;">@local.FolderName</span>
+                                    </div>
+                                </td>
+                                <td>
+                                    @if (local.IsMapped)
+                                    {
+                                        <span style="font-size:.6rem;color:var(--muted);">@local.TfsProject /</span>
+                                        <span style="font-size:.68rem;font-weight:600;color:var(--accent2);">@local.TfsRepoName</span>
+                                    }
+                                    else
+                                    {
+                                        <span style="font-size:.64rem;color:var(--amber);">⚠ No TFS match</span>
+                                    }
+                                </td>
+                                <td>
+                                    <span style="font-family:var(--mono);font-size:.56rem;color:var(--muted);word-break:break-all;">
+                                        @(string.IsNullOrEmpty(local.RemoteUrl) ? "—" : ExtractShortRemote(local.RemoteUrl))
+                                    </span>
+                                </td>
+                                <td>
+                                    <span style="font-family:var(--mono);font-size:.6rem;color:var(--muted2);">@local.LocalPath</span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                <div style="margin-top:6px;font-size:.6rem;color:var(--muted);">
+                    <span style="color:var(--green);">●</span> Mapped (@localRepos.Count(r => r.IsMapped))
+                    &nbsp;&nbsp;
+                    <span style="color:var(--amber);">●</span> Unmatched (@localRepos.Count(r => !r.IsMapped))
+                    &nbsp;&nbsp;
+                    Total: @localRepos.Count repo(s)
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private string tfsUrl = "";
+    private string tfsPat = "";
+    private string defaultProjectPath = "";
+    private string defaultAreaPath = "";
+    private string defaultSprint = "";
+    private string defaultRepoId = "";
+    private string teamName = "";
+    private bool saving, testing;
+    private string statusMsg = "";
+    private bool statusOk;
+    private string scanMsg = "";
+    private bool scanOk;
+    private List<TfsRepo> repos = new();
+    private List<TfsArea> areas = new();
+    private List<TfsIteration> iterations = new();
+    private List<LocalRepoInfo> localRepos = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        tfsUrl = SettingsSvc.Tfs.Url;
+        tfsPat = SettingsSvc.Tfs.Pat;
+        defaultProjectPath = SettingsSvc.DefaultProjectPath;
+        defaultAreaPath = SettingsSvc.DefaultAreaPath;
+        defaultSprint = SettingsSvc.DefaultSprint;
+        defaultRepoId = SettingsSvc.DefaultRepoId;
+        teamName = SettingsSvc.TeamName;
+
+        if (SettingsSvc.IsConfigured)
+        {
+            try
+            {
+                var projects = await TfsApi.GetProjectsAsync();
+                repos = await TfsApi.GetRepositoriesAsync();
+                foreach (var p in projects)
+                {
+                    areas.AddRange(await TfsApi.GetAreasAsync(p.Name));
+                    iterations.AddRange(await TfsApi.GetIterationsAsync(p.Name));
+                }
+            }
+            catch { }
+        }
+
+        // Scan local repos (after TFS repos loaded for matching)
+        localRepos = SettingsSvc.ScanLocalRepos(repos.Count > 0 ? repos : null);
+    }
+
+    private async Task SaveAndConnect()
+    {
+        saving = true;
+        statusMsg = "";
+        StateHasChanged();
+        try
+        {
+            SettingsSvc.SaveTfs(tfsUrl.Trim(), tfsPat.Trim());
+            await LoadRepos();
+            statusMsg = $"✓ Saved & connected — {repos.Count} repositories found.";
+            statusOk = true;
+        }
+        catch (Exception ex)
+        {
+            statusMsg = $"✕ {ex.Message}";
+            statusOk = false;
+        }
+        saving = false;
+    }
+
+    private async Task TestConnection()
+    {
+        testing = true;
+        statusMsg = "";
+        StateHasChanged();
+        try
+        {
+            // Temporarily apply settings for the test
+            SettingsSvc.SaveTfs(tfsUrl.Trim(), tfsPat.Trim());
+            var projects = await TfsApi.GetProjectsAsync();
+            repos = await TfsApi.GetRepositoriesAsync();
+            statusMsg = $"✓ Connected — {projects.Count} project(s), {repos.Count} repo(s).";
+            statusOk = true;
+        }
+        catch (Exception ex)
+        {
+            statusMsg = $"✕ Connection failed: {ex.Message}";
+            statusOk = false;
+        }
+        testing = false;
+    }
+
+    private async Task LoadRepos()
+    {
+        repos = await TfsApi.GetRepositoriesAsync();
+    }
+
+    private string GetRepoPath(string repoId) => SettingsSvc.GetRepoPath(repoId);
+
+    private void OnRepoPathChange(string repoId, ChangeEventArgs e)
+    {
+        SettingsSvc.SetRepoPath(repoId, e.Value?.ToString() ?? "");
+    }
+
+    private void ScanAndApply()
+    {
+        var basePath = defaultProjectPath.Trim().TrimEnd('\\');
+        SettingsSvc.DefaultProjectPath = basePath;
+
+        // Scan for .git folders and read remote URLs
+        localRepos = SettingsSvc.ScanLocalRepos(repos.Count > 0 ? repos : null);
+
+        if (localRepos.Count == 0)
+        {
+            scanMsg = $"⚠ No git repositories found in {basePath}";
+            scanOk = false;
+        }
+        else
+        {
+            var matched = localRepos.Count(r => r.IsMapped);
+            var unmatched = localRepos.Count - matched;
+            // Auto-save mapped paths
+            if (repos.Count > 0) SettingsSvc.AutoMapLocalRepos(repos);
+            scanMsg = $"✓ Found {localRepos.Count} local repo(s) — {matched} mapped to TFS" + (unmatched > 0 ? $", {unmatched} unmatched." : ".");
+            scanOk = true;
+        }
+        StateHasChanged();
+    }
+
+    // ─── Team Name ───
+    private void OnTeamNameChange(ChangeEventArgs e)
+    {
+        teamName = e.Value?.ToString()?.Trim() ?? "";
+        SettingsSvc.TeamName = teamName;
+    }
+
+    // ─── Default Selection Handlers ───
+    private void OnDefaultAreaChange(ChangeEventArgs e)
+    {
+        defaultAreaPath = e.Value?.ToString() ?? "";
+        SettingsSvc.DefaultAreaPath = defaultAreaPath;
+    }
+
+    private void OnDefaultSprintChange(ChangeEventArgs e)
+    {
+        defaultSprint = e.Value?.ToString() ?? "";
+        SettingsSvc.DefaultSprint = defaultSprint;
+    }
+
+    private void OnDefaultRepoChange(ChangeEventArgs e)
+    {
+        defaultRepoId = e.Value?.ToString() ?? "";
+        SettingsSvc.DefaultRepoId = defaultRepoId;
+    }
+
+    private string SerializeArea(TfsArea a) => $"{a.Name}|||{a.Path}|||{a.Project}";
+
+    // ─── Dropdown Data ───
+    private List<GlassDropdown.DropdownGroup> AreaGroups => areas.GroupBy(a => a.Project).Select(grp => new GlassDropdown.DropdownGroup
+    {
+        Label = "📁 " + grp.Key,
+        Options = grp.Select(a => new GlassDropdown.DropdownOption { Value = SerializeArea(a), Label = grp.Key + " — " + TfsApiService.AreaDisplayPath(a.Path) }).ToList()
+    }).ToList();
+
+    private List<GlassDropdown.DropdownGroup> SprintGroups => iterations.GroupBy(i => i.Project).Select(grp => new GlassDropdown.DropdownGroup
+    {
+        Label = "📁 " + grp.Key,
+        Options = grp.Select(it => new GlassDropdown.DropdownOption { Value = it.Path, Label = grp.Key + " — " + it.Name }).ToList()
+    }).ToList();
+
+    private List<GlassDropdown.DropdownGroup> RepoGroups => repos.GroupBy(r => r.Project).Select(grp => new GlassDropdown.DropdownGroup
+    {
+        Label = "📁 " + grp.Key,
+        Options = grp.Select(r => new GlassDropdown.DropdownOption { Value = r.Id, Label = grp.Key + " — " + r.Name }).ToList()
+    }).ToList();
+
+    private static string ExtractShortRemote(string url)
+    {
+        var idx = url.LastIndexOf("/_git/", StringComparison.OrdinalIgnoreCase);
+        if (idx >= 0) return "…/_git/" + url[(idx + 6)..];
+        var lastSlash = url.LastIndexOf('/');
+        return lastSlash >= 0 ? "…/" + url[(lastSlash + 1)..] : url;
+    }
+}

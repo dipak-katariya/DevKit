@@ -1,0 +1,262 @@
+@page "/workday"
+@inject IJSRuntime JS
+
+<div style="display:flex;flex-direction:column;flex:1;overflow:auto;gap:14px;">
+    <!-- Header row -->
+    <div class="gpanel">
+        <div class="phead">
+            <span class="ptitle">⏱ Workday Calculator</span>
+            <span style="font-size:.64rem;color:var(--muted);">Calculate your workday and see live progress</span>
+        </div>
+        <div class="pbody">
+            <div style="display:flex;gap:14px;flex-wrap:wrap;">
+                <!-- Day Type & Entry -->
+                <div style="flex:1.3;min-width:320px;">
+                    <div style="margin-bottom:12px;">
+                        <div class="f-label">Workday Type</div>
+                        <div style="display:flex;gap:4px;">
+                            <button class="btn-sm @(dayType == "full" ? "btn-sm-active" : "")" @onclick='() => SetDayType("full")'>Full Day (8h 30m)</button>
+                            <button class="btn-sm @(dayType == "half" ? "btn-sm-active" : "")" @onclick='() => SetDayType("half")'>Half Day (4h 30m)</button>
+                            <button class="btn-sm @(dayType == "move" ? "btn-sm-active" : "")" @onclick='() => SetDayType("move")'>Movement (7h 30m)</button>
+                        </div>
+                    </div>
+
+                    <div class="f-label">Time Entries (e.g., 09:30:00 or 9:30 AM)</div>
+                    <p style="font-size:.6rem;color:var(--muted);margin-bottom:6px;">
+                        Enter your clock-in/out times, one per line. Last line may be an open IN if you're clocked in.
+                    </p>
+                    <textarea class="fi" id="wcEntries" style="height:160px;resize:vertical;font-family:var(--mono);font-size:.72rem;line-height:1.5;"
+                              spellcheck="false"
+                              placeholder="09:30:00 AM&#10;12:45:00 PM&#10;01:30:00 PM"
+                              @oninput="OnEntriesInput" @bind="entriesText"></textarea>
+                    <p style="font-size:.56rem;color:var(--muted);margin-top:4px;">
+                        Order: IN, OUT, IN, OUT… Formats: <code style="font-size:.56rem;color:var(--cyan);">9:22</code>,
+                        <code style="font-size:.56rem;color:var(--cyan);">9:22:22</code>,
+                        <code style="font-size:.56rem;color:var(--cyan);">9:22 AM</code>,
+                        <code style="font-size:.56rem;color:var(--cyan);">13:05</code>
+                    </p>
+                </div>
+
+                <!-- Donut -->
+                <div style="flex:1;min-width:240px;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+                    <div class="f-label" style="margin-bottom:8px;">Completion %</div>
+                    <div style="position:relative;width:180px;height:180px;">
+                        <svg viewBox="0 0 36 36" style="width:100%;height:100%;transform:rotate(-90deg);">
+                            <circle cx="18" cy="18" r="15.9" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="2.5"/>
+                            <circle cx="18" cy="18" r="15.9" fill="none" stroke="var(--accent)"
+                                    stroke-width="2.5" stroke-linecap="round"
+                                    stroke-dasharray="@DashArray" stroke-dashoffset="0"
+                                    style="transition:stroke-dasharray .5s ease;"/>
+                        </svg>
+                        <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+                            <span style="font-size:1.6rem;font-weight:800;color:var(--text);">@Math.Round(percent)%</span>
+                            <span style="font-size:.6rem;color:var(--muted);">Live progress</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Summary tiles -->
+    <div class="gpanel">
+        <div class="phead">
+            <span class="ptitle">📊 Your Daily Summary</span>
+        </div>
+        <div class="pbody">
+            <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:12px;">
+                <div class="wc-tile">
+                    <div class="wc-tile-icon" style="background:rgba(16,185,129,.08);border-color:rgba(16,185,129,.2);">⏱</div>
+                    <div>
+                        <div style="font-size:.58rem;color:var(--muted);">Total Time Worked</div>
+                        <div style="font-size:1rem;font-weight:700;">@workedStr</div>
+                    </div>
+                </div>
+                <div class="wc-tile">
+                    <div class="wc-tile-icon" style="background:rgba(251,191,36,.08);border-color:rgba(251,191,36,.2);">⏳</div>
+                    <div>
+                        <div style="font-size:.58rem;color:var(--muted);">Remaining Time</div>
+                        <div style="font-size:1rem;font-weight:700;">@remainStr</div>
+                    </div>
+                </div>
+                <div class="wc-tile">
+                    <div class="wc-tile-icon" style="background:rgba(96,165,250,.08);border-color:rgba(96,165,250,.2);">➡</div>
+                    <div>
+                        <div style="font-size:.58rem;color:var(--muted);">Estimated Departure</div>
+                        <div style="font-size:1rem;font-weight:700;">@departStr</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string dayType = "full";
+    private string entriesText = "";
+    private double percent;
+    private string workedStr = "00h 00m 00s";
+    private string remainStr = "08h 30m 00s";
+    private string departStr = "Not Clocked In";
+    private System.Threading.Timer? liveTimer;
+
+    private string DashArray => $"{(percent / 100.0 * 100.0):F1} {(100.0 - percent / 100.0 * 100.0):F1}";
+
+    private static readonly Dictionary<string, int> DayTargets = new()
+    {
+        ["full"] = 8 * 3600 + 30 * 60,
+        ["half"] = 4 * 3600 + 30 * 60,
+        ["move"] = 7 * 3600 + 30 * 60
+    };
+
+    private int TargetSec => DayTargets.TryGetValue(dayType, out var v) ? v : DayTargets["full"];
+
+    protected override void OnInitialized()
+    {
+        liveTimer = new System.Threading.Timer(_ =>
+        {
+            InvokeAsync(() => { Compute(); StateHasChanged(); });
+        }, null, 0, 1000);
+    }
+
+    private void SetDayType(string type)
+    {
+        dayType = type;
+        Compute();
+    }
+
+    private void OnEntriesInput(ChangeEventArgs e)
+    {
+        entriesText = e.Value?.ToString() ?? "";
+        Compute();
+    }
+
+    private void Compute()
+    {
+        try
+        {
+            var now = DateTime.Now;
+            var baseDate = now.Date;
+            var lines = (entriesText ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
+
+            if (lines.Count == 0)
+            {
+                percent = 0; workedStr = "00h 00m 00s"; remainStr = FmtHms(TargetSec); departStr = "Not Clocked In";
+                return;
+            }
+
+            var times = lines.Select(l => ParseTime(l, baseDate)).Where(t => t.HasValue).Select(t => t!.Value).ToList();
+            if (times.Count == 0) { percent = 0; workedStr = "—"; remainStr = "—"; departStr = "—"; return; }
+
+            var intervals = new List<(DateTime In, DateTime Out)>();
+            DateTime? openIn = null;
+
+            for (int i = 0; i < times.Count; i += 2)
+            {
+                var inTime = times[i];
+                if (i + 1 < times.Count)
+                {
+                    var outTime = times[i + 1];
+                    if (outTime < inTime) outTime = outTime.AddDays(1);
+                    intervals.Add((inTime, outTime));
+                }
+                else
+                {
+                    openIn = inTime;
+                }
+            }
+
+            double totalWork = intervals.Sum(iv => (iv.Out - iv.In).TotalSeconds);
+            if (openIn.HasValue)
+            {
+                var n = now < openIn.Value ? now.AddDays(1) : now;
+                totalWork += (n - openIn.Value).TotalSeconds;
+            }
+
+            var remaining = TargetSec - totalWork;
+            percent = Math.Max(0, Math.Min(100, totalWork / TargetSec * 100));
+            workedStr = FmtHms((int)totalWork);
+            remainStr = FmtHms((int)remaining);
+
+            if (openIn.HasValue)
+            {
+                var addSec = Math.Max(remaining, 0);
+                var exp = now.AddSeconds(addSec);
+                departStr = exp.ToString("hh:mm:ss tt");
+            }
+            else
+            {
+                departStr = "Not Clocked In";
+            }
+        }
+        catch (Exception ex)
+        {
+            workedStr = "—"; remainStr = "—"; departStr = ex.Message;
+        }
+    }
+
+    private static DateTime? ParseTime(string raw, DateTime baseDate)
+    {
+        raw = raw.Trim();
+        if (string.IsNullOrEmpty(raw)) return null;
+
+        // Try standard parsing
+        if (DateTime.TryParse(raw, out var dt))
+            return baseDate.Date.Add(dt.TimeOfDay);
+
+        // Try common patterns
+        var s = System.Text.RegularExpressions.Regex.Replace(raw, @"\s+", " ").Trim();
+
+        // HH:mm:ss AM/PM
+        var m = System.Text.RegularExpressions.Regex.Match(s, @"^(\d{1,2}):(\d{2}):(\d{2})\s*(AM|PM)$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (m.Success)
+        {
+            int h = int.Parse(m.Groups[1].Value), mi = int.Parse(m.Groups[2].Value), sec = int.Parse(m.Groups[3].Value);
+            var ap = m.Groups[4].Value.ToUpper();
+            if (h == 12) h = ap == "AM" ? 0 : 12; else if (ap == "PM") h += 12;
+            return baseDate.AddHours(h).AddMinutes(mi).AddSeconds(sec);
+        }
+
+        // HH:mm AM/PM
+        m = System.Text.RegularExpressions.Regex.Match(s, @"^(\d{1,2}):(\d{2})\s*(AM|PM)$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (m.Success)
+        {
+            int h = int.Parse(m.Groups[1].Value), mi = int.Parse(m.Groups[2].Value);
+            var ap = m.Groups[3].Value.ToUpper();
+            if (h == 12) h = ap == "AM" ? 0 : 12; else if (ap == "PM") h += 12;
+            return baseDate.AddHours(h).AddMinutes(mi);
+        }
+
+        // HH:mm:ss (24h)
+        m = System.Text.RegularExpressions.Regex.Match(s, @"^(\d{1,2}):(\d{2}):(\d{2})$");
+        if (m.Success)
+        {
+            return baseDate.AddHours(int.Parse(m.Groups[1].Value)).AddMinutes(int.Parse(m.Groups[2].Value)).AddSeconds(int.Parse(m.Groups[3].Value));
+        }
+
+        // HH:mm (24h)
+        m = System.Text.RegularExpressions.Regex.Match(s, @"^(\d{1,2}):(\d{2})$");
+        if (m.Success)
+        {
+            return baseDate.AddHours(int.Parse(m.Groups[1].Value)).AddMinutes(int.Parse(m.Groups[2].Value));
+        }
+
+        return null;
+    }
+
+    private static string FmtHms(int sec)
+    {
+        var sign = sec >= 0 ? "" : "-";
+        sec = Math.Abs(sec);
+        var h = sec / 3600;
+        var m = (sec % 3600) / 60;
+        var s = sec % 60;
+        return $"{sign}{h:D2}h {m:D2}m {s:D2}s";
+    }
+
+    public void Dispose()
+    {
+        liveTimer?.Dispose();
+    }
+}

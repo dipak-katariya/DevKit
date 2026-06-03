@@ -1,0 +1,25 @@
+@using Microsoft.AspNetCore.Components.Web
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+    <title>DevKit — DevOps Workflow Suite</title>
+    <link rel="stylesheet" href="app.css" />
+    <HeadOutlet @rendermode="RenderMode.InteractiveServer" />
+</head>
+<body>
+    <Routes @rendermode="RenderMode.InteractiveServer" />
+
+    <div id="components-reconnect-modal">
+        <div>
+            <div class="glass-spinner"></div>
+            <h5>Reconnecting</h5>
+            <p>Rejoining the server&hellip;</p>
+        </div>
+    </div>
+
+    <script src="_framework/blazor.web.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

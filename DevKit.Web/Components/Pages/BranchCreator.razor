@@ -1,0 +1,606 @@
+@page "/"
+@inject TfsApiService TfsApi
+@inject SettingsService Settings
+@inject PageStateService PageState
+@inject IJSRuntime JS
+@implements IDisposable
+
+<div style="display:flex;flex-direction:column;gap:0;flex:1;overflow:hidden;">
+    <!-- Config Bar -->
+    <div class="cfg-bar">
+        <div class="cfg-col" style="flex:0 0 auto;">
+            <div class="cfg-field">
+                <label class="cfg-label">🔀 Repository</label>
+                <GlassDropdown Style="min-width:220px;"
+                               Value="@(selectedRepo?.Id ?? "")"
+                               Placeholder="— Select repo —"
+                               Disabled="@(repos.Count==0)"
+                               Groups="@RepoGroups"
+                               OnChange="OnRepoChange" />
+            </div>
+        </div>
+        <div class="cfg-divider"></div>
+        <div class="cfg-col" style="flex:0 0 auto;">
+            <div class="cfg-field">
+                <label class="cfg-label">📂 Area Path</label>
+                <GlassDropdown Style="min-width:220px;"
+                               Value="@(selectedArea != null ? SerializeArea(selectedArea) : "")"
+                               Placeholder="— Select area —"
+                               Disabled="@(areas.Count==0)"
+                               Groups="@AreaGroups"
+                               OnChange="OnAreaChange" />
+            </div>
+        </div>
+        <div class="cfg-divider"></div>
+        <div class="cfg-col" style="flex:0 0 auto;">
+            <div class="cfg-field">
+                <label class="cfg-label">👥 Team Name</label>
+                <input class="cfg-fi" style="width:110px;" value="@teamName" @onchange="OnTeamNameChange" placeholder="TEAM" />
+            </div>
+        </div>
+        <div class="cfg-divider"></div>
+        <div class="cfg-col" style="flex:0 0 auto;">
+            <div class="cfg-field">
+                <label class="cfg-label">📅 Sprint</label>
+                <GlassDropdown Style="min-width:180px;"
+                               Value="@(selectedSprint ?? "")"
+                               Placeholder="— All —"
+                               EmptyLabel="— All —" EmptyValue=""
+                               Disabled="@(iterations.Count==0)"
+                               Groups="@SprintGroups"
+                               OnChange="OnSprintChange" />
+            </div>
+        </div>
+        <div class="cfg-divider"></div>
+        <div class="cfg-col" style="flex:0 0 auto;">
+            <button class="cfg-load-btn" @onclick="LoadWorkItems" disabled="@(selectedArea == null || loading)">
+                @if (loading) { <span class="spin spin-sm" style="color:var(--text);"></span> }
+                else { <span>⬇</span> }
+                Load
+            </button>
+            @if (workItems.Count > 0)
+            {
+                <span class="chip chip-green" style="font-size:.56rem;">@workItems.Count items</span>
+            }
+        </div>
+    </div>
+
+    <!-- Filter bar -->
+    <div class="cfg-bar-filters">
+        <div style="flex:2;">
+            <div class="cfg-field">
+                <label class="cfg-label">🔍 Search</label>
+                <input class="cfg-fi" placeholder="ID, title, assignee…" @oninput="OnSearch" />
+            </div>
+        </div>
+        <div style="flex:1;">
+            <div class="cfg-field">
+                <label class="cfg-label">🏷 Type</label>
+                <GlassDropdown Value="@typeFilter" Placeholder="— All —" EmptyLabel="— All —" EmptyValue=""
+                               Options="@TypeOptions" OnChange="OnTypeFilter" />
+            </div>
+        </div>
+        <div style="flex:1;">
+            <div class="cfg-field">
+                <label class="cfg-label">👤 Assignee</label>
+                <GlassDropdown Value="@assigneeFilter" Placeholder="— All —" EmptyLabel="— All —" EmptyValue=""
+                               Options="@AssigneeOptions" OnChange="OnAssigneeFilter" />
+            </div>
+        </div>
+    </div>
+
+    <!-- Main content: left table + right branch form -->
+    <div class="content" style="flex:1;overflow:hidden;">
+        <div class="content-left">
+            <div class="gpanel" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+                <div class="phead">
+                    <span class="ptitle">📋 Requirements / Change Requests / Bugs</span>
+                    @if (filtered.Count > 0) { <span class="chip chip-cyan">@filtered.Count item(s)</span> }
+                </div>
+                <div class="pbody" style="padding:0;flex:1;overflow:hidden;">
+                    <div class="grid-wrap" style="overflow:auto;height:100%;">
+                        <table class="req-table">
+                            <thead><tr>
+                                <th style="width:70px;" @onclick='() => Sort("id")'>ID</th>
+                                <th @onclick='() => Sort("title")'>Title & Details</th>
+                                <th style="width:80px;" @onclick='() => Sort("state")'>State</th>
+                                <th style="width:110px;" @onclick='() => Sort("assigned")'>Assigned</th>
+                            </tr></thead>
+                            <tbody>
+                                @if (filtered.Count == 0)
+                                {
+                                    <tr><td colspan="4" class="tbl-empty">@(workItems.Count == 0 ? "Select area above, then click Load" : "No items match the filter.")</td></tr>
+                                }
+                                @foreach (var item in filtered)
+                                {
+                                    <tr class="@(selectedItem?.Id == item.Id ? "selected" : "")" @onclick="() => SelectItem(item)">
+                                        <td><a class="id-link" href="@TfsApi.WorkItemUrl(item.Project, item.Id)" target="_blank" @onclick:stopPropagation>#@item.Id</a></td>
+                                        <td>
+                                            <span class="type-pill @TypeCls(item.Type)">@item.Type</span>
+                                            <div class="cell-title">@item.Title</div>
+                                            <div class="cell-meta">@item.Area.Split('\\').LastOrDefault()</div>
+                                        </td>
+                                        <td><span class="state-pill @StateCls(item.State)">@item.State</span></td>
+                                        <td style="font-size:.7rem;">@item.Assigned</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="content-right">
+            <div class="gpanel">
+                <div class="phead">
+                    <span class="ptitle">🔀 Branch Configuration</span>
+                    @if (selectedRepo != null)
+                    {
+                        <span style="font-size:.58rem;color:var(--muted);margin-left:auto;">@selectedRepo.Project</span>
+                    }
+                </div>
+                <div class="pbody">
+                    @if (selectedItem == null)
+                    {
+                        <div class="pr-placeholder">
+                            <div style="font-size:2rem;opacity:.2;">🔀</div>
+                            <div class="bp-title">Select a Requirement</div>
+                            <div class="bp-sub">Click any row in the table to configure and create a branch.</div>
+                        </div>
+                    }
+                    else
+                    {
+                        <!-- Selected item info -->
+                        <div style="background:rgba(0,0,0,.15);border:1px solid rgba(255,255,255,.08);border-radius:var(--r2);padding:10px 14px;margin-bottom:14px;">
+                            <div style="font-size:.82rem;font-weight:700;">@selectedItem.Title</div>
+                            <div style="font-family:var(--mono);font-size:.67rem;color:var(--emerald-light);margin-top:3px;">
+                                #@selectedItem.Id · @selectedItem.Type · @selectedItem.State · @selectedItem.Assigned
+                            </div>
+                        </div>
+
+                        <!-- Existing Branches -->
+                        @if (loadingExisting)
+                        {
+                            <div style="display:flex;align-items:center;gap:6px;padding:8px 12px;margin-bottom:12px;font-size:.68rem;color:var(--muted2);background:rgba(100,100,120,.06);border:1px solid rgba(255,255,255,.05);border-radius:var(--r2);">
+                                <span class="spin spin-sm" style="color:var(--accent);"></span>
+                                Searching existing branches…
+                            </div>
+                        }
+                        else if (existingBranches.Count > 0)
+                        {
+                            <div style="margin-bottom:14px;padding:10px 12px;background:rgba(251,191,36,.04);border:1px solid rgba(251,191,36,.15);border-radius:var(--r2);">
+                                <div style="font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--amber);margin-bottom:6px;display:flex;align-items:center;gap:5px;">
+                                    ⚠ Existing Branches (@existingBranches.Count)
+                                </div>
+                                <p style="font-size:.58rem;color:var(--muted);margin-bottom:6px;">Click a branch to use it.</p>
+                                @foreach (var eb in existingBranches)
+                                {
+                                    <div style="font-family:var(--mono);font-size:.66rem;color:var(--cyan);padding:3px 0;word-break:break-all;cursor:pointer;" @onclick="() => { branchName = eb; }">
+                                        🌿 @eb
+                                    </div>
+                                }
+                            </div>
+                        }
+                        else if (!string.IsNullOrEmpty(existingErr))
+                        {
+                            <div style="margin-bottom:14px;padding:8px 12px;font-size:.62rem;color:var(--red);background:rgba(248,113,113,.04);border:1px solid rgba(248,113,113,.2);border-radius:var(--r2);">
+                                ⚠ Could not load existing branches: @existingErr
+                            </div>
+                        }
+
+                        <!-- Branch Name -->
+                        <div class="f-row">
+                            <div class="f-label">Branch Name <span style="font-size:.52rem;color:var(--muted);font-weight:400;">max 100 chars</span></div>
+                            <div style="display:flex;align-items:center;gap:6px;">
+                                <span style="font-size:.7rem;color:var(--muted);white-space:nowrap;">refs/heads/</span>
+                                <input class="fi" @bind="branchName" placeholder="auto-generated" />
+                            </div>
+                            @if (!string.IsNullOrWhiteSpace(branchName))
+                            {
+                                <div style="font-size:.56rem;color:var(--green);margin-top:3px;">✓ Valid branch name</div>
+                            }
+                        </div>
+
+                        <!-- PR Name -->
+                        <div class="f-row">
+                            <div class="f-label">PR Name Suggestion</div>
+                            <input class="fi" @bind="prName" />
+                        </div>
+
+                        <!-- Branch pattern hint -->
+                        <div style="font-size:.56rem;color:var(--muted);margin-bottom:10px;">
+                            Branch: <code style="font-size:.56rem;color:var(--cyan);">{TEAM}/{Sprint}/{id}_{title}</code>
+                        </div>
+
+                        <!-- Base Branch -->
+                        <div class="f-row">
+                            <div class="f-label">Base Branch <span style="font-size:.52rem;color:var(--muted);font-weight:400;">@branches.Count branches</span></div>
+                            <GlassDropdown CssClass="fi-size"
+                                           Value="@baseBranch"
+                                           Placeholder="— Select branch —"
+                                           ShowEmptyOption="false"
+                                           Disabled="@(branches.Count==0)"
+                                           Options="@BranchOptions"
+                                           OnChange="e => { baseBranch = e.Value?.ToString() ?? baseBranch; }" />
+                        </div>
+
+                        <!-- Action Buttons -->
+                        <div style="display:flex;gap:8px;margin-top:14px;">
+                            <button class="btn-primary" style="flex:1;" @onclick="CreateBranch" disabled="@(creating || string.IsNullOrWhiteSpace(branchName) || selectedRepo == null)">
+                                @if (creating) { <span class="spin spin-sm"></span> <span>Creating…</span> }
+                                else { <span>🔀 Create Branch</span> }
+                            </button>
+                            <button class="btn-ghost" @onclick="CheckBranch" disabled="@(string.IsNullOrWhiteSpace(branchName) || selectedRepo == null || checking)">
+                                @if (checking) { <span class="spin spin-sm"></span> } else { <span>🔍</span> }
+                                Check
+                            </button>
+                            <button class="btn-ghost btn-danger" @onclick="ClearForm">
+                                ✕ Clear
+                            </button>
+                        </div>
+
+                        <!-- Result -->
+                        @if (!string.IsNullOrEmpty(resultMsg))
+                        {
+                            <div style="margin-top:12px;padding:12px 14px;border-radius:var(--r2);font-size:.72rem;border:1px solid @(resultOk ? "rgba(52,211,153,.2)" : "rgba(248,113,113,.2)");background:@(resultOk ? "rgba(52,211,153,.04)" : "rgba(248,113,113,.04)");">
+                                @((MarkupString)resultMsg)
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    // Data (shared)
+    private List<TfsArea> areas => PageState.TfsData.Areas;
+    private List<TfsIteration> iterations => PageState.TfsData.Iterations;
+    private List<TfsRepo> repos => PageState.TfsData.Repos;
+
+    // Page state (preserved across navigation)
+    private BranchCreatorState S => PageState.BranchCreator;
+    private List<WorkItem> workItems { get => S.WorkItems; set => S.WorkItems = value; }
+    private List<WorkItem> filtered { get => S.Filtered; set => S.Filtered = value; }
+    private List<string> branches { get => S.Branches; set => S.Branches = value; }
+    private TfsArea? selectedArea { get => S.SelectedArea; set => S.SelectedArea = value; }
+    private string? selectedSprint { get => S.SelectedSprint; set => S.SelectedSprint = value; }
+    private TfsRepo? selectedRepo { get => S.SelectedRepo; set => S.SelectedRepo = value; }
+    private WorkItem? selectedItem { get => S.SelectedItem; set => S.SelectedItem = value; }
+    private string branchName { get => S.BranchName; set => S.BranchName = value; }
+    private string prName { get => S.PrName; set => S.PrName = value; }
+    private string baseBranch { get => S.BaseBranch; set => S.BaseBranch = value; }
+    private List<string> existingBranches { get => S.ExistingBranches; set => S.ExistingBranches = value; }
+    private string searchQ { get => S.SearchQ; set => S.SearchQ = value; }
+    private string typeFilter { get => S.TypeFilter; set => S.TypeFilter = value; }
+    private string assigneeFilter { get => S.AssigneeFilter; set => S.AssigneeFilter = value; }
+    private string sortCol { get => S.SortCol; set => S.SortCol = value; }
+    private bool sortAsc { get => S.SortAsc; set => S.SortAsc = value; }
+    private string resultMsg { get => S.ResultMsg; set => S.ResultMsg = value; }
+    private bool resultOk { get => S.ResultOk; set => S.ResultOk = value; }
+
+    private bool loadingExisting, loading, creating, checking;
+    private string teamName = "";
+    private string existingErr = "";
+
+    // Default base branch: "main" everywhere, except the CasepointARA repo which
+    // targets the .NET 8 migration line.
+    private const string AraRepoName = "CasepointARA";
+    private const string AraDefaultBaseBranch = "dev-qa-net8";
+    private const string DefaultBaseBranch = "main";
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Load TeamName from settings (persisted)
+        teamName = Settings.TeamName;
+
+        if (!Settings.IsConfigured) return;
+
+        if (!PageState.TfsData.IsLoaded)
+        {
+            try
+            {
+                PageState.TfsData.Projects = await TfsApi.GetProjectsAsync();
+                PageState.TfsData.Repos = await TfsApi.GetRepositoriesAsync();
+                foreach (var p in PageState.TfsData.Projects)
+                {
+                    PageState.TfsData.Areas.AddRange(await TfsApi.GetAreasAsync(p.Name));
+                    PageState.TfsData.Iterations.AddRange(await TfsApi.GetIterationsAsync(p.Name));
+                }
+                PageState.TfsData.IsLoaded = true;
+            }
+            catch { }
+        }
+
+        if (S.HasState) return;
+        S.HasState = true;
+
+        // Apply defaults
+        if (!string.IsNullOrEmpty(Settings.DefaultAreaPath))
+        {
+            var parts = Settings.DefaultAreaPath.Split("|||");
+            if (parts.Length == 3)
+                selectedArea = new TfsArea { Name = parts[0], Path = parts[1], Project = parts[2] };
+        }
+        if (!string.IsNullOrEmpty(Settings.DefaultSprint))
+            selectedSprint = Settings.DefaultSprint;
+        if (!string.IsNullOrEmpty(Settings.DefaultRepoId))
+        {
+            selectedRepo = repos.FirstOrDefault(r => r.Id == Settings.DefaultRepoId);
+            if (selectedRepo != null) await LoadBranches();
+        }
+    }
+
+    public void Dispose() { }
+
+    // ─── Team Name (persisted to settings) ───
+    private void OnTeamNameChange(ChangeEventArgs e)
+    {
+        teamName = e.Value?.ToString()?.Trim() ?? "";
+        Settings.TeamName = teamName;
+        // Re-generate branch name if item selected
+        if (selectedItem != null) RegenerateBranchName(selectedItem);
+    }
+
+    // ─── Selections ───
+    private void OnAreaChange(ChangeEventArgs e)
+    {
+        var val = e.Value?.ToString();
+        if (string.IsNullOrEmpty(val)) { selectedArea = null; return; }
+        var parts = val.Split("|||");
+        if (parts.Length == 3) selectedArea = new TfsArea { Name = parts[0], Path = parts[1], Project = parts[2] };
+    }
+    private string SerializeArea(TfsArea a) => $"{a.Name}|||{a.Path}|||{a.Project}";
+    private void OnSprintChange(ChangeEventArgs e) => selectedSprint = e.Value?.ToString();
+    private void OnRepoChange(ChangeEventArgs e)
+    {
+        var id = e.Value?.ToString();
+        selectedRepo = repos.FirstOrDefault(r => r.Id == id);
+        if (selectedRepo != null) _ = LoadBranches();
+    }
+
+    private async Task LoadBranches()
+    {
+        if (selectedRepo == null) return;
+        try { branches = await TfsApi.GetBranchesAsync(selectedRepo.Project, selectedRepo.Id); }
+        catch { branches = new List<string> { "develop", "main", "master" }; }
+        baseBranch = PickDefaultBaseBranch(selectedRepo, branches);
+        StateHasChanged();
+    }
+
+    private async Task LoadWorkItems()
+    {
+        if (selectedArea == null) return;
+        loading = true; workItems.Clear(); filtered.Clear(); selectedItem = null; resultMsg = "";
+        StateHasChanged();
+        try
+        {
+            var areaPath = TfsApiService.ToWiqlPath(selectedArea.Path);
+            var iterPath = !string.IsNullOrEmpty(selectedSprint) ? TfsApiService.ToWiqlPath(selectedSprint) : null;
+            workItems = await TfsApi.LoadWorkItemsAsync(selectedArea.Project, areaPath, iterPath);
+            ApplyFilter();
+        }
+        catch (Exception ex) { resultMsg = $"<span style='color:var(--red);'>✕ Load failed: {System.Net.WebUtility.HtmlEncode(ex.Message)}</span>"; resultOk = false; }
+        loading = false;
+    }
+
+    // ─── Item Selection ───
+    private void SelectItem(WorkItem item)
+    {
+        selectedItem = item;
+        resultMsg = "";
+        existingBranches = new();
+        RegenerateBranchName(item);
+        _ = LoadExistingBranches(item.Id);
+    }
+
+    private void RegenerateBranchName(WorkItem item)
+    {
+        var team = !string.IsNullOrWhiteSpace(teamName) ? teamName : (selectedArea?.Name ?? "team");
+        var sprint = item.Sprint.Length > 0 ? NormSprint(item.Sprint) : "no_sprint";
+        var title = NormTitle(item.Title);
+        if (title.Length > 60) title = title[..60];
+        branchName = $"{AreaShort(team)}/{sprint}/{item.Id}_{title}";
+        prName = $"{AreaShort(team).ToUpper()} : {item.Id} : {item.Title}";
+    }
+
+    private async Task LoadExistingBranches(string workItemId)
+    {
+        loadingExisting = true; existingErr = ""; StateHasChanged();
+        var found = new List<string>();
+        try
+        {
+            var reposToSearch = selectedRepo != null ? new List<TfsRepo> { selectedRepo } : repos;
+            foreach (var repo in reposToSearch)
+            {
+                // Always read live refs: a cached list goes stale the moment a
+                // branch is created here, so a just-created branch would never
+                // appear. Refresh the selected repo's cache while we're at it.
+                var allBranches = await TfsApi.GetBranchesAsync(repo.Project, repo.Id);
+                if (repo.Id == selectedRepo?.Id) branches = allBranches;
+                foreach (var b in allBranches.Where(b => b.Contains(workItemId, StringComparison.OrdinalIgnoreCase)))
+                {
+                    var label = reposToSearch.Count > 1 ? $"{repo.Name}: {b}" : b;
+                    if (!found.Contains(label)) found.Add(label);
+                }
+            }
+        }
+        catch (Exception ex) { existingErr = ex.Message; }
+        existingBranches = found;
+        loadingExisting = false; StateHasChanged();
+    }
+
+    // ─── Check Branch ───
+    private async Task CheckBranch()
+    {
+        if (selectedRepo == null || string.IsNullOrWhiteSpace(branchName)) return;
+        checking = true; resultMsg = ""; StateHasChanged();
+        try
+        {
+            var existing = await TfsApi.GetRefAsync(selectedRepo.Project, selectedRepo.Id, $"refs/heads/{branchName}");
+            if (existing != null)
+            {
+                resultMsg = $"<span style='color:var(--amber);'>⚠ Branch <code>{Enc(branchName)}</code> already exists (SHA: {existing.ObjectId[..8]})</span>";
+                resultOk = false;
+            }
+            else
+            {
+                resultMsg = $"<span style='color:var(--green);'>✓ Branch name <code>{Enc(branchName)}</code> is available.</span>";
+                resultOk = true;
+            }
+        }
+        catch (Exception ex) { resultMsg = $"<span style='color:var(--red);'>✕ Check failed: {Enc(ex.Message)}</span>"; resultOk = false; }
+        checking = false;
+    }
+
+    // ─── Clear ───
+    private void ClearForm()
+    {
+        selectedItem = null;
+        branchName = ""; prName = "";
+        existingBranches = new();
+        resultMsg = "";
+    }
+
+    // ─── Create Branch ───
+    private async Task CreateBranch()
+    {
+        if (selectedItem == null || selectedRepo == null || string.IsNullOrWhiteSpace(branchName)) return;
+        creating = true; resultMsg = ""; StateHasChanged();
+        try
+        {
+            var baseRef = await TfsApi.GetRefAsync(selectedRepo.Project, selectedRepo.Id, $"refs/heads/{baseBranch}");
+            if (baseRef == null) throw new Exception($"Base branch \"{baseBranch}\" not found.");
+
+            var existing = await TfsApi.GetRefAsync(selectedRepo.Project, selectedRepo.Id, $"refs/heads/{branchName}");
+            if (existing != null) throw new Exception($"Branch \"{branchName}\" already exists ({existing.ObjectId[..8]}).");
+
+            var result = await TfsApi.CreateBranchAsync(selectedRepo.Project, selectedRepo.Id, branchName, baseRef.ObjectId);
+
+            // Link to work item
+            string linkedMsg = "";
+            try
+            {
+                var projEntry = PageState.TfsData.Projects.FirstOrDefault(p => p.Name == selectedRepo.Project);
+                if (projEntry != null)
+                {
+                    await TfsApi.LinkWorkItemAsync(selectedRepo.Project, projEntry.Id, selectedRepo.Id, selectedItem.Id, branchName);
+                    linkedMsg = $"<div class='modal-row'><span class='label'>Linked</span><span style='color:var(--green);'>✓ Branch linked to #{selectedItem.Id} ({selectedItem.Type})</span></div>";
+                }
+            }
+            catch { linkedMsg = "<div class='modal-row'><span class='label'>Linked</span><span style='color:var(--amber);'>⚠ Link failed</span></div>"; }
+
+            var areaDisp = selectedArea != null ? $"\\{selectedArea.Project}\\Area\\{TfsApiService.AreaDisplayPath(selectedArea.Path)}" : "";
+            resultMsg = $@"
+<div style='font-size:.78rem;font-weight:700;color:var(--green);margin-bottom:8px;'>✅ Branch created successfully!</div>
+<div class='modal-row'><span class='label'>Branch</span><span style='font-family:var(--mono);font-size:.68rem;'>{Enc(branchName)}</span></div>
+<div class='modal-row'><span class='label'>Repo</span><span>{Enc(selectedRepo.Project)} → {Enc(selectedRepo.Name)}</span></div>
+<div class='modal-row'><span class='label'>Area</span><span>{Enc(areaDisp)}</span></div>
+<div class='modal-row'><span class='label'>Base</span><span><code>{Enc(baseBranch)}</code> @ {baseRef.ObjectId[..8]}</span></div>
+<div class='modal-row'><span class='label'>PR Name</span><span>{Enc(prName)}</span></div>
+<div class='modal-row'><span class='label'>New SHA</span><span style='font-family:var(--mono);'>{baseRef.ObjectId[..8]}</span></div>
+{linkedMsg}";
+            resultOk = true;
+
+            // Refresh existing branches
+            _ = LoadExistingBranches(selectedItem.Id);
+        }
+        catch (Exception ex)
+        {
+            resultMsg = $"<span style='color:var(--red);font-weight:700;'>✕ {Enc(ex.Message)}</span>";
+            resultOk = false;
+        }
+        creating = false;
+    }
+
+    // ─── Filtering ───
+    private void OnSearch(ChangeEventArgs e) { searchQ = (e.Value?.ToString() ?? "").ToLower(); ApplyFilter(); }
+    private void OnTypeFilter(ChangeEventArgs e) { typeFilter = e.Value?.ToString() ?? ""; ApplyFilter(); }
+    private void OnAssigneeFilter(ChangeEventArgs e) { assigneeFilter = e.Value?.ToString() ?? ""; ApplyFilter(); }
+    private void ApplyFilter()
+    {
+        filtered = workItems.Where(w =>
+            (string.IsNullOrEmpty(searchQ) || w.Id.Contains(searchQ) || w.Title.ToLower().Contains(searchQ) || w.Assigned.ToLower().Contains(searchQ))
+            && (string.IsNullOrEmpty(typeFilter) || w.Type == typeFilter)
+            && (string.IsNullOrEmpty(assigneeFilter) || w.Assigned == assigneeFilter)
+        ).ToList();
+        ApplySort();
+    }
+    private void Sort(string col) { if (sortCol == col) sortAsc = !sortAsc; else { sortCol = col; sortAsc = true; } ApplySort(); }
+    private void ApplySort()
+    {
+        filtered = sortCol switch
+        {
+            "id" => sortAsc ? filtered.OrderBy(w => int.TryParse(w.Id, out var n) ? n : 0).ToList() : filtered.OrderByDescending(w => int.TryParse(w.Id, out var n) ? n : 0).ToList(),
+            "title" => sortAsc ? filtered.OrderBy(w => w.Title).ToList() : filtered.OrderByDescending(w => w.Title).ToList(),
+            "state" => sortAsc ? filtered.OrderBy(w => w.State).ToList() : filtered.OrderByDescending(w => w.State).ToList(),
+            "assigned" => sortAsc ? filtered.OrderBy(w => w.Assigned).ToList() : filtered.OrderByDescending(w => w.Assigned).ToList(),
+            _ => filtered
+        };
+    }
+
+    // ─── Dropdown Data ───
+    private List<GlassDropdown.DropdownGroup> AreaGroups => areas.GroupBy(a => a.Project).Select(grp => new GlassDropdown.DropdownGroup
+    { Label = "📁 " + grp.Key, Options = grp.Select(a => new GlassDropdown.DropdownOption { Value = SerializeArea(a), Label = grp.Key + " — " + TfsApiService.AreaDisplayPath(a.Path) }).ToList() }).ToList();
+    private List<GlassDropdown.DropdownGroup> SprintGroups => iterations.GroupBy(i => i.Project).Select(grp => new GlassDropdown.DropdownGroup
+    { Label = "📁 " + grp.Key, Options = grp.Select(it => new GlassDropdown.DropdownOption { Value = it.Path, Label = grp.Key + " — " + it.Name }).ToList() }).ToList();
+    private List<GlassDropdown.DropdownGroup> RepoGroups => repos.GroupBy(r => r.Project).Select(grp => new GlassDropdown.DropdownGroup
+    { Label = "📁 " + grp.Key, Options = grp.Select(r => new GlassDropdown.DropdownOption { Value = r.Id, Label = grp.Key + " — " + r.Name }).ToList() }).ToList();
+    private List<GlassDropdown.DropdownOption> TypeOptions => workItems.Select(w => w.Type).Distinct().OrderBy(t => t)
+        .Select(t => new GlassDropdown.DropdownOption { Value = t, Label = t }).ToList();
+    private List<GlassDropdown.DropdownOption> AssigneeOptions => workItems.Select(w => w.Assigned).Where(a => a != "-").Distinct().OrderBy(a => a)
+        .Select(a => new GlassDropdown.DropdownOption { Value = a, Label = a }).ToList();
+    private List<GlassDropdown.DropdownOption> BranchOptions => branches
+        .Select(b => new GlassDropdown.DropdownOption { Value = b, Label = b }).ToList();
+
+    // ─── Helpers ───
+    private static string PickDefaultBaseBranch(TfsRepo repo, List<string> branches)
+    {
+        var isAra = string.Equals(repo.Name, AraRepoName, StringComparison.OrdinalIgnoreCase);
+        // Repo-specific default first, then fall back to common branch names so a
+        // missing preferred branch never leaves the dropdown empty.
+        var prefs = isAra
+            ? new[] { AraDefaultBaseBranch, DefaultBaseBranch, "develop", "master" }
+            : new[] { DefaultBaseBranch, "develop", "master" };
+        foreach (var pref in prefs)
+        {
+            var match = branches.FirstOrDefault(b => string.Equals(b, pref, StringComparison.OrdinalIgnoreCase));
+            if (match != null) return match;
+        }
+        return branches.FirstOrDefault() ?? (isAra ? AraDefaultBaseBranch : DefaultBaseBranch);
+    }
+
+    private static string Enc(string s) => System.Net.WebUtility.HtmlEncode(s);
+    private static string TypeCls(string t) => t.ToLower() switch { "bug" => "bug", "change request" => "cr", _ => "" };
+    private static string StateCls(string s)
+    {
+        var l = s.ToLower();
+        if (l.Contains("progress") || l.Contains("active")) return "state-active";
+        if (l.Contains("resolve") || l.Contains("done") || l.Contains("complete")) return "state-resolved";
+        if (l.Contains("closed")) return "state-closed";
+        return "state-new";
+    }
+    private static string NormTitle(string s)
+    {
+        // Drop punctuation, then collapse each run of whitespace to a single
+        // underscore. Replacing spaces one-by-one would turn a removed " - "
+        // into "__"; collapsing the whole run keeps it to one separator.
+        var cleaned = System.Text.RegularExpressions.Regex.Replace(s, @"[^a-zA-Z0-9\s]", "");
+        cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"\s+", "_");
+        return cleaned.ToLower().Trim('_');
+    }
+    private static string NormSprint(string s)
+    {
+        var norm = System.Text.RegularExpressions.Regex.Replace(s, @"[\s\-\.]+", "_").Trim('_');
+        // Remove underscore between PI prefix and year digits: PI_2026 -> PI2026
+        norm = System.Text.RegularExpressions.Regex.Replace(norm, @"^(PI)_(\d)", "$1$2", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return norm;
+    }
+    private static string AreaShort(string name)
+    {
+        var words = name.Split(new[] { ' ', '-', '_' }, StringSplitOptions.RemoveEmptyEntries);
+        return words.Length == 1 ? words[0].ToUpper()[..Math.Min(12, words[0].Length)] : string.Concat(words.Select(w => w[0])).ToUpper();
+    }
+}

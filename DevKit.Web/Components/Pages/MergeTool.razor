@@ -1,0 +1,667 @@
+@page "/merge"
+@inject TfsApiService TfsApi
+@inject GitCommandService GitCmd
+@inject SettingsService Settings
+@inject PageStateService PageState
+@inject IJSRuntime JS
+@implements IDisposable
+
+<div style="display:flex;flex-direction:column;gap:0;flex:1;overflow:hidden;">
+    <!-- Config Bar -->
+    <div class="cfg-bar">
+        <div class="cfg-col" style="flex:0 0 auto;">
+            <div class="cfg-field">
+                <label class="cfg-label">📂 Area Path</label>
+                <GlassDropdown Style="min-width:220px;"
+                               Value="@(selectedArea != null ? SerializeArea(selectedArea) : "")"
+                               Placeholder="— Select area —"
+                               Disabled="@(areas.Count==0)"
+                               Groups="@AreaGroups"
+                               OnChange="OnAreaChange" />
+            </div>
+        </div>
+        <div class="cfg-divider"></div>
+        <div class="cfg-col" style="flex:0 0 auto;">
+            <div class="cfg-field">
+                <label class="cfg-label">📅 Sprint</label>
+                <GlassDropdown Style="min-width:180px;"
+                               Value="@(selectedSprint ?? "")"
+                               Placeholder="— All —"
+                               EmptyLabel="— All —" EmptyValue=""
+                               Disabled="@(iterations.Count==0)"
+                               Groups="@SprintGroups"
+                               OnChange="OnSprintChange" />
+            </div>
+        </div>
+        <div class="cfg-divider"></div>
+        <div class="cfg-col" style="flex:0 0 auto;">
+            <div class="cfg-field">
+                <label class="cfg-label">💻 Local Repository</label>
+                <GlassDropdown Style="min-width:220px;"
+                               Value="@selectedLocalRepoPath"
+                               Placeholder="— Select local repo —"
+                               Disabled="@(localRepoOptions.Count==0)"
+                               Options="@localRepoOptions"
+                               OnChange="OnLocalRepoChange" />
+            </div>
+        </div>
+        <div class="cfg-divider"></div>
+        <div class="cfg-col" style="flex:0 0 auto;">
+            <div class="cfg-field">
+                <label class="cfg-label">🌿 Base Branch</label>
+                <GlassDropdown Style="min-width:180px;"
+                               Value="@globalBaseBranch"
+                               Placeholder="— Select branch —"
+                               Disabled="@(string.IsNullOrEmpty(selectedLocalRepoPath) || globalBranches.Count==0)"
+                               ShowEmptyOption="false"
+                               Options="@GlobalBranchOptions"
+                               OnChange="OnGlobalBranchChange" />
+            </div>
+        </div>
+        <div class="cfg-divider"></div>
+        <div class="cfg-col" style="flex:0 0 auto;">
+            <button class="cfg-load-btn" @onclick="LoadWorkItems" disabled="@(selectedArea == null || loading)">
+                @if (loading) { <span class="spin spin-sm" style="color:var(--text);"></span> }
+                else { <span>⬇</span> }
+                Load
+            </button>
+            @if (workItems.Count > 0) { <span class="chip chip-green" style="font-size:.56rem;">@workItems.Count items</span> }
+        </div>
+    </div>
+
+    <!-- Filter bar -->
+    <div class="cfg-bar-filters">
+        <div style="flex:2;"><div class="cfg-field"><label class="cfg-label">🔍 Search</label><input class="cfg-fi" placeholder="ID, title, assignee…" @oninput="OnSearch" /></div></div>
+        <div style="flex:1;"><div class="cfg-field"><label class="cfg-label">🏷 Type</label>
+            <GlassDropdown Value="@typeFilter" Placeholder="— All —" EmptyLabel="— All —" EmptyValue=""
+                           Options="@TypeOptions" OnChange="OnTypeFilter" />
+        </div></div>
+        <div style="flex:1;"><div class="cfg-field"><label class="cfg-label">👤 Assignee</label>
+            <GlassDropdown Value="@assigneeFilter" Placeholder="— All —" EmptyLabel="— All —" EmptyValue=""
+                           Options="@AssigneeOptions" OnChange="OnAssigneeFilter" />
+        </div></div>
+    </div>
+
+    <!-- Main: left table + right PR view -->
+    <div class="content" style="flex:1;overflow:hidden;">
+        <!-- LEFT: Work Items -->
+        <div class="content-left">
+            <div class="gpanel" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+                <div class="phead">
+                    <span class="ptitle">📋 Requirements / Change Requests / Bugs</span>
+                    @if (filtered.Count > 0) { <span class="chip chip-cyan">@filtered.Count item(s)</span> }
+                </div>
+                <div class="pbody" style="padding:0;flex:1;overflow:hidden;">
+                    <div class="grid-wrap" style="overflow:auto;height:100%;">
+                        <table class="req-table">
+                            <thead><tr>
+                                <th style="width:70px;" @onclick='()=>Sort("id")'>ID</th>
+                                <th @onclick='()=>Sort("title")'>Title & Details</th>
+                                <th style="width:80px;" @onclick='()=>Sort("state")'>State</th>
+                                <th style="width:110px;" @onclick='()=>Sort("assigned")'>Assigned</th>
+                            </tr></thead>
+                            <tbody>
+                                @if (filtered.Count == 0)
+                                {
+                                    <tr><td colspan="4" class="tbl-empty">@(workItems.Count==0?"Select area, then Load":"No items match.")</td></tr>
+                                }
+                                @foreach (var item in filtered)
+                                {
+                                    <tr class="@(selectedItemId == item.Id ? "selected" : "")" @onclick="()=>SelectItem(item.Id)">
+                                        <td><a class="id-link" href="@TfsApi.WorkItemUrl(item.Project,item.Id)" target="_blank" @onclick:stopPropagation>#@item.Id</a></td>
+                                        <td><span class="type-pill @TypeCls(item.Type)">@item.Type</span><div class="cell-title">@item.Title</div><div class="cell-meta">@item.Area.Split('\\').LastOrDefault()</div></td>
+                                        <td><span class="state-pill @StateCls(item.State)">@item.State</span></td>
+                                        <td style="font-size:.7rem;">@item.Assigned</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- RIGHT: PR & Commit View -->
+        <div class="content-right">
+            <div class="gpanel">
+                <div class="phead">
+                    <span class="ptitle">⛙ Pull Requests & Commits</span>
+                    <div style="display:flex;gap:6px;align-items:center;">
+                        @if (repoPRs.Count > 0)
+                        {
+                            <button class="btn-sm" @onclick="LoadPRs">⟳ Refresh</button>
+                            <span style="font-size:.58rem;color:var(--muted);">@repoPRs.Values.Sum(r=>r.Prs.Count) PR(s)</span>
+                        }
+                        <button class="btn-sm @(prSortDesc ? "btn-sm-active" : "")" @onclick="TogglePrSort" title="Toggle sort order">
+                            @(prSortDesc ? "↓ Newest" : "↑ Oldest")
+                        </button>
+                    </div>
+                </div>
+                <div class="pbody" style="padding:0;">
+                    @if (string.IsNullOrEmpty(selectedItemId))
+                    {
+                        <div class="pr-placeholder">
+                            <div style="font-size:2rem;opacity:.2;">⛙</div>
+                            <div class="bp-title">Select a Work Item</div>
+                            <div class="bp-sub">Click a row in the table to view<br/>related Pull Requests & commits.</div>
+                        </div>
+                    }
+                    else if (loadingPRs)
+                    {
+                        <div style="padding:30px;text-align:center;"><div class="spin" style="color:var(--accent);width:24px;height:24px;border-width:2.5px;margin:0 auto;"></div><div style="font-size:.73rem;color:var(--muted);margin-top:10px;">Searching PRs across @repos.Count repos…</div></div>
+                    }
+                    else if (repoPRs.Count == 0 && !loadingPRs)
+                    {
+                        <div class="pr-placeholder">
+                            <div style="font-size:2rem;opacity:.2;">🔍</div>
+                            <div class="bp-title">No Pull Requests Found</div>
+                            <div class="bp-sub">No PRs reference the selected work item ID.</div>
+                        </div>
+                    }
+                    else
+                    {
+                        <!-- Selected item summary -->
+                        @if (GetSelectedItem() is WorkItem selItem)
+                        {
+                            <div class="sel-bar">
+                                <span class="sel-chip @(selItem.Type == "Requirement" ? "sel-chip-req" : selItem.Type == "Bug" ? "sel-chip-bug" : "sel-chip-chr")">
+                                    @selItem.Type
+                                </span>
+                                <span style="font-size:.68rem;font-weight:600;">#@selItem.Id — @selItem.Title</span>
+                            </div>
+                        }
+
+                        <!-- Connection status -->
+                        @if (!string.IsNullOrEmpty(selectedLocalRepoPath))
+                        {
+                            <div style="padding:6px 14px;font-size:.62rem;display:flex;align-items:center;gap:8px;border-bottom:1px solid rgba(255,255,255,.04);background:rgba(100,100,120,.03);">
+                                <span style="color:var(--green);">●</span>
+                                <span style="font-weight:700;">@selectedLocalRepoName</span>
+                                <span style="color:var(--muted);">→</span>
+                                <span class="proj-branch-badge">@(string.IsNullOrEmpty(globalBaseBranch) ? "none" : globalBaseBranch)</span>
+                                <span style="font-family:var(--mono);font-size:.58rem;color:var(--muted);margin-left:auto;">@selectedLocalRepoPath</span>
+                            </div>
+                        }
+
+                        @foreach (var kv in repoPRs)
+                        {
+                            var repoId = kv.Key;
+                            var data = kv.Value;
+                            var dn = $"{data.Repo.Project} / {data.Repo.Name}";
+                            var collapsed = collapsedProjects.Contains(repoId);
+
+                            <div class="proj-section">
+                                <div class="proj-hdr" @onclick="()=>ToggleProject(repoId)">
+                                    <span class="proj-name">@dn</span>
+                                    @if (!string.IsNullOrEmpty(globalBaseBranch)) { <span class="proj-branch-badge">→ @globalBaseBranch</span> }
+                                    <span style="font-size:.6rem;color:var(--muted);margin-left:3px;">@data.Prs.Count PR(s)</span>
+                                    <span class="proj-chevron">@(collapsed?"▶":"▼")</span>
+                                </div>
+
+                                @if (!collapsed)
+                                {
+                                    var sortedPrs = prSortDesc
+                                        ? data.Prs.OrderByDescending(p => p.CreationDate).ToList()
+                                        : data.Prs.OrderBy(p => p.CreationDate).ToList();
+
+                                    @foreach (var pr in sortedPrs)
+                                    {
+                                        var prKey = $"{repoId}-{pr.PullRequestId}";
+                                        var prCollapsed = collapsedPRs.Contains(prKey);
+
+                                        <div class="mr-row">
+                                            <div class="mr-hdr" @onclick="()=>TogglePR(prKey)">
+                                                <span class="pr-badge @pr.StatusCss">@pr.StatusLabel</span>
+                                                <span class="mr-title" title="@pr.Title">PR #@pr.PullRequestId — @pr.Title</span>
+                                                <div class="mr-meta">
+                                                    <span class="mr-branch">@pr.SourceBranch → @pr.TargetBranch</span>
+                                                    <span>@pr.CreatedBy?.DisplayName</span>
+                                                    <span>@FormatDate(pr.CreationDate)</span>
+                                                </div>
+                                                <span style="color:var(--muted);font-size:.65rem;">@(prCollapsed?"▶":"▼")</span>
+                                            </div>
+
+                                            @if (!prCollapsed)
+                                            {
+                                                var sortedCommits = prSortDesc
+                                                    ? pr.Commits.OrderByDescending(x => x.AuthorDate).ToList()
+                                                    : pr.Commits.OrderBy(x => x.AuthorDate).ToList();
+
+                                                @foreach (var c in sortedCommits)
+                                                {
+                                                    var cpKey = $"{c.CommitId}-{repoId}";
+                                                    var cpHist = GetHistory(cpKey);
+                                                    <div class="commit-row">
+                                                        <a class="commit-sha" href="@TfsApi.CommitUrl(data.Repo.Project, data.Repo.Name, c.CommitId)" target="_blank">@c.ShortSha</a>
+                                                        <span class="commit-msg" title="@c.Comment">@c.FirstLine</span>
+                                                        <span class="commit-author">@c.AuthorName</span>
+                                                        <span class="commit-date">@FormatDate(c.AuthorDate)</span>
+                                                        <span class="commit-status">
+                                                            @if (cpHist != null)
+                                                            {
+                                                                <span class="cp-badge @CpBadgeCls(cpHist.Status)">@CpBadgeText(cpHist.Status)</span>
+                                                            }
+                                                        </span>
+                                                        <button class="cp-btn" disabled="@(cpHist?.Status is CherryPickStatus.Done or CherryPickStatus.Resolved || string.IsNullOrEmpty(globalBaseBranch) || string.IsNullOrEmpty(selectedLocalRepoPath) || cherryPicking)"
+                                                                @onclick="()=>DoCherryPick(c.CommitId, repoId, globalBaseBranch, selectedLocalRepoPath, c.FirstLine)">
+                                                            ⛙ Pick
+                                                        </button>
+                                                    </div>
+                                                }
+                                            }
+                                        </div>
+                                    }
+                                }
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Cherry-pick modal -->
+@if (showModal)
+{
+    <div class="modal-overlay" @onclick="CloseModal">
+        <div class="modal" @onclick:stopPropagation>
+            <h3>@modalTitle</h3>
+            <div class="modal-body">
+                @((MarkupString)modalBody)
+            </div>
+            <div class="modal-actions">
+                <button class="btn-ghost" @onclick="CloseModal">Dismiss</button>
+                @if (conflictRepoPath != null)
+                {
+                    <button class="btn-ghost" style="color:var(--accent2);" @onclick="OpenInVisualStudio">Open in Visual Studio</button>
+                    <button class="btn-ghost" style="color:var(--green);" @onclick="MarkConflictResolved">Mark Resolved</button>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    // Data (shared)
+    private List<TfsProject> projects => PageState.TfsData.Projects;
+    private List<TfsArea> areas => PageState.TfsData.Areas;
+    private List<TfsIteration> iterations => PageState.TfsData.Iterations;
+    private List<TfsRepo> repos => PageState.TfsData.Repos;
+
+    // Page state (preserved across navigation)
+    private MergeToolState M => PageState.MergeTool;
+    private List<WorkItem> workItems { get => M.WorkItems; set => M.WorkItems = value; }
+    private List<WorkItem> filtered { get => M.Filtered; set => M.Filtered = value; }
+    private TfsArea? selectedArea { get => M.SelectedArea; set => M.SelectedArea = value; }
+    private string? selectedSprint { get => M.SelectedSprint; set => M.SelectedSprint = value; }
+    private string? selectedItemId { get => M.SelectedItemId; set => M.SelectedItemId = value; }
+    private string selectedLocalRepoPath { get => M.SelectedLocalRepoPath; set => M.SelectedLocalRepoPath = value; }
+    private string selectedLocalRepoName { get => M.SelectedLocalRepoName; set => M.SelectedLocalRepoName = value; }
+    private string globalBaseBranch { get => M.GlobalBaseBranch; set => M.GlobalBaseBranch = value; }
+    private List<string> globalBranches { get => M.GlobalBranches; set => M.GlobalBranches = value; }
+    private Dictionary<string, RepoPrData> repoPRs { get => M.RepoPRs; set => M.RepoPRs = value; }
+    private Dictionary<string, List<string>> branchCache { get => M.BranchCache; set => M.BranchCache = value; }
+    private Dictionary<string, CherryPickHistoryEntry> cherryHistory { get => M.CherryHistory; set => M.CherryHistory = value; }
+    private bool prSortDesc { get => M.PrSortDesc; set => M.PrSortDesc = value; }
+    private string searchQ { get => M.SearchQ; set => M.SearchQ = value; }
+    private string typeFilter { get => M.TypeFilter; set => M.TypeFilter = value; }
+    private string assigneeFilter { get => M.AssigneeFilter; set => M.AssigneeFilter = value; }
+    private string sortCol { get => M.SortCol; set => M.SortCol = value; }
+    private bool sortAsc { get => M.SortAsc; set => M.SortAsc = value; }
+    private HashSet<string> collapsedProjects { get => M.CollapsedProjects; set => M.CollapsedProjects = value; }
+    private HashSet<string> collapsedPRs { get => M.CollapsedPRs; set => M.CollapsedPRs = value; }
+
+    // Non-preserved (transient)
+    private bool loading, loadingPRs, cherryPicking;
+    private List<GlassDropdown.DropdownOption> localRepoOptions = new();
+
+    // Modal
+    private bool showModal;
+    private string modalTitle = "", modalBody = "";
+    private string? conflictRepoPath;
+    private string? conflictSha;
+    private string? conflictRepoId;
+    private string? conflictBranch;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Settings.IsConfigured) return;
+
+        // Load shared TFS data once
+        if (!PageState.TfsData.IsLoaded)
+        {
+            try
+            {
+                PageState.TfsData.Projects = await TfsApi.GetProjectsAsync();
+                PageState.TfsData.Repos = await TfsApi.GetRepositoriesAsync();
+                foreach (var p in PageState.TfsData.Projects)
+                {
+                    PageState.TfsData.Areas.AddRange(await TfsApi.GetAreasAsync(p.Name));
+                    PageState.TfsData.Iterations.AddRange(await TfsApi.GetIterationsAsync(p.Name));
+                }
+                PageState.TfsData.IsLoaded = true;
+            }
+            catch { }
+        }
+
+        // Always rebuild local repo options (lightweight disk scan)
+        BuildLocalRepoOptions();
+
+        // If state already exists, just return (preserve it)
+        if (M.HasState) return;
+        M.HasState = true;
+
+        // Apply defaults from settings
+        if (!string.IsNullOrEmpty(Settings.DefaultAreaPath))
+        {
+            var parts = Settings.DefaultAreaPath.Split("|||");
+            if (parts.Length == 3)
+                selectedArea = new TfsArea { Name = parts[0], Path = parts[1], Project = parts[2] };
+        }
+        if (!string.IsNullOrEmpty(Settings.DefaultSprint))
+            selectedSprint = Settings.DefaultSprint;
+    }
+
+    public void Dispose() { /* State lives in PageStateService */ }
+
+    private List<LocalRepoInfo> scannedLocalRepos = new();
+
+    private void BuildLocalRepoOptions()
+    {
+        scannedLocalRepos = Settings.ScanLocalRepos(repos.Count > 0 ? repos : null);
+        localRepoOptions = scannedLocalRepos.Select(lr =>
+            new GlassDropdown.DropdownOption { Value = lr.LocalPath, Label = lr.DisplayLabel }
+        ).ToList();
+    }
+
+    // ─── Area / Sprint ───
+    private void OnAreaChange(ChangeEventArgs e)
+    {
+        var val = e.Value?.ToString();
+        if (string.IsNullOrEmpty(val)) { selectedArea = null; return; }
+        var parts = val.Split("|||");
+        if (parts.Length == 3) selectedArea = new TfsArea { Name = parts[0], Path = parts[1], Project = parts[2] };
+    }
+    private string SerializeArea(TfsArea a) => $"{a.Name}|||{a.Path}|||{a.Project}";
+    private void OnSprintChange(ChangeEventArgs e) => selectedSprint = e.Value?.ToString();
+
+    // ─── Local Repo & Branch ───
+    private async void OnLocalRepoChange(ChangeEventArgs e)
+    {
+        selectedLocalRepoPath = e.Value?.ToString() ?? "";
+        selectedLocalRepoName = string.IsNullOrEmpty(selectedLocalRepoPath) ? "" : System.IO.Path.GetFileName(selectedLocalRepoPath);
+        globalBaseBranch = "";
+        globalBranches.Clear();
+
+        if (!string.IsNullOrEmpty(selectedLocalRepoPath))
+        {
+            // Find the scanned local repo info (has TFS match via git remote URL)
+            var localInfo = scannedLocalRepos.FirstOrDefault(r => r.LocalPath == selectedLocalRepoPath);
+
+            if (localInfo?.IsMapped == true)
+            {
+                // Matched to TFS — load branches from TFS API
+                if (!branchCache.ContainsKey(localInfo.TfsRepoId!))
+                {
+                    try { branchCache[localInfo.TfsRepoId!] = await TfsApi.GetBranchesAsync(localInfo.TfsProject!, localInfo.TfsRepoId!); } catch { }
+                }
+                if (branchCache.TryGetValue(localInfo.TfsRepoId!, out var branches))
+                    globalBranches = branches.ToList();
+
+                globalBaseBranch = globalBranches.Contains("develop") ? "develop" : globalBranches.FirstOrDefault() ?? "";
+                Settings.SetBaseBranch(localInfo.TfsRepoId!, globalBaseBranch);
+            }
+            else
+            {
+                // No TFS match — read branches from local git
+                try
+                {
+                    var result = await GitCmd.RunGitCommand(selectedLocalRepoPath, "branch -r --format=%(refname:short)");
+                    globalBranches = result.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                        .Select(b => b.Trim().Replace("origin/", ""))
+                        .Where(b => !string.IsNullOrEmpty(b) && b != "HEAD")
+                        .Distinct().OrderBy(b => b).ToList();
+                    globalBaseBranch = globalBranches.Contains("develop") ? "develop" : globalBranches.FirstOrDefault() ?? "";
+                }
+                catch { }
+            }
+        }
+        StateHasChanged();
+    }
+
+    private void OnGlobalBranchChange(ChangeEventArgs e)
+    {
+        globalBaseBranch = e.Value?.ToString() ?? "";
+        var localInfo = scannedLocalRepos.FirstOrDefault(r => r.LocalPath == selectedLocalRepoPath);
+        if (localInfo?.IsMapped == true)
+            Settings.SetBaseBranch(localInfo.TfsRepoId!, globalBaseBranch);
+    }
+
+    // ─── Load Work Items ───
+    private async Task LoadWorkItems()
+    {
+        if (selectedArea == null) return;
+        loading = true; workItems.Clear(); filtered.Clear(); selectedItemId = null; repoPRs.Clear();
+        StateHasChanged();
+        try
+        {
+            var areaPath = TfsApiService.ToWiqlPath(selectedArea.Path);
+            var iterPath = !string.IsNullOrEmpty(selectedSprint) ? TfsApiService.ToWiqlPath(selectedSprint) : null;
+            workItems = await TfsApi.LoadWorkItemsAsync(selectedArea.Project, areaPath, iterPath);
+            ApplyFilter();
+        }
+        catch { }
+        loading = false;
+    }
+
+    // ─── Item Selection — single ───
+    private void SelectItem(string id)
+    {
+        selectedItemId = selectedItemId == id ? null : id;
+        if (!string.IsNullOrEmpty(selectedItemId))
+            _ = LoadPRs();
+        else
+            repoPRs.Clear();
+    }
+
+    // ─── PR Sort ───
+    private void TogglePrSort() => prSortDesc = !prSortDesc;
+
+    // ─── Load PRs ───
+    private async Task LoadPRs()
+    {
+        if (string.IsNullOrEmpty(selectedItemId)) return;
+        loadingPRs = true; repoPRs.Clear(); StateHasChanged();
+        var searchTerm = selectedItemId;
+        foreach (var repo in repos)
+        {
+            try
+            {
+                var prs = await TfsApi.GetPullRequestsAsync(repo.Project, repo.Id);
+                var matched = prs.Where(pr =>
+                    (pr.Title + " " + (pr.Description ?? "") + " " + pr.SourceRefName).ToLower().Contains(searchTerm.ToLower())
+                ).ToList();
+                if (matched.Count == 0) continue;
+
+                foreach (var pr in matched)
+                    pr.Commits = await TfsApi.GetPrCommitsAsync(repo.Project, repo.Id, pr.PullRequestId);
+
+                repoPRs[repo.Id] = new RepoPrData { Repo = repo, Prs = matched };
+
+                if (!branchCache.ContainsKey(repo.Id))
+                    branchCache[repo.Id] = await TfsApi.GetBranchesAsync(repo.Project, repo.Id);
+            }
+            catch { }
+        }
+        loadingPRs = false;
+    }
+
+    // ─── Collapse ───
+    private void ToggleProject(string id) { if (!collapsedProjects.Remove(id)) collapsedProjects.Add(id); }
+    private void TogglePR(string key) { if (!collapsedPRs.Remove(key)) collapsedPRs.Add(key); }
+
+    // ─── Cherry-Pick ───
+    private async Task DoCherryPick(string sha, string repoId, string branch, string localPath, string msg)
+    {
+        if (string.IsNullOrEmpty(branch) || string.IsNullOrEmpty(localPath)) return;
+        cherryPicking = true; StateHasChanged();
+
+        var result = await GitCmd.CherryPickAsync(localPath, branch, sha);
+        var key = $"{sha}-{repoId}";
+        cherryHistory[key] = new CherryPickHistoryEntry { Status = result.Status, Branch = branch, Timestamp = DateTime.Now };
+
+        cherryPicking = false;
+
+        switch (result.Status)
+        {
+            case CherryPickStatus.Done:
+                ShowToast($"✅ {sha[..8]} cherry-picked into {branch}", "s");
+                break;
+            case CherryPickStatus.Exists:
+                ShowToast($"ℹ️ {sha[..8]} already exists in {branch}", "w");
+                break;
+            case CherryPickStatus.Conflict:
+                ShowConflictModal(sha, repoId, branch, localPath, msg, result);
+                break;
+            default:
+                ShowToast($"❌ Cherry-pick failed: {result.ErrorOutput}", "e");
+                break;
+        }
+        StateHasChanged();
+    }
+
+    private void ShowConflictModal(string sha, string repoId, string branch, string localPath, string msg, CherryPickResult result)
+    {
+        var shortSha = sha.Length >= 12 ? sha[..12] : sha;
+        var encMsg = System.Net.WebUtility.HtmlEncode(msg);
+        modalTitle = "⚠ Merge Conflict Detected";
+        conflictRepoPath = localPath;
+        conflictSha = sha;
+        conflictRepoId = repoId;
+        conflictBranch = branch;
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append("<p style='font-size:.76rem;'><strong>Commit:</strong> <code>").Append(shortSha).Append("</code></p>");
+        sb.Append("<p style='font-size:.76rem;'><strong>Message:</strong> ").Append(encMsg).Append("</p>");
+        sb.Append("<p style='font-size:.76rem;'><strong>Target:</strong> <code style='color:var(--cyan);'>").Append(branch).Append("</code></p>");
+        sb.Append("<p style='font-size:.76rem;'><strong>Repo:</strong> <code>").Append(System.Net.WebUtility.HtmlEncode(localPath)).Append("</code></p>");
+        sb.Append("<div style='margin:12px 0;padding:10px 14px;background:rgba(248,113,113,.06);border:1px solid rgba(248,113,113,.12);border-radius:8px;font-size:.74rem;line-height:1.6;'>");
+        sb.Append("<strong>Conflicts detected!</strong> The cherry-pick left the working tree in a conflict state.<br/>");
+        sb.Append("Click <strong>Open in Visual Studio</strong> to resolve conflicts visually, then commit manually.<br/>");
+        sb.Append("After resolving, click <strong>Mark Resolved</strong>.");
+        sb.Append("</div>");
+        if (!string.IsNullOrEmpty(result.ErrorOutput))
+            sb.Append("<pre class='code-block' style='font-size:.64rem;max-height:120px;overflow:auto;'>").Append(System.Net.WebUtility.HtmlEncode(result.ErrorOutput)).Append("</pre>");
+        modalBody = sb.ToString();
+        showModal = true;
+    }
+
+    private void OpenInVisualStudio()
+    {
+        if (string.IsNullOrEmpty(conflictRepoPath)) return;
+        try
+        {
+            // Find .sln file in repo path, or open the folder
+            var slnFiles = Directory.GetFiles(conflictRepoPath, "*.sln", SearchOption.TopDirectoryOnly);
+            var target = slnFiles.Length > 0 ? slnFiles[0] : conflictRepoPath;
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = $"/c start devenv \"{target}\"",
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            System.Diagnostics.Process.Start(psi);
+        }
+        catch
+        {
+            // Fallback: try opening folder in explorer
+            try
+            {
+                System.Diagnostics.Process.Start("explorer.exe", conflictRepoPath);
+            }
+            catch { }
+        }
+    }
+
+    private void MarkConflictResolved()
+    {
+        if (conflictSha != null && conflictRepoId != null && conflictBranch != null)
+        {
+            var key = $"{conflictSha}-{conflictRepoId}";
+            cherryHistory[key] = new CherryPickHistoryEntry { Status = CherryPickStatus.Resolved, Branch = conflictBranch, Timestamp = DateTime.Now };
+        }
+        conflictRepoPath = null;
+        conflictSha = null;
+        conflictRepoId = null;
+        conflictBranch = null;
+        showModal = false;
+    }
+
+    private void CloseModal() { showModal = false; }
+
+    // ─── Toast (simple) ───
+    private string? toastMsg; private string toastType = "i";
+    private void ShowToast(string msg, string type) { toastMsg = msg; toastType = type; }
+
+    // ─── History ───
+    private CherryPickHistoryEntry? GetHistory(string key) => cherryHistory.TryGetValue(key, out var h) ? h : null;
+
+    // ─── Filtering ───
+    private void OnSearch(ChangeEventArgs e) { searchQ = (e.Value?.ToString() ?? "").ToLower(); ApplyFilter(); }
+    private void OnTypeFilter(ChangeEventArgs e) { typeFilter = e.Value?.ToString() ?? ""; ApplyFilter(); }
+    private void OnAssigneeFilter(ChangeEventArgs e) { assigneeFilter = e.Value?.ToString() ?? ""; ApplyFilter(); }
+    private void ApplyFilter()
+    {
+        filtered = workItems.Where(w =>
+            (string.IsNullOrEmpty(searchQ) || w.Id.Contains(searchQ) || w.Title.ToLower().Contains(searchQ) || w.Assigned.ToLower().Contains(searchQ))
+            && (string.IsNullOrEmpty(typeFilter) || w.Type == typeFilter)
+            && (string.IsNullOrEmpty(assigneeFilter) || w.Assigned == assigneeFilter)
+        ).ToList();
+        ApplySort();
+    }
+    private void Sort(string col) { if (sortCol == col) sortAsc = !sortAsc; else { sortCol = col; sortAsc = true; } ApplySort(); }
+    private void ApplySort()
+    {
+        filtered = sortCol switch
+        {
+            "id" => sortAsc ? filtered.OrderBy(w => int.TryParse(w.Id, out var n) ? n : 0).ToList() : filtered.OrderByDescending(w => int.TryParse(w.Id, out var n) ? n : 0).ToList(),
+            "title" => sortAsc ? filtered.OrderBy(w => w.Title).ToList() : filtered.OrderByDescending(w => w.Title).ToList(),
+            "state" => sortAsc ? filtered.OrderBy(w => w.State).ToList() : filtered.OrderByDescending(w => w.State).ToList(),
+            "assigned" => sortAsc ? filtered.OrderBy(w => w.Assigned).ToList() : filtered.OrderByDescending(w => w.Assigned).ToList(),
+            _ => filtered
+        };
+    }
+
+    // ─── Dropdown Data ───
+    private List<GlassDropdown.DropdownGroup> AreaGroups => areas.GroupBy(a => a.Project).Select(grp => new GlassDropdown.DropdownGroup
+    {
+        Label = "📁 " + grp.Key,
+        Options = grp.Select(a => new GlassDropdown.DropdownOption { Value = SerializeArea(a), Label = grp.Key + " — " + TfsApiService.AreaDisplayPath(a.Path) }).ToList()
+    }).ToList();
+
+    private List<GlassDropdown.DropdownGroup> SprintGroups => iterations.GroupBy(i => i.Project).Select(grp => new GlassDropdown.DropdownGroup
+    {
+        Label = "📁 " + grp.Key,
+        Options = grp.Select(it => new GlassDropdown.DropdownOption { Value = it.Path, Label = grp.Key + " — " + it.Name }).ToList()
+    }).ToList();
+
+    private List<GlassDropdown.DropdownOption> GlobalBranchOptions => globalBranches
+        .Select(b => new GlassDropdown.DropdownOption { Value = b, Label = b }).ToList();
+
+    private List<GlassDropdown.DropdownOption> TypeOptions => workItems.Select(w => w.Type).Distinct().OrderBy(t => t)
+        .Select(t => new GlassDropdown.DropdownOption { Value = t, Label = t }).ToList();
+
+    private List<GlassDropdown.DropdownOption> AssigneeOptions => workItems.Select(w => w.Assigned).Where(a => a != "-").Distinct().OrderBy(a => a)
+        .Select(a => new GlassDropdown.DropdownOption { Value = a, Label = a }).ToList();
+
+    private WorkItem? GetSelectedItem() => workItems.FirstOrDefault(w => w.Id == selectedItemId);
+
+    // ─── Helpers ───
+    private static string TypeCls(string t) => t.ToLower() switch { "bug" => "bug", "change request" => "cr", _ => "" };
+    private static string StateCls(string s) { var l = s.ToLower(); if (l.Contains("active") || l.Contains("progress")) return "state-active"; if (l.Contains("resolve") || l.Contains("done")) return "state-resolved"; if (l.Contains("closed")) return "state-closed"; return "state-new"; }
+    private static string FormatDate(DateTime? d) => d?.ToString("dd MMM yyyy, HH:mm") ?? "";
+    private static string CpBadgeCls(CherryPickStatus s) => s switch { CherryPickStatus.Done => "cp-done", CherryPickStatus.Exists => "cp-exists", CherryPickStatus.Conflict => "cp-conflict", CherryPickStatus.Resolving => "cp-resolving", CherryPickStatus.Resolved => "cp-done", _ => "" };
+    private static string CpBadgeText(CherryPickStatus s) => s switch { CherryPickStatus.Done => "✅ Done", CherryPickStatus.Exists => "⚠️ Exists", CherryPickStatus.Conflict => "❌ Conflict", CherryPickStatus.Resolving => "⚡ Resolving", CherryPickStatus.Resolved => "✅ Resolved", _ => "" };
+}
