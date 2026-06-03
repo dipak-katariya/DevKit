@@ -1,0 +1,207 @@
+@inject IJSRuntime JS
+
+<div class="gdd @(IsOpen ? "gdd-open" : "") @CssClass" @ref="rootEl" style="@Style">
+    <div class="gdd-trigger" @onclick="Toggle" @onclick:stopPropagation>
+        <span class="gdd-value @(string.IsNullOrEmpty(Value) ? "gdd-placeholder" : "")">
+            @(string.IsNullOrEmpty(Value) ? Placeholder : GetDisplayText(Value))
+        </span>
+        <span class="gdd-arrow">▾</span>
+    </div>
+
+    @if (IsOpen)
+    {
+        <div class="gdd-panel" @onclick:stopPropagation>
+            <div class="gdd-search-wrap">
+                <input class="gdd-search" type="text" placeholder="Search…" @oninput="OnSearchInput"
+                       @ref="searchInput" @onkeydown="OnKeyDown" />
+            </div>
+            <div class="gdd-list">
+                @if (Groups != null && Groups.Any())
+                {
+                    @if (ShowEmptyOption)
+                    {
+                        <div class="gdd-item @(string.IsNullOrEmpty(Value) ? "gdd-item-active" : "")"
+                             @onclick="SelectEmpty">
+                            @(EmptyLabel ?? Placeholder)
+                        </div>
+                    }
+                    @foreach (var grp in FilteredGroups)
+                    {
+                        <div class="gdd-group">@grp.Label</div>
+                        @foreach (var opt in grp.Options)
+                        {
+                            <div class="gdd-item @(opt.Value == Value ? "gdd-item-active" : "") @(highlightIdx == GetFlatIndex(opt) ? "gdd-item-hl" : "")"
+                                 @onclick="() => Select(opt.Value, opt.Label)">
+                                @opt.Label
+                            </div>
+                        }
+                    }
+                }
+                else if (Options != null)
+                {
+                    @if (ShowEmptyOption)
+                    {
+                        <div class="gdd-item @(string.IsNullOrEmpty(Value) ? "gdd-item-active" : "")"
+                             @onclick="SelectEmpty">
+                            @(EmptyLabel ?? Placeholder)
+                        </div>
+                    }
+                    @foreach (var opt in FilteredOptions)
+                    {
+                        <div class="gdd-item @(opt.Value == Value ? "gdd-item-active" : "") @(highlightIdx == GetFlatIndex(opt) ? "gdd-item-hl" : "")"
+                             @onclick="() => Select(opt.Value, opt.Label)">
+                            @opt.Label
+                        </div>
+                    }
+                }
+
+                @if (!FilteredFlatList.Any())
+                {
+                    <div class="gdd-empty">No results</div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public EventCallback<ChangeEventArgs> OnChange { get; set; }
+    [Parameter] public string Placeholder { get; set; } = "— Select —";
+    [Parameter] public string? EmptyLabel { get; set; }
+    [Parameter] public string? EmptyValue { get; set; }
+    [Parameter] public bool ShowEmptyOption { get; set; } = true;
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public string? CssClass { get; set; }
+    [Parameter] public string? Style { get; set; }
+    [Parameter] public List<DropdownOption>? Options { get; set; }
+    [Parameter] public List<DropdownGroup>? Groups { get; set; }
+
+    private bool IsOpen;
+    private string searchText = "";
+    private int highlightIdx = -1;
+    private ElementReference rootEl;
+    private ElementReference searchInput;
+    private DotNetObjectReference<GlassDropdown>? dotNetRef;
+
+    private List<DropdownOption> FilteredOptions =>
+        Options?.Where(o => string.IsNullOrEmpty(searchText) || o.Label.Contains(searchText, StringComparison.OrdinalIgnoreCase)).ToList()
+        ?? new();
+
+    private List<DropdownGroup> FilteredGroups =>
+        Groups?.Select(g => new DropdownGroup
+        {
+            Label = g.Label,
+            Options = g.Options.Where(o => string.IsNullOrEmpty(searchText) || o.Label.Contains(searchText, StringComparison.OrdinalIgnoreCase)).ToList()
+        }).Where(g => g.Options.Count > 0).ToList() ?? new();
+
+    private List<DropdownOption> FilteredFlatList
+    {
+        get
+        {
+            if (Groups != null && Groups.Any())
+                return FilteredGroups.SelectMany(g => g.Options).ToList();
+            return FilteredOptions;
+        }
+    }
+
+    private int GetFlatIndex(DropdownOption opt)
+    {
+        var list = FilteredFlatList;
+        for (int i = 0; i < list.Count; i++)
+            if (list[i].Value == opt.Value) return i;
+        return -1;
+    }
+
+    private string GetDisplayText(string val)
+    {
+        if (Groups != null)
+        {
+            foreach (var g in Groups)
+                foreach (var o in g.Options)
+                    if (o.Value == val) return o.Label;
+        }
+        if (Options != null)
+        {
+            var match = Options.FirstOrDefault(o => o.Value == val);
+            if (match != null) return match.Label;
+        }
+        return val;
+    }
+
+    private async Task Toggle()
+    {
+        if (Disabled) return;
+        IsOpen = !IsOpen;
+        searchText = "";
+        highlightIdx = -1;
+        if (IsOpen)
+        {
+            await Task.Yield();
+            try { await JS.InvokeVoidAsync("devKit.focusEl", searchInput); } catch { }
+            dotNetRef ??= DotNetObjectReference.Create(this);
+            try { await JS.InvokeVoidAsync("devKit.registerClickOutside", rootEl, dotNetRef); } catch { }
+        }
+        else
+        {
+            try { await JS.InvokeVoidAsync("devKit.unregisterClickOutside", rootEl); } catch { }
+        }
+    }
+
+    [JSInvokable]
+    public void CloseDropdown()
+    {
+        IsOpen = false;
+        searchText = "";
+        StateHasChanged();
+    }
+
+    private Task SelectEmpty() => Select(EmptyValue ?? "", EmptyLabel ?? Placeholder);
+
+    private async Task Select(string value, string label)
+    {
+        Value = value;
+        IsOpen = false;
+        searchText = "";
+        try { await JS.InvokeVoidAsync("devKit.unregisterClickOutside", rootEl); } catch { }
+        await ValueChanged.InvokeAsync(value);
+        await OnChange.InvokeAsync(new ChangeEventArgs { Value = value });
+    }
+
+    private void OnSearchInput(ChangeEventArgs e)
+    {
+        searchText = e.Value?.ToString() ?? "";
+        highlightIdx = -1;
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        var list = FilteredFlatList;
+        if (e.Key == "ArrowDown") { highlightIdx = Math.Min(highlightIdx + 1, list.Count - 1); }
+        else if (e.Key == "ArrowUp") { highlightIdx = Math.Max(highlightIdx - 1, 0); }
+        else if (e.Key == "Enter" && highlightIdx >= 0 && highlightIdx < list.Count)
+        {
+            var opt = list[highlightIdx];
+            await Select(opt.Value, opt.Label);
+        }
+        else if (e.Key == "Escape") { await Toggle(); }
+    }
+
+    public void Dispose()
+    {
+        dotNetRef?.Dispose();
+    }
+
+    public class DropdownOption
+    {
+        public string Value { get; set; } = "";
+        public string Label { get; set; } = "";
+    }
+
+    public class DropdownGroup
+    {
+        public string Label { get; set; } = "";
+        public List<DropdownOption> Options { get; set; } = new();
+    }
+}

@@ -1,0 +1,115 @@
+@page "/markdown"
+@inject IJSRuntime JS
+
+<div style="display:flex;flex-direction:column;flex:1;overflow:hidden;">
+    <div class="gpanel" style="flex:1;display:flex;flex-direction:column;overflow:hidden;border-radius:var(--r3);">
+        <!-- Header -->
+        <div class="phead" style="flex-wrap:nowrap;">
+            <span class="ptitle">
+                <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" style="opacity:.7;">
+                    <path d="M14.85 3H1.15C.52 3 0 3.52 0 4.15v7.7C0 12.48.52 13 1.15 13h13.7c.63 0 1.15-.52 1.15-1.15v-7.7C16 3.52 15.48 3 14.85 3zM9 11H7V8L5.5 9.92 4 8v3H2V5h2l1.5 2L7 5h2v6zm2.99.5L9.5 8H11V5h2v3h1.5l-2.51 3.5z"/>
+                </svg>
+                Markdown Viewer
+            </span>
+            <div style="display:flex;gap:4px;align-items:center;">
+                <button class="btn-sm @(viewMode == "editor" ? "btn-sm-active" : "")" @onclick='() => SetMode("editor")'>Editor</button>
+                <button class="btn-sm @(viewMode == "split" ? "btn-sm-active" : "")" @onclick='() => SetMode("split")'>Split</button>
+                <button class="btn-sm @(viewMode == "preview" ? "btn-sm-active" : "")" @onclick='() => SetMode("preview")'>Preview</button>
+            </div>
+            <div style="display:flex;gap:4px;align-items:center;margin-left:auto;">
+                <button class="btn-sm" @onclick="ImportFile">Import</button>
+                <button class="btn-sm" @onclick="ExportMd">Export .md</button>
+                <button class="btn-sm" @onclick="CopyRendered">Copy as Text</button>
+            </div>
+        </div>
+
+        <!-- Content -->
+        <div style="flex:1;display:flex;overflow:hidden;min-height:0;">
+            @if (viewMode == "editor" || viewMode == "split")
+            {
+                <div style="flex:1;display:flex;flex-direction:column;min-width:0;@(viewMode == "split" ? "border-right:1px solid rgba(255,255,255,.06);" : "")">
+                    <div style="padding:4px 14px;font-size:.56rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);background:rgba(100,100,120,.04);border-bottom:1px solid rgba(255,255,255,.04);">
+                        Editor
+                    </div>
+                    <textarea id="mdEditor" class="md-editor" spellcheck="false"
+                              placeholder="Type or paste Markdown here..."
+                              @oninput="OnInput" @bind="markdownText"></textarea>
+                </div>
+            }
+            @if (viewMode == "preview" || viewMode == "split")
+            {
+                <div style="flex:1;display:flex;flex-direction:column;min-width:0;">
+                    <div style="padding:4px 14px;font-size:.56rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);background:rgba(100,100,120,.04);border-bottom:1px solid rgba(255,255,255,.04);">
+                        Preview
+                    </div>
+                    <div id="mdPreview" class="md-preview md" style="flex:1;overflow-y:auto;padding:20px 24px;">
+                    </div>
+                </div>
+            }
+        </div>
+
+        <!-- Status bar -->
+        <div style="display:flex;align-items:center;justify-content:flex-end;gap:14px;padding:0 14px;height:22px;background:rgba(16,185,129,.06);border-top:1px solid rgba(255,255,255,.04);font-size:.58rem;color:var(--muted2);border-radius:0 0 var(--r3) var(--r3);">
+            <span>Ln @lineCount</span>
+            <span>Words @wordCount</span>
+            <span>Chars @charCount</span>
+        </div>
+    </div>
+</div>
+
+<!-- Hidden file input -->
+<input type="file" id="mdFileInput" accept=".md,.markdown,.txt,.text,.mdown" style="display:none" />
+
+@code {
+    private string markdownText = "# Welcome to Markdown Viewer\n\nA **live** Markdown editor with GitHub-style preview.\n\n## Features\n\n- **Live preview** as you type\n- GitHub-flavored Markdown (tables, task lists, ~~strikethrough~~)\n- Syntax highlighting for code blocks\n- Import and export\n\n## Code Example\n\n```javascript\nfunction fibonacci(n) {\n  if (n <= 1) return n;\n  return fibonacci(n - 1) + fibonacci(n - 2);\n}\nconsole.log(fibonacci(10)); // 55\n```\n\n## Table\n\n| Feature | Status |\n|---------|--------|\n| Parsing | Done |\n| Highlight | Done |\n| Export | Done |\n\n---\n\n*Start editing to see live changes!*";
+    private string viewMode = "split";
+    private int lineCount, wordCount, charCount;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await JS.InvokeVoidAsync("devKit.initMarkdownViewer");
+            UpdateStats();
+        }
+    }
+
+    private async Task OnInput(ChangeEventArgs e)
+    {
+        markdownText = e.Value?.ToString() ?? "";
+        UpdateStats();
+        await JS.InvokeVoidAsync("devKit.renderMarkdown", markdownText);
+    }
+
+    private void SetMode(string mode)
+    {
+        viewMode = mode;
+        StateHasChanged();
+        _ = JS.InvokeVoidAsync("devKit.renderMarkdown", markdownText);
+    }
+
+    private void UpdateStats()
+    {
+        lineCount = string.IsNullOrEmpty(markdownText) ? 0 : markdownText.Split('\n').Length;
+        var trimmed = markdownText?.Trim() ?? "";
+        wordCount = string.IsNullOrWhiteSpace(trimmed) ? 0 : trimmed.Split(new[] { ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries).Length;
+        charCount = markdownText?.Length ?? 0;
+    }
+
+    private async Task ImportFile()
+    {
+        await JS.InvokeVoidAsync("devKit.triggerFileInput", "mdFileInput");
+    }
+
+    private async Task ExportMd()
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(markdownText ?? "");
+        var base64 = Convert.ToBase64String(bytes);
+        await JS.InvokeVoidAsync("devKit.downloadFile", "document.md", "text/markdown", base64);
+    }
+
+    private async Task CopyRendered()
+    {
+        await JS.InvokeVoidAsync("devKit.copyToClipboard", markdownText ?? "");
+    }
+}

@@ -1,0 +1,120 @@
+# ============================================================================
+#  DevKit — .gitignore
+#  .NET 9 / Blazor Server / Visual Studio
+# ============================================================================
+
+# ── Secrets & local user settings ──────────────────────────────────────────
+# usersettings.json holds the TFS Personal Access Token (plaintext) and is
+# written next to the binary at runtime — NEVER commit it.
+usersettings.json
+**/usersettings.json
+# Local-only app config overrides (the tracked appsettings*.json stay in repo)
+appsettings.*.local.json
+secrets.json
+*.pfx
+*.snk
+
+# ── Build results ───────────────────────────────────────────────────────────
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+[Pp]ublish/
+[Dd]ebug/
+[Rr]elease/
+[Dd]ebugPublic/
+[Rr]eleases/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+build/
+bld/
+[Ll]og/
+[Ll]ogs/
+
+# ── .NET / MSBuild artifacts ─────────────────────────────────────────────────
+project.lock.json
+project.fragment.lock.json
+artifacts/
+*.binlog
+*.nupkg
+*.snupkg
+.packages/
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+*.dll
+*.exe
+*.pdb
+*.cache
+*_i.c
+*_p.c
+*.meta
+msbuild.log
+msbuild.err
+msbuild.wrn
+
+# ── Blazor / web ─────────────────────────────────────────────────────────────
+wwwroot/dist/
+compilerconfig.json.defaults
+*.publishproj
+PublishScripts/
+
+# ── Visual Studio ────────────────────────────────────────────────────────────
+.vs/
+*.user
+*.userosscache
+*.suo
+*.userprefs
+*.sln.docstates
+*.lscache
+*.VC.db
+*.VC.VC.opendb
+*.psess
+*.vsp
+*.vspx
+*.sap
+.builds
+_ReSharper*/
+*.[Rr]e[Ss]harper
+*.DotSettings.user
+
+# ── JetBrains Rider ──────────────────────────────────────────────────────────
+.idea/
+*.sln.iml
+
+# ── VS Code (keep the shared launch/tasks config, drop the rest) ─────────────
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# ── Test / coverage results ──────────────────────────────────────────────────
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+*.trx
+*.coverage
+*.coveragexml
+coverage*.json
+coverage*.xml
+coverage*.info
+TestResults/
+
+# ── NuGet / tooling ──────────────────────────────────────────────────────────
+.nuget/
+*.nuget.props
+*.nuget.targets
+.dotnet/
+.tools/
+
+# ── OS & editor cruft ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*~
+*.swp
+*.bak
+*.tmp

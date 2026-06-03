@@ -1,0 +1,64 @@
+@inject NavigationManager Nav
+@implements IDisposable
+
+<nav class="nav-menu">
+    <a class="nav-item @ActiveClass("/markdown")" href="/markdown" @onclick='() => Navigate("/markdown")' @onclick:preventDefault>
+        <span class="nav-icon">📝</span>
+        <span>Markdown</span>
+    </a>
+    <a class="nav-item @ActiveClass("/workday")" href="/workday" @onclick='() => Navigate("/workday")' @onclick:preventDefault>
+        <span class="nav-icon">⏱</span>
+        <span>Workday</span>
+    </a>
+    <a class="nav-item @ActiveClass("/")" href="/" @onclick='() => Navigate("/")' @onclick:preventDefault>
+        <span class="nav-icon">🔀</span>
+        <span>Branch Creator</span>
+    </a>
+    <a class="nav-item @ActiveClass("/branch-delete")" href="/branch-delete" @onclick='() => Navigate("/branch-delete")' @onclick:preventDefault>
+        <span class="nav-icon">🗑</span>
+        <span>Branch Delete</span>
+    </a>
+    <a class="nav-item @ActiveClass("/planning")" href="/planning" @onclick='() => Navigate("/planning")' @onclick:preventDefault>
+        <span class="nav-icon">📐</span>
+        <span>Planning</span>
+    </a>
+    <a class="nav-item @ActiveClass("/merge")" href="/merge" @onclick='() => Navigate("/merge")' @onclick:preventDefault>
+        <span class="nav-icon">⛙</span>
+        <span>Merge Tool</span>
+    </a>
+    <a class="nav-item @ActiveClass("/settings")" href="/settings" @onclick='() => Navigate("/settings")' @onclick:preventDefault>
+        <span class="nav-icon">⚙</span>
+        <span>Settings</span>
+    </a>
+</nav>
+
+@code {
+    protected override void OnInitialized()
+    {
+        Nav.LocationChanged += OnLocationChanged;
+    }
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        StateHasChanged();
+    }
+
+    private string ActiveClass(string path)
+    {
+        var uri = new Uri(Nav.Uri);
+        var current = uri.AbsolutePath.TrimEnd('/');
+        var target = path.TrimEnd('/');
+        if (string.IsNullOrEmpty(target)) return string.IsNullOrEmpty(current) ? "active" : "";
+        return current.Equals(target, StringComparison.OrdinalIgnoreCase) ? "active" : "";
+    }
+
+    private void Navigate(string path)
+    {
+        Nav.NavigateTo(path);
+    }
+
+    public void Dispose()
+    {
+        Nav.LocationChanged -= OnLocationChanged;
+    }
+}

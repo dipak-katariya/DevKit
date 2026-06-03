@@ -1,0 +1,51 @@
+@inherits LayoutComponentBase
+@inject SettingsService Settings
+@inject NavigationManager Nav
+
+<div class="devkit-app">
+    <!-- Header -->
+    <header class="hdr">
+        <div class="hdr-r1">
+            <div class="hdr-logo">
+                <div class="hdr-icon">DK</div>
+                <span class="hdr-title">DevKit</span>
+                <span class="hdr-sub">TFS · Casepoint</span>
+            </div>
+            <NavMenu />
+            <div class="hdr-r1-right">
+                <div class="api-pill @(Settings.IsConfigured ? "ok" : "err")">
+                    <span class="dot"></span>
+                    <span>@(Settings.IsConfigured ? "Connected" : "Not configured")</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main content -->
+    <div class="shell">
+        @if (!Settings.IsConfigured && !IsSettingsPage)
+        {
+            <div class="setup-guard">
+                <div class="setup-card">
+                    <div style="font-size:2rem;margin-bottom:12px;">⚙</div>
+                    <h2>Setup Required</h2>
+                    <p>Configure your TFS server URL and Personal Access Token to get started.</p>
+                    <button class="btn-primary" style="margin-top:16px;width:auto;padding:10px 24px;" @onclick='() => Nav.NavigateTo("/settings")'>
+                        Open Settings
+                    </button>
+                </div>
+            </div>
+        }
+        else
+        {
+            @Body
+        }
+    </div>
+</div>
+
+@code {
+    private bool IsSettingsPage =>
+        Nav.Uri.Contains("/settings", StringComparison.OrdinalIgnoreCase)
+        || Nav.Uri.Contains("/markdown", StringComparison.OrdinalIgnoreCase)
+        || Nav.Uri.Contains("/workday", StringComparison.OrdinalIgnoreCase);
+}
