@@ -7,6 +7,11 @@ namespace DevKit.Web.Services;
 
 public class TfsApiService
 {
+    private const int MaxWorkItems = 200;
+    private const int WorkItemBatchSize = 50;
+    private const int MaxPullRequests = 200;
+    private const string EmptyObjectId = "0000000000000000000000000000000000000000";
+
     private readonly HttpClient _http;
     private readonly SettingsService _settings;
     private readonly ILogger<TfsApiService> _logger;
@@ -26,32 +31,80 @@ public class TfsApiService
     private string Url => _settings.Tfs.Url.TrimEnd('/');
     private string Ver => _settings.Tfs.ApiVersion;
 
-    private void SetAuth()
+    private string Api(string path) => $"{Url}/_apis/{path}";
+    private string ProjectApi(string project, string path) => $"{Url}/{Uri.EscapeDataString(project)}/_apis/{path}";
+
+    // WIQL string literals are single-quoted; an embedded apostrophe must be doubled,
+    // both to keep the query valid for legitimate names (e.g. "Q1'26") and to prevent
+    // a crafted path from altering the query.
+    private static string WiqlEscape(string value) => (value ?? "").Replace("'", "''");
+
+    private AuthenticationHeaderValue AuthHeader()
     {
         var cred = Convert.ToBase64String(Encoding.ASCII.GetBytes($":{_settings.Tfs.Pat}"));
-        _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", cred);
+        return new AuthenticationHeaderValue("Basic", cred);
+    }
+
+    private async Task<HttpResponseMessage> SendAuthed(HttpRequestMessage req)
+    {
+        req.Headers.Authorization = AuthHeader();
+        var resp = await _http.SendAsync(req);
+        try
+        {
+            await EnsureSuccess(resp);
+        }
+        catch
+        {
+            resp.Dispose();
+            throw;
+        }
+        return resp;
+    }
+
+    // EnsureSuccessStatusCode() throws with only the status code; TFS returns a useful
+    // "message" in the body. Surface it so the page-level handlers can show a real error.
+    private static async Task EnsureSuccess(HttpResponseMessage resp)
+    {
+        if (resp.IsSuccessStatusCode) return;
+        var detail = "";
+        try
+        {
+            var body = await resp.Content.ReadAsStringAsync();
+            if (!string.IsNullOrWhiteSpace(body))
+            {
+                using var doc = JsonDocument.Parse(body);
+                if (doc.RootElement.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String)
+                    detail = m.GetString() ?? "";
+            }
+        }
+        catch (JsonException)
+        {
+            // Body was not JSON — fall back to the status line below.
+        }
+        throw new HttpRequestException(
+            $"TFS request failed ({(int)resp.StatusCode} {resp.ReasonPhrase})" +
+            (string.IsNullOrEmpty(detail) ? "" : $": {detail}"));
     }
 
     private async Task<JsonElement> GetJson(string url)
     {
-        SetAuth();
         // Force a fresh read: TFS/proxies can serve stale work-item GETs, which makes
         // freshly-saved sizes appear unchanged after reloading the Planning tab.
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         req.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true, NoStore = true, MustRevalidate = true };
         req.Headers.Pragma.ParseAdd("no-cache");
-        var resp = await _http.SendAsync(req);
-        resp.EnsureSuccessStatusCode();
+        using var resp = await SendAuthed(req);
         var json = await resp.Content.ReadAsStringAsync();
         return JsonSerializer.Deserialize<JsonElement>(json);
     }
 
     private async Task<JsonElement> PostJson(string url, object body)
     {
-        SetAuth();
-        var content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
-        var resp = await _http.PostAsync(url, content);
-        resp.EnsureSuccessStatusCode();
+        using var req = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
+        };
+        using var resp = await SendAuthed(req);
         var json = await resp.Content.ReadAsStringAsync();
         return JsonSerializer.Deserialize<JsonElement>(json);
     }
@@ -59,7 +112,7 @@ public class TfsApiService
     // ═══ PROJECTS ═══
     public async Task<List<TfsProject>> GetProjectsAsync()
     {
-        var data = await GetJson($"{Url}/_apis/projects?api-version={Ver}");
+        var data = await GetJson(Api($"projects?api-version={Ver}"));
         return data.GetProperty("value").EnumerateArray()
             .Select(p => new TfsProject { Id = p.GetProperty("id").GetString()!, Name = p.GetProperty("name").GetString()! })
             .OrderBy(p => p.Name).ToList();
@@ -70,7 +123,7 @@ public class TfsApiService
     {
         try
         {
-            var data = await GetJson($"{Url}/_apis/git/repositories?api-version={Ver}");
+            var data = await GetJson(Api($"git/repositories?api-version={Ver}"));
             return data.GetProperty("value").EnumerateArray()
                 .Where(r => r.TryGetProperty("id", out _) && r.TryGetProperty("name", out _))
                 .Select(r => new TfsRepo
@@ -83,8 +136,9 @@ public class TfsApiService
                 .Where(r => !string.IsNullOrEmpty(r.Project))
                 .OrderBy(r => $"{r.Project}/{r.Name}").ToList();
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogWarning(ex, "Failed to load repositories from TFS");
             return new List<TfsRepo>();
         }
     }
@@ -94,14 +148,18 @@ public class TfsApiService
     {
         try
         {
-            var data = await GetJson($"{Url}/{Uri.EscapeDataString(project)}/_apis/wit/classificationnodes/areas?$depth=10&api-version={Ver}");
+            var data = await GetJson(ProjectApi(project, $"wit/classificationnodes/areas?$depth=10&api-version={Ver}"));
             var nodes = FlattenNodes(data);
             return nodes
                 .Where(n => !ExcludedAreas.Any(ex => string.Equals(n.Name, ex, StringComparison.OrdinalIgnoreCase)))
                 .Select(n => new TfsArea { Id = n.Id, Name = n.Name, Path = n.Path, Project = project })
                 .ToList();
         }
-        catch { return new List<TfsArea>(); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load areas for project {Project}", project);
+            return new List<TfsArea>();
+        }
     }
 
     // ═══ ITERATIONS ═══
@@ -109,41 +167,43 @@ public class TfsApiService
     {
         try
         {
-            var data = await GetJson($"{Url}/{Uri.EscapeDataString(project)}/_apis/wit/classificationnodes/iterations?$depth=5&api-version={Ver}");
+            var data = await GetJson(ProjectApi(project, $"wit/classificationnodes/iterations?$depth=5&api-version={Ver}"));
             return FlattenNodes(data)
                 .Select(n => new TfsIteration { Id = n.Id, Name = n.Name, Path = n.Path, Project = project })
                 .ToList();
         }
-        catch { return new List<TfsIteration>(); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load iterations for project {Project}", project);
+            return new List<TfsIteration>();
+        }
     }
 
     // ═══ WIQL + WORK ITEMS ═══
     public async Task<List<WorkItem>> LoadWorkItemsAsync(string project, string areaPath, string? iterPath)
     {
-        var aF = $"[System.AreaPath] = '{areaPath}'";
-        var iF = !string.IsNullOrEmpty(iterPath)
-            ? $"[System.IterationPath] = '{iterPath}'"
-            : $"[System.IterationPath] UNDER '{project}'";
+        var areaFilter = $"[System.AreaPath] = '{WiqlEscape(areaPath)}'";
+        var iterFilter = !string.IsNullOrEmpty(iterPath)
+            ? $"[System.IterationPath] = '{WiqlEscape(iterPath)}'"
+            : $"[System.IterationPath] UNDER '{WiqlEscape(project)}'";
 
-        var wiql = $"SELECT [System.Id] FROM WorkItems WHERE [System.WorkItemType] IN ('Requirement','Change Request','Bug') AND {aF} AND {iF} ORDER BY [System.Id]";
+        var wiql = $"SELECT [System.Id] FROM WorkItems WHERE [System.WorkItemType] IN ('Requirement','Change Request','Bug') AND {areaFilter} AND {iterFilter} ORDER BY [System.Id]";
 
-        var wiqlResult = await PostJson(
-            $"{Url}/{Uri.EscapeDataString(project)}/_apis/wit/wiql?api-version={Ver}",
-            new { query = wiql });
+        var wiqlResult = await PostJson(ProjectApi(project, $"wit/wiql?api-version={Ver}"), new { query = wiql });
 
         var ids = wiqlResult.GetProperty("workItems").EnumerateArray()
             .Select(w => w.GetProperty("id").GetInt32())
-            .Take(200).ToList();
+            .Take(MaxWorkItems).ToList();
 
         if (ids.Count == 0) return new List<WorkItem>();
 
         var fields = "System.Id,System.Title,System.State,System.AssignedTo,System.AreaPath,System.IterationPath,System.WorkItemType";
         var items = new List<WorkItem>();
 
-        foreach (var chunk in ids.Chunk(50))
+        foreach (var chunk in ids.Chunk(WorkItemBatchSize))
         {
             var idsParam = string.Join(",", chunk);
-            var data = await GetJson($"{Url}/{Uri.EscapeDataString(project)}/_apis/wit/workitems?ids={idsParam}&fields={fields}&api-version={Ver}");
+            var data = await GetJson(ProjectApi(project, $"wit/workitems?ids={idsParam}&fields={fields}&api-version={Ver}"));
             foreach (var wi in data.GetProperty("value").EnumerateArray())
             {
                 var f = wi.GetProperty("fields");
@@ -172,12 +232,10 @@ public class TfsApiService
     {
         var wiql = $@"SELECT [System.Id] FROM WorkItems
             WHERE [System.WorkItemType] IN ('Requirement','Change Request','Bug')
-            AND [System.IterationPath] = '{iterPath}'
+            AND [System.IterationPath] = '{WiqlEscape(iterPath)}'
             ORDER BY [System.Id]";
 
-        var wiqlResult = await PostJson(
-            $"{Url}/{Uri.EscapeDataString(project)}/_apis/wit/wiql?api-version={Ver}",
-            new { query = wiql });
+        var wiqlResult = await PostJson(ProjectApi(project, $"wit/wiql?api-version={Ver}"), new { query = wiql });
 
         var ids = wiqlResult.GetProperty("workItems").EnumerateArray()
             .Select(w => w.GetProperty("id").GetInt32())
@@ -189,10 +247,10 @@ public class TfsApiService
         var fields = "System.Id,System.Title,System.State,System.AssignedTo,System.AreaPath,System.IterationPath,System.WorkItemType,Microsoft.VSTS.Scheduling.Effort,Microsoft.VSTS.Scheduling.OriginalEstimate,Microsoft.VSTS.Scheduling.RemainingWork,Microsoft.VSTS.Scheduling.CompletedWork,Microsoft.VSTS.Scheduling.StoryPoints,Microsoft.VSTS.Scheduling.Size";
         var items = new List<WorkItem>();
 
-        foreach (var chunk in ids.Chunk(50))
+        foreach (var chunk in ids.Chunk(WorkItemBatchSize))
         {
             var idsParam = string.Join(",", chunk);
-            var data = await GetJson($"{Url}/{Uri.EscapeDataString(project)}/_apis/wit/workitems?ids={idsParam}&fields={fields}&api-version={Ver}");
+            var data = await GetJson(ProjectApi(project, $"wit/workitems?ids={idsParam}&fields={fields}&api-version={Ver}"));
             foreach (var wi in data.GetProperty("value").EnumerateArray())
             {
                 var f = wi.GetProperty("fields");
@@ -221,14 +279,15 @@ public class TfsApiService
     /// </summary>
     public async Task<List<WorkItem>> GetChildTasksAsync(string project, string parentId)
     {
+        if (!int.TryParse(parentId, out var parentIdNum))
+            return new List<WorkItem>();
+
         var wiql = $@"SELECT [System.Id] FROM WorkItemLinks
-            WHERE [Source].[System.Id] = {parentId}
+            WHERE [Source].[System.Id] = {parentIdNum}
             AND [System.Links.LinkType] = 'System.LinkTypes.Hierarchy-Forward'
             MODE (Recursive)";
 
-        var wiqlResult = await PostJson(
-            $"{Url}/{Uri.EscapeDataString(project)}/_apis/wit/wiql?api-version={Ver}",
-            new { query = wiql });
+        var wiqlResult = await PostJson(ProjectApi(project, $"wit/wiql?api-version={Ver}"), new { query = wiql });
 
         if (!wiqlResult.TryGetProperty("workItemRelations", out var rels))
             return new List<WorkItem>();
@@ -237,7 +296,7 @@ public class TfsApiService
             .Where(r => r.TryGetProperty("target", out var t) && t.TryGetProperty("id", out _)
                      && r.TryGetProperty("source", out var s) && s.ValueKind == JsonValueKind.Object)
             .Select(r => r.GetProperty("target").GetProperty("id").GetInt32())
-            .Where(id => id.ToString() != parentId)
+            .Where(id => id != parentIdNum)
             .Distinct()
             .ToList();
 
@@ -246,10 +305,10 @@ public class TfsApiService
         var fields = "System.Id,System.Title,System.State,System.AssignedTo,System.IterationPath,System.WorkItemType,Microsoft.VSTS.Scheduling.OriginalEstimate,Microsoft.VSTS.Scheduling.RemainingWork,Microsoft.VSTS.Scheduling.CompletedWork";
         var items = new List<WorkItem>();
 
-        foreach (var chunk in childIds.Chunk(50))
+        foreach (var chunk in childIds.Chunk(WorkItemBatchSize))
         {
             var idsParam = string.Join(",", chunk);
-            var data = await GetJson($"{Url}/{Uri.EscapeDataString(project)}/_apis/wit/workitems?ids={idsParam}&fields={fields}&api-version={Ver}");
+            var data = await GetJson(ProjectApi(project, $"wit/workitems?ids={idsParam}&fields={fields}&api-version={Ver}"));
             foreach (var wi in data.GetProperty("value").EnumerateArray())
             {
                 var f = wi.GetProperty("fields");
@@ -272,7 +331,7 @@ public class TfsApiService
                 });
             }
         }
-        return items.OrderBy(t => int.Parse(t.Id)).ToList();
+        return items.OrderBy(t => ParseIdOrZero(t.Id)).ToList();
     }
 
     /// <summary>
@@ -280,7 +339,6 @@ public class TfsApiService
     /// </summary>
     public async Task UpdateWorkItemFieldAsync(string project, string workItemId, string fieldName, object value)
     {
-        SetAuth();
         var patchBody = new[] {
             new {
                 op = "add",
@@ -288,15 +346,17 @@ public class TfsApiService
                 value
             }
         };
-        var content = new StringContent(JsonSerializer.Serialize(patchBody), Encoding.UTF8, "application/json-patch+json");
-        var resp = await _http.PatchAsync($"{Url}/{Uri.EscapeDataString(project)}/_apis/wit/workitems/{workItemId}?api-version={Ver}", content);
-        resp.EnsureSuccessStatusCode();
+        using var req = new HttpRequestMessage(HttpMethod.Patch, ProjectApi(project, $"wit/workitems/{workItemId}?api-version={Ver}"))
+        {
+            Content = new StringContent(JsonSerializer.Serialize(patchBody), Encoding.UTF8, "application/json-patch+json")
+        };
+        using var resp = await SendAuthed(req);
     }
 
     // ═══ BRANCHES ═══
     public async Task<List<string>> GetBranchesAsync(string project, string repoId)
     {
-        var data = await GetJson($"{Url}/{Uri.EscapeDataString(project)}/_apis/git/repositories/{repoId}/refs?filter=heads/&api-version={Ver}");
+        var data = await GetJson(ProjectApi(project, $"git/repositories/{repoId}/refs?filter=heads/&api-version={Ver}"));
         return data.GetProperty("value").EnumerateArray()
             .Select(r => r.GetProperty("name").GetString()!.Replace("refs/heads/", ""))
             .OrderBy(b => b).ToList();
@@ -305,7 +365,7 @@ public class TfsApiService
     public async Task<TfsRef?> GetRefAsync(string project, string repoId, string refName)
     {
         var filter = refName.Replace("refs/", "");
-        var data = await GetJson($"{Url}/{Uri.EscapeDataString(project)}/_apis/git/repositories/{repoId}/refs?filter={Uri.EscapeDataString(filter)}&api-version={Ver}");
+        var data = await GetJson(ProjectApi(project, $"git/repositories/{repoId}/refs?filter={Uri.EscapeDataString(filter)}&api-version={Ver}"));
         foreach (var r in data.GetProperty("value").EnumerateArray())
         {
             if (r.GetProperty("name").GetString() == refName)
@@ -317,28 +377,30 @@ public class TfsApiService
     // ═══ CREATE BRANCH ═══
     public async Task<JsonElement> CreateBranchAsync(string project, string repoId, string branchName, string baseSha)
     {
-        SetAuth();
-        var body = new[] { new { name = $"refs/heads/{branchName}", newObjectId = baseSha, oldObjectId = "0000000000000000000000000000000000000000" } };
-        var content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
-        var resp = await _http.PostAsync($"{Url}/{Uri.EscapeDataString(project)}/_apis/git/repositories/{repoId}/refs?api-version={Ver}", content);
-        resp.EnsureSuccessStatusCode();
+        var body = new[] { new { name = $"refs/heads/{branchName}", newObjectId = baseSha, oldObjectId = EmptyObjectId } };
+        using var req = new HttpRequestMessage(HttpMethod.Post, ProjectApi(project, $"git/repositories/{repoId}/refs?api-version={Ver}"))
+        {
+            Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
+        };
+        using var resp = await SendAuthed(req);
         return JsonSerializer.Deserialize<JsonElement>(await resp.Content.ReadAsStringAsync());
     }
 
     // ═══ DELETE BRANCH ═══
     public async Task DeleteBranchAsync(string project, string repoId, string branchName, string objectId)
     {
-        SetAuth();
-        var body = new[] { new { name = $"refs/heads/{branchName}", newObjectId = "0000000000000000000000000000000000000000", oldObjectId = objectId } };
-        var content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
-        var resp = await _http.PostAsync($"{Url}/{Uri.EscapeDataString(project)}/_apis/git/repositories/{repoId}/refs?api-version={Ver}", content);
-        resp.EnsureSuccessStatusCode();
+        var body = new[] { new { name = $"refs/heads/{branchName}", newObjectId = EmptyObjectId, oldObjectId = objectId } };
+        using var req = new HttpRequestMessage(HttpMethod.Post, ProjectApi(project, $"git/repositories/{repoId}/refs?api-version={Ver}"))
+        {
+            Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
+        };
+        using var resp = await SendAuthed(req);
     }
 
     /// <summary>Gets all refs with full details (name + objectId) for a repo.</summary>
     public async Task<List<TfsRef>> GetRefsAsync(string project, string repoId)
     {
-        var data = await GetJson($"{Url}/{Uri.EscapeDataString(project)}/_apis/git/repositories/{repoId}/refs?filter=heads/&api-version={Ver}");
+        var data = await GetJson(ProjectApi(project, $"git/repositories/{repoId}/refs?filter=heads/&api-version={Ver}"));
         return data.GetProperty("value").EnumerateArray()
             .Select(r => new TfsRef { Name = r.GetProperty("name").GetString()!.Replace("refs/heads/", ""), ObjectId = r.GetProperty("objectId").GetString()! })
             .OrderBy(r => r.Name).ToList();
@@ -347,7 +409,6 @@ public class TfsApiService
     // ═══ LINK WORK ITEM ═══
     public async Task LinkWorkItemAsync(string project, string projectId, string repoId, string workItemId, string branchName)
     {
-        SetAuth();
         // The Git branch artifact ref is "GB" + the branch name WITHOUT the
         // "refs/heads/" prefix. Including the prefix makes TFS resolve a ref
         // named "refs/heads/refs/heads/<branch>", which doesn't exist — the work
@@ -367,9 +428,11 @@ public class TfsApiService
                 }
             }
         };
-        var content = new StringContent(JsonSerializer.Serialize(patchBody), Encoding.UTF8, "application/json-patch+json");
-        var resp = await _http.PatchAsync($"{Url}/{Uri.EscapeDataString(project)}/_apis/wit/workitems/{workItemId}?api-version={Ver}", content);
-        resp.EnsureSuccessStatusCode();
+        using var req = new HttpRequestMessage(HttpMethod.Patch, ProjectApi(project, $"wit/workitems/{workItemId}?api-version={Ver}"))
+        {
+            Content = new StringContent(JsonSerializer.Serialize(patchBody), Encoding.UTF8, "application/json-patch+json")
+        };
+        using var resp = await SendAuthed(req);
     }
 
     // ═══ PULL REQUESTS ═══
@@ -377,7 +440,7 @@ public class TfsApiService
     {
         try
         {
-            var data = await GetJson($"{Url}/{Uri.EscapeDataString(project)}/_apis/git/repositories/{repoId}/pullrequests?api-version={Ver}&status=all&$top=200");
+            var data = await GetJson(ProjectApi(project, $"git/repositories/{repoId}/pullrequests?api-version={Ver}&status=all&$top={MaxPullRequests}"));
             return data.GetProperty("value").EnumerateArray().Select(pr => new TfsPullRequest
             {
                 PullRequestId = pr.GetProperty("pullRequestId").GetInt32(),
@@ -391,14 +454,18 @@ public class TfsApiService
                     ? new TfsPrAuthor { DisplayName = dn.GetString() } : null
             }).ToList();
         }
-        catch { return new List<TfsPullRequest>(); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load pull requests for repo {RepoId}", repoId);
+            return new List<TfsPullRequest>();
+        }
     }
 
     public async Task<List<TfsCommit>> GetPrCommitsAsync(string project, string repoId, int prId)
     {
         try
         {
-            var data = await GetJson($"{Url}/{Uri.EscapeDataString(project)}/_apis/git/repositories/{repoId}/pullrequests/{prId}/commits?api-version={Ver}");
+            var data = await GetJson(ProjectApi(project, $"git/repositories/{repoId}/pullrequests/{prId}/commits?api-version={Ver}"));
             return data.GetProperty("value").EnumerateArray().Select(c => new TfsCommit
             {
                 CommitId = GetStr(c, "commitId", ""),
@@ -407,7 +474,11 @@ public class TfsApiService
                 Committer = ParsePerson(c, "committer")
             }).ToList();
         }
-        catch { return new List<TfsCommit>(); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load commits for PR {PrId}", prId);
+            return new List<TfsCommit>();
+        }
     }
 
     // ═══ URL BUILDERS ═══
@@ -418,6 +489,8 @@ public class TfsApiService
         $"{Url}/{Uri.EscapeDataString(project)}/_git/{Uri.EscapeDataString(repoName)}/commit/{sha}";
 
     // ═══ HELPERS ═══
+    private static int ParseIdOrZero(string id) => int.TryParse(id, out var n) ? n : 0;
+
     private static string GetStr(JsonElement el, string prop, string fallback) =>
         el.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? fallback : fallback;
 

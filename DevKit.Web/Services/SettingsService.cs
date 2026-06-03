@@ -132,7 +132,10 @@ public class SettingsService
                 }
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not read git remote URL from {RepoPath}", repoPath);
+        }
         return "";
     }
 
@@ -235,7 +238,7 @@ public class SettingsService
     {
         try
         {
-            var json = JsonSerializer.Serialize(_settings, new JsonSerializerOptions { WriteIndented = true });
+            var json = JsonSerializer.Serialize(BuildPersistableCopy(), new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(_settingsPath, json);
         }
         catch (Exception ex)
@@ -248,11 +251,17 @@ public class SettingsService
     {
         try
         {
-            if (File.Exists(_settingsPath))
-            {
-                var json = File.ReadAllText(_settingsPath);
-                _settings = JsonSerializer.Deserialize<UserSettings>(json) ?? new UserSettings();
-            }
+            if (!File.Exists(_settingsPath)) return;
+
+            var json = File.ReadAllText(_settingsPath);
+            _settings = JsonSerializer.Deserialize<UserSettings>(json) ?? new UserSettings();
+
+            var storedPat = _settings.Tfs.Pat;
+            _settings.Tfs.Pat = DecryptPat(storedPat);
+
+            // Migrate a legacy plaintext PAT to encrypted-at-rest on first load after upgrade.
+            if (!string.IsNullOrEmpty(_settings.Tfs.Pat) && !SecretProtector.IsProtected(storedPat))
+                Save();
         }
         catch (Exception ex)
         {
@@ -260,6 +269,38 @@ public class SettingsService
             _settings = new UserSettings();
         }
     }
+
+    private string DecryptPat(string stored)
+    {
+        try
+        {
+            return SecretProtector.Unprotect(stored);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Stored PAT could not be decrypted (copied from another user or machine?). Re-enter it in Settings.");
+            return "";
+        }
+    }
+
+    // The PAT is held in memory as plaintext (the API client needs it) but persisted
+    // encrypted. Build a copy with the protected PAT so the in-memory value is untouched.
+    private UserSettings BuildPersistableCopy() => new()
+    {
+        Tfs = new TfsSettings
+        {
+            Url = _settings.Tfs.Url,
+            Pat = SecretProtector.Protect(_settings.Tfs.Pat),
+            ApiVersion = _settings.Tfs.ApiVersion
+        },
+        DefaultProjectPath = _settings.DefaultProjectPath,
+        DefaultAreaPath = _settings.DefaultAreaPath,
+        DefaultSprint = _settings.DefaultSprint,
+        DefaultRepoId = _settings.DefaultRepoId,
+        TeamName = _settings.TeamName,
+        RepoPaths = _settings.RepoPaths,
+        BaseBranches = _settings.BaseBranches
+    };
 }
 
 public class UserSettings

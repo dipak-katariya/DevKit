@@ -162,10 +162,12 @@ DevKit/
 
 ## Security
 
-- **The Personal Access Token is stored in plaintext** in `usersettings.json`, written next to the running binary (`AppContext.BaseDirectory`). This file is **git‑ignored** and never leaves your machine — but treat it like a credential: don't copy it into source control, screenshots, or shared folders.
+- **The Personal Access Token is encrypted at rest** in `usersettings.json` using Windows DPAPI (current‑user scope), written next to the running binary (`AppContext.BaseDirectory`). Only your Windows account can decrypt it; a token from a previous version is migrated to the encrypted form automatically on first run. The file is **git‑ignored** and never leaves your machine — but still treat it like a credential: don't copy it into source control, screenshots, or shared folders.
 - Use a **least‑privilege PAT** (Code + Work Items only) and set a reasonable expiry.
-- The app binds to **`localhost`** and is intended to run on a developer's own machine, not as a shared/hosted service.
-- The Merge Tool runs real `git` commands (including `push`) against your local clones — review the target branch before cherry‑picking.
+- Prefer an **`https`** server URL — the PAT is sent as HTTP Basic auth, so over plain `http` to a remote host it travels unencrypted. Settings warns when a non‑local `http` URL is used.
+- The app binds to **`localhost`**, sends hardening response headers (including a CSP), and is intended to run on a developer's own machine, not as a shared/hosted service. The browser is auto‑launched only for a local loopback URL.
+- The Merge Tool runs real `git` commands (including `push`) against your local clones — branch names and commit SHAs are validated before use, and arguments are passed without shell parsing. Review the target branch before cherry‑picking.
+- The app ships with **zero NuGet packages** — PAT encryption uses the OS DPAPI directly via P/Invoke, with no third‑party dependency.
 
 ---
 

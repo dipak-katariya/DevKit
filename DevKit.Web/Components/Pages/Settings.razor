@@ -218,14 +218,19 @@
 
     private async Task SaveAndConnect()
     {
+        if (!TryValidateTfsUrl(tfsUrl, out var url, out var urlError))
+        { statusMsg = $"✕ {urlError}"; statusOk = false; return; }
+        if (string.IsNullOrWhiteSpace(tfsPat))
+        { statusMsg = "✕ Personal Access Token is required."; statusOk = false; return; }
+
         saving = true;
         statusMsg = "";
         StateHasChanged();
         try
         {
-            SettingsSvc.SaveTfs(tfsUrl.Trim(), tfsPat.Trim());
+            SettingsSvc.SaveTfs(url, tfsPat.Trim());
             await LoadRepos();
-            statusMsg = $"✓ Saved & connected — {repos.Count} repositories found.";
+            statusMsg = $"✓ Saved & connected — {repos.Count} repositories found.{InsecureUrlWarning(url)}";
             statusOk = true;
         }
         catch (Exception ex)
@@ -238,16 +243,21 @@
 
     private async Task TestConnection()
     {
+        if (!TryValidateTfsUrl(tfsUrl, out var url, out var urlError))
+        { statusMsg = $"✕ {urlError}"; statusOk = false; return; }
+        if (string.IsNullOrWhiteSpace(tfsPat))
+        { statusMsg = "✕ Personal Access Token is required."; statusOk = false; return; }
+
         testing = true;
         statusMsg = "";
         StateHasChanged();
         try
         {
             // Temporarily apply settings for the test
-            SettingsSvc.SaveTfs(tfsUrl.Trim(), tfsPat.Trim());
+            SettingsSvc.SaveTfs(url, tfsPat.Trim());
             var projects = await TfsApi.GetProjectsAsync();
             repos = await TfsApi.GetRepositoriesAsync();
-            statusMsg = $"✓ Connected — {projects.Count} project(s), {repos.Count} repo(s).";
+            statusMsg = $"✓ Connected — {projects.Count} project(s), {repos.Count} repo(s).{InsecureUrlWarning(url)}";
             statusOk = true;
         }
         catch (Exception ex)
@@ -257,6 +267,30 @@
         }
         testing = false;
     }
+
+    private static bool TryValidateTfsUrl(string raw, out string normalized, out string error)
+    {
+        normalized = (raw ?? "").Trim();
+        error = "";
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            error = "Server URL is required.";
+            return false;
+        }
+        if (!Uri.TryCreate(normalized, UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            error = "Enter a valid http(s) URL, e.g. https://tfs.example.com/tfs/Collection.";
+            return false;
+        }
+        return true;
+    }
+
+    // PAT is sent as HTTP Basic auth; over plain http to a remote host it travels unencrypted.
+    private static string InsecureUrlWarning(string url)
+        => Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttp && !uri.IsLoopback
+            ? "  ⚠ http detected — your PAT is sent unencrypted; prefer https."
+            : "";
 
     private async Task LoadRepos()
     {

@@ -34,11 +34,13 @@ public class TfsPrAuthor
 
 public class TfsCommit
 {
+    private const int ShortShaLength = 8;
+
     public string CommitId { get; set; } = "";
     public string? Comment { get; set; }
     public TfsCommitPerson? Author { get; set; }
     public TfsCommitPerson? Committer { get; set; }
-    public string ShortSha => CommitId.Length >= 8 ? CommitId[..8] : CommitId;
+    public string ShortSha => CommitId.Length >= ShortShaLength ? CommitId[..ShortShaLength] : CommitId;
     public string FirstLine => (Comment ?? "").Split('\n')[0];
     public string AuthorName => Author?.Name ?? "";
     public DateTime? AuthorDate => Author?.Date ?? Committer?.Date;
