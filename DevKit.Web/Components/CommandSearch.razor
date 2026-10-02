@@ -1,0 +1,119 @@
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+@{ var matches = Matches; }
+<div class="topbar-search @(open ? "open" : "")" @ref="rootEl">
+    <div class="ts-box">
+        <span class="ts-ico"><Icon Inner="@Icons.Search" /></span>
+        <input id="cmdSearch" class="ts-input" placeholder="Search tools…" autocomplete="off"
+               value="@query" @oninput="OnInput" @onfocus="OnFocus" @onkeydown="OnKeyDown" />
+        <span class="kbd">Ctrl K</span>
+    </div>
+    @if (open)
+    {
+        <div class="ts-panel">
+            @if (matches.Count == 0)
+            {
+                <div class="ts-empty">No tools match “@query”.</div>
+            }
+            else
+            {
+                @for (int i = 0; i < matches.Count; i++)
+                {
+                    var tool = matches[i];
+                    var idx = i;
+                    <div class="ts-item @(idx == highlight ? "hl" : "")" @onclick="() => Go(tool.Path)">
+                        <Icon Inner="@tool.Icon" />
+                        <span class="ts-item-name">@tool.Name</span>
+                        <span class="ts-item-path">@tool.Path</span>
+                    </div>
+                }
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private ElementReference rootEl;
+    private DotNetObjectReference<CommandSearch>? selfRef;
+    private string query = "";
+    private bool open;
+    private int highlight;
+
+    private List<ToolEntry> Matches => ToolCatalog.All()
+        .Where(t => string.IsNullOrWhiteSpace(query)
+            || t.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
+            || t.Path.Contains(query, StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        selfRef = DotNetObjectReference.Create(this);
+        try
+        {
+            await JS.InvokeVoidAsync("devKit.registerCommandKey", "cmdSearch");
+            await JS.InvokeVoidAsync("devKit.registerClickOutside", rootEl, selfRef);
+        }
+        catch (JSException ex)
+        {
+            // Non-fatal: search still works by typing, just without ⌘K / click-outside.
+            Console.Error.WriteLine($"CommandSearch JS init failed: {ex.Message}");
+        }
+    }
+
+    private void OnFocus() => open = true;
+
+    private void OnInput(ChangeEventArgs e)
+    {
+        query = e.Value?.ToString() ?? "";
+        open = true;
+        highlight = 0;
+    }
+
+    private void OnKeyDown(KeyboardEventArgs e)
+    {
+        var matches = Matches;
+        switch (e.Key)
+        {
+            case "ArrowDown" when matches.Count > 0: highlight = (highlight + 1) % matches.Count; break;
+            case "ArrowUp" when matches.Count > 0: highlight = (highlight - 1 + matches.Count) % matches.Count; break;
+            case "Enter" when highlight >= 0 && highlight < matches.Count: Go(matches[highlight].Path); break;
+            case "Escape": open = false; break;
+        }
+    }
+
+    private void Go(string path)
+    {
+        open = false;
+        query = "";
+        highlight = 0;
+        Nav.NavigateTo(path);
+    }
+
+    [JSInvokable]
+    public Task CloseDropdown()
+    {
+        if (open)
+        {
+            open = false;
+            StateHasChanged();
+        }
+        return Task.CompletedTask;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        // selfRef is only set in OnAfterRenderAsync (interactive). If it's null we never
+        // registered — e.g. during static prerender — so don't attempt JS interop.
+        if (selfRef is not null)
+        {
+            try { await JS.InvokeVoidAsync("devKit.unregisterClickOutside", rootEl); }
+            catch (JSDisconnectedException) { /* circuit already gone */ }
+            catch (InvalidOperationException) { /* disposed during static render */ }
+            catch (JSException) { /* interop unavailable */ }
+            selfRef.Dispose();
+        }
+    }
+}

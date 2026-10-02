@@ -1,0 +1,139 @@
+@inject TfsApiService TfsApi
+
+@if (Matrix is null || Matrix.IsEmpty)
+{
+    <div class="tbl-empty">No CompletedWork changes found for this sprint and area.</div>
+}
+else
+{
+    <div class="bd-wrap">
+        <table class="bd-table">
+            <thead>
+                <tr>
+                    <th class="bd-member">Member</th>
+                    @foreach (var col in Matrix.Columns) { <th title="@ExpectedTitle(col.WorkingDays)">@col.Label</th> }
+                    <th class="bd-total" title="@TotalTitle">Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in Matrix.Rows)
+                {
+                    <tr>
+                        <td class="bd-member">@row.MemberDisplay</td>
+                        @foreach (var col in Matrix.Columns)
+                        {
+                            var cell = row.Cells.TryGetValue(col.Key, out var c) ? c : null;
+                            var expected = Expected(col.WorkingDays);
+                            var overBug = expected is { } e && cell?.Bug < e;
+                            <td class="bd-cell" title="@ExpectedTitle(col.WorkingDays)" @onclick="() => Show(row.MemberDisplay, col.Label, cell)">
+                                @if (cell is null || cell.Total == 0)
+                                {
+                                    <span class="bd-zero">·</span>
+                                }
+                                else
+                                {
+                                    <span class="@RegClass(cell.Regular, expected)">@cell.Regular.ToString("0.#")</span>
+                                    @if (cell.Bug > 0)
+                                    {
+                                        <div class="bd-bug @(overBug ? "bd-bug-red" : "")">+@cell.Bug.ToString("0.#")b</div>
+                                    }
+                                }
+                            </td>
+                        }
+                        <td class="bd-total" title="@TotalTitle">
+                            <span class="@RegClass(row.TotalRegular, Expected(Matrix.WorkingDays))">@row.TotalRegular.ToString("0.#")</span>
+                            @if (row.TotalBug > 0) { <div class="bd-bug">+@row.TotalBug.ToString("0.#")b</div> }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    <div class="bd-legend">
+        <span><span class="bd-reg-green">●</span> meets the hours expected</span>
+        <span><span class="bd-reg-red">●</span> below them</span>
+        <span><span class="bd-reg-none">●</span> not due yet</span>
+        <span><span class="bd-bug-red">+Nb</span> = bug hours</span>
+        <span style="color:var(--muted);">@ThresholdLabel h per working day — hover a column for its total</span>
+        <span style="color:var(--muted);">click a cell for the work items</span>
+    </div>
+}
+
+@if (sel is not null)
+{
+    <div class="modal-overlay" @onclick="() => sel = null">
+        <div class="modal" style="max-width:620px;" @onclick:stopPropagation>
+            <h3>@selMember — @selPeriod</h3>
+            <div class="modal-body" style="padding:0;">
+                <table class="req-table">
+                    <thead><tr><th style="width:64px;">ID</th><th>Title</th><th style="width:90px;">Type</th><th style="width:70px;text-align:right;">Hours</th></tr></thead>
+                    <tbody>
+                        @foreach (var it in sel.Items.OrderByDescending(i => i.Delta))
+                        {
+                            <tr>
+                                <td><a class="id-link" href="@TfsApi.WorkItemUrl(ProjectFor(it), it.ItemId)" target="_blank" rel="noopener">#@it.ItemId</a></td>
+                                <td>
+                                    <div class="cell-title">@it.ItemTitle</div>
+                                    <div class="cell-meta" title="@it.ItemArea">@(it.ItemArea.Split('\\').LastOrDefault())</div>
+                                </td>
+                                <td><span class="@(it.IsBug ? "type-pill bug" : "type-pill")">@(it.IsBug ? "Bug work" : it.ItemType)</span></td>
+                                <td style="text-align:right;font-family:var(--mono);@(it.Delta < 0 ? "color:var(--amber);" : "")">@it.Delta.ToString("0.#")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <div class="modal-actions"><button class="btn-ghost" @onclick="() => sel = null">Close</button></div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public BurndownMatrix? Matrix { get; set; }
+    [Parameter] public string Project { get; set; } = "";
+
+    /// <summary>Hours a member is expected to log in a working day: the Capacity Planning hours-per-day setting.</summary>
+    [Parameter] public double DailyThreshold { get; set; } = CapacityPlanningSettings.DefaultHoursPerDay;
+
+    private string ThresholdLabel => DailyThreshold.ToString("0.##");
+
+    private BurndownCell? sel;
+    private string selMember = "", selPeriod = "";
+
+    private void Show(string member, string period, BurndownCell? cell)
+    {
+        if (cell is null || cell.Items.Count == 0) return;
+        sel = cell; selMember = member; selPeriod = period;
+    }
+
+    private string ProjectFor(BurndownContribution _) => Project;
+
+    /// <summary>
+    /// Hours expected over a period, so a week is measured against a week's working days — and
+    /// null for a period the sprint does not cover, which is not judged either way.
+    /// </summary>
+    private double? Expected(int workingDays) => workingDays > 0 ? DailyThreshold * workingDays : null;
+
+    private string ExpectedTitle(int workingDays) => Expected(workingDays) is { } hours
+        ? $"{hours:0.##} h expected — {workingDays} working day(s) × {ThresholdLabel} h"
+        : "No hours expected yet — outside the sprint's finished working days";
+
+    /// <summary>The Total covers the sprint so far, so it says how much of the sprint that is.</summary>
+    private string TotalTitle
+    {
+        get
+        {
+            var elapsed = Matrix?.WorkingDays ?? 0;
+            var sprint = Matrix?.SprintWorkingDays ?? 0;
+            if (Expected(elapsed) is not { } hours) return "No hours expected yet — the sprint's first working day is not finished";
+            return sprint > elapsed
+                ? $"{hours:0.##} h expected so far — {elapsed} of {sprint} working days elapsed × {ThresholdLabel} h"
+                : $"{hours:0.##} h expected — {elapsed} working day(s) × {ThresholdLabel} h";
+        }
+    }
+
+    private static string RegClass(double v, double? expected) =>
+        v <= 0 ? "bd-zero"
+        : expected is not { } hours ? "bd-reg-none"
+        : v < hours ? "bd-reg-red" : "bd-reg-green";
+}

@@ -1,0 +1,105 @@
+/* The Code Merging Sheet's code comparison: the Compare Code action, the per-row and
+   per-pull-request check buttons, and the file and line detail under an opened pull request. Its
+   progress and last-run summary live in the insight strip (merging.css). Loaded after merging.css,
+   whose pills and grid it builds on. */
+
+/* Toolbar */
+.cm-actions{display:flex;gap:8px;align-items:center;}
+.cm-compare-btn{background:var(--accent);border-color:var(--accent);color:#fff;}
+.cm-compare-btn:hover:not(:disabled){background:#3d6af0;color:#fff;}
+.cm-stop-btn{background:rgba(248,113,113,.12);border-color:rgba(248,113,113,.35);color:#fca5a5;}
+.cm-stop-btn:hover:not(:disabled){background:rgba(248,113,113,.22);color:#fff;}
+
+.cc-link{
+  display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:6px;border:1px solid var(--border2);
+  background:var(--surface2);color:var(--accent2);font-family:inherit;font-size:.62rem;font-weight:700;cursor:pointer;white-space:nowrap;
+}
+.cc-link:hover:not(:disabled){border-color:var(--accent-line);color:#fff;}
+.cc-link:disabled{opacity:.6;cursor:default;}
+
+/* Grid cells */
+.cm-grid .cm-c-act{width:70px;}
+.cm-act{display:inline-flex;gap:4px;align-items:center;}
+.cm-code-btn .ic{color:var(--accent2);}
+.cm-p-code{width:168px;}
+.cm-code-cell{display:flex;align-items:center;gap:5px;min-width:0;}
+.cm-code-cell .merge-pill{min-width:0;}
+.cm-code-none{font-family:var(--mono);font-size:.7rem;color:var(--muted);padding:0 6px;}
+.cm-code-lost{display:inline-flex;color:var(--red);}
+.cm-code-lost .ic{width:13px;height:13px;}
+/* .ic is display:block app-wide; an icon inside a sentence has to stay on the line. */
+.cc-inline-ic{display:inline-block;width:12px;height:12px;vertical-align:-2px;color:var(--accent2);}
+
+/* Pull request detail */
+.cc-panel{margin:8px 0 6px 26px;padding:10px 12px;border:1px solid var(--border2);border-radius:10px;background:var(--surface);}
+.cc-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.cc-sum{font-size:.7rem;color:var(--text);flex:1;min-width:200px;}
+.cc-snap{font-size:.6rem;font-family:var(--mono);color:var(--muted2);white-space:nowrap;}
+.cc-alert{
+  display:flex;gap:8px;align-items:flex-start;margin-top:9px;padding:7px 10px;border-radius:8px;
+  border:1px solid rgba(248,113,113,.3);background:rgba(248,113,113,.07);font-size:.66rem;color:#fecaca;line-height:1.5;
+}
+.cc-alert .ic{width:14px;height:14px;color:var(--red);flex-shrink:0;margin-top:1px;}
+
+.cc-files{width:100%;margin-top:10px;border-collapse:collapse;table-layout:fixed;font-size:.68rem;}
+.cc-files th{
+  text-align:left;padding:5px 8px;font-size:.55rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;
+  color:var(--muted);border-bottom:1px solid var(--border2);
+}
+.cc-files td{padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top;}
+.cc-f-exp{width:34px;}
+.cc-f-path{width:34%;min-width:0;overflow:hidden;}
+.cc-f-kind{width:72px;}
+.cc-f-status{width:112px;}
+.cc-f-why{color:var(--muted2);line-height:1.5;}
+.cc-f-why > span{margin-right:6px;}
+.cc-from{display:block;font-size:.58rem;font-family:var(--mono);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.cref-path .cref-text{color:var(--text);}
+.cc-err{display:block;margin-top:3px;color:#fca5a5;}
+
+.cc-kind{font-size:.56rem;font-weight:700;padding:2px 7px;border-radius:var(--pill);background:var(--surface3);color:var(--muted2);}
+.cc-kind-add{color:var(--green);}
+.cc-kind-delete{color:#fca5a5;}
+.cc-kind-rename{color:var(--purple);}
+
+.cc-hunks-row > td{padding:4px 8px 10px 42px;background:var(--bg);}
+
+/* One block of a change */
+.cc-hunk{margin-top:8px;border:1px solid var(--border2);border-radius:8px;overflow:hidden;}
+.cc-hunk-head{
+  display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:6px 10px;background:var(--surface2);
+  border-bottom:1px solid var(--border2);font-size:.64rem;
+}
+.cc-hunk-where{font-family:var(--mono);color:var(--muted2);white-space:nowrap;}
+.cc-hunk-note{color:var(--muted2);flex:1;min-width:180px;}
+
+.cc-code{font-family:var(--mono);font-size:.64rem;line-height:1.55;overflow-x:auto;scrollbar-width:thin;}
+.cc-ln{display:flex;align-items:baseline;min-width:max-content;}
+.cc-ln-no{flex:0 0 46px;padding:0 8px 0 4px;text-align:right;color:var(--muted);user-select:none;}
+.cc-ln-mark{flex:0 0 16px;text-align:center;font-weight:700;user-select:none;}
+.cc-ln-text{flex:1;white-space:pre;padding-right:14px;color:var(--text);}
+.cc-ln-flag{flex:0 0 auto;padding:0 10px;font-size:.56rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;user-select:none;}
+.cc-ln-added{background:rgba(52,211,153,.07);}
+.cc-ln-added .cc-ln-mark{color:var(--green);}
+.cc-ln-removed{background:rgba(248,113,113,.07);}
+.cc-ln-removed .cc-ln-mark{color:var(--red);}
+.cc-ln-removed .cc-ln-text{color:#d4a5a5;}
+.cc-ln-context .cc-ln-text{color:var(--muted2);}
+.cc-flag-ok{color:var(--green);}
+.cc-flag-bad{color:var(--red);}
+.cc-ln-more{padding:3px 12px;color:var(--muted);font-style:italic;}
+.cc-more{margin-top:6px;font-size:.62rem;color:var(--muted2);}
+
+/* Files already on the branch */
+.cc-toggle{
+  display:inline-flex;align-items:center;gap:6px;margin-top:9px;padding:3px 6px;border:none;background:none;
+  color:var(--muted2);font-family:inherit;font-size:.64rem;font-weight:700;cursor:pointer;
+}
+.cc-toggle:hover{color:var(--text);}
+.cc-toggle .ic{width:12px;height:12px;transition:transform var(--t);}
+.cc-toggle .cc-rot{transform:rotate(90deg);}
+.cc-matching{list-style:none;margin:4px 0 0 4px;padding:0;font-size:.63rem;}
+.cc-matching li{display:flex;gap:8px;align-items:baseline;padding:2px 0;}
+.cc-matching .ic{width:11px;height:11px;color:var(--green);flex-shrink:0;}
+.cc-mpath{font-family:var(--mono);color:var(--text);}
+.cc-mwhy{color:var(--muted);}

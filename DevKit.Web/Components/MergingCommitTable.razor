@@ -1,0 +1,114 @@
+@* One pull request's commits, and whether each — or a copy of it — reached the merging branch. *@
+
+<div class="cm-commit-wrap">
+    @if (Commits.Count == 0)
+    {
+        <div class="cm-empty-inline">No commits were returned for this pull request.</div>
+    }
+    else
+    {
+        <table class="cm-commit-table">
+            <thead>
+                <tr>
+                    <th class="cm-k-sha" title="Commit SHA — click to copy">Commit</th>
+                    <th title="Commit message — click to copy">Message</th>
+                    <th class="cm-p-user" title="Who authored the commit">Author</th>
+                    <th class="cm-p-date" title="When the commit was authored">Date</th>
+                    @if (Verified) { <th class="cm-k-merged" title="Whether this commit — or a copy of it — reached @BranchLabel">On branch</th> }
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var c in Commits)
+                {
+                    <tr @key="c.CommitId">
+                        <td class="cm-k-sha">
+                            <CopyableRef Text="@c.CommitId" Display="@c.ShortId"
+                                         Url="@c.Url" Label="commit SHA" CssClass="cref-sha" />
+                        </td>
+                        <td class="cm-k-msg"><span title="@c.Message">@c.Message</span></td>
+                        <td class="cm-p-user" title="Authored by @c.Author">@c.Author</td>
+                        <td class="cm-p-date"><TimeStamp Value="@c.Date" Label="Authored" /></td>
+                        @if (Verified)
+                        {
+                            <td class="cm-k-merged">
+                                @if (c.IsBranchMergeCommit)
+                                {
+                                    <span class="merge-pill merge-opt"
+                                          title="A 'Merge branch' or 'Merge remote-tracking branch' commit belongs to the source branch's own history and cannot reach a release branch on its own, so it never blocks.">
+                                        <Icon Inner="@Icons.MinusCircle" /><span>Optional</span>
+                                    </span>
+                                }
+                                else if (c.IsRolledBack)
+                                {
+                                    <span class="merge-pill merge-back" title="@c.RollbackReason">
+                                        <Icon Inner="@Icons.Refresh" /><span>Rolled back</span>
+                                    </span>
+                                }
+                                else if (c.MatchKind == CommitMatch.AmbiguousMessage)
+                                {
+                                    <span class="merge-pill merge-part" title="@CommitMergeTooltip(c)">
+                                        <Icon Inner="@Icons.HelpCircle" /><span>Not proven</span>
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="merge-pill @MergeCls(c.IsMergedToTargetBranch)"
+                                          title="@CommitMergeTooltip(c)">
+                                        <Icon Inner="@MergeIcon(c.IsMergedToTargetBranch)" />
+                                        <span>@MergeLabel(c.IsMergedToTargetBranch)</span>
+                                    </span>
+                                }
+                            </td>
+                        }
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public List<MergingCommit> Commits { get; set; } = new();
+
+    /// <summary>Whether the commits were checked against a branch, which adds the On branch column.</summary>
+    [Parameter] public bool Verified { get; set; }
+
+    [Parameter] public string BranchLabel { get; set; } = "the merging branch";
+
+    /// <summary>Pill colour for a merged / not merged / not checked verdict; the pull-request pills share it.</summary>
+    public static string MergeCls(bool? state) => state switch
+    {
+        true => "merge-ok",
+        false => "merge-no",
+        _ => "merge-unknown"
+    };
+
+    public static string MergeIcon(bool? state) => state switch
+    {
+        true => Icons.CheckCircle,
+        false => Icons.XCircle,
+        _ => Icons.HelpCircle
+    };
+
+    private static string MergeLabel(bool? state) => state switch
+    {
+        true => "Merged",
+        false => "Not merged",
+        _ => "Not checked"
+    };
+
+    private string CommitMergeTooltip(MergingCommit c) => c.IsMergedToTargetBranch switch
+    {
+        true => c.MatchKind switch
+        {
+            CommitMatch.CherryPick => $"A cherry-pick of this commit (made with git cherry-pick -x) is on {BranchLabel}.",
+            CommitMatch.Author => $"A copy of this commit — same author, same author time — is on {BranchLabel}: a cherry-pick or rebase, possibly with a new message.",
+            CommitMatch.Message => $"A commit with this exact, distinctive message is on {BranchLabel}.",
+            _ => $"This commit is on {BranchLabel}."
+        },
+        false when c.MatchKind == CommitMatch.AmbiguousMessage =>
+            $"No copy of this commit is on {BranchLabel} by SHA or author. A commit with the same message is there, but the message is too short or too common to prove it is this one — Compare Code checks the code itself.",
+        false => $"Neither this commit nor a copy of it was found on {BranchLabel}.",
+        _ => "Not checked yet — run Verify All to compare this commit against the branch."
+    };
+}

@@ -7,6 +7,7 @@ set "PUBDIR=%WEBDIR%\publish"
 set "PORT=5850"
 set "URL=http://localhost:%PORT%"
 set "APPNAME=DevKit"
+set "SETSDK=%ROOT%scripts\_set-sdk.bat"
 
 if "%~1"=="" goto :usage
 if /i "%~1"=="run"       goto :run
@@ -39,11 +40,14 @@ if exist "%PUBDIR%\DevKit.Web.exe" (
 where dotnet >nul 2>&1
 if errorlevel 1 (
     echo [!] .NET SDK not found. Run 'devkit publish' first, then copy the publish folder.
-    echo [!] Or install .NET 9 SDK from https://dotnet.microsoft.com/download
+    echo [!] Or install .NET 10 SDK from https://dotnet.microsoft.com/download
     pause
     goto :eof
 )
 
+if exist "%SETSDK%" (
+    call "%SETSDK%" || (pause & goto :eof)
+)
 echo [*] Running from source (dotnet run)...
 echo [*] URL: %URL%
 echo.
@@ -63,6 +67,9 @@ if errorlevel 1 (
     goto :eof
 )
 cd /d "%WEBDIR%"
+if exist "%SETSDK%" (
+    call "%SETSDK%" || (pause & goto :eof)
+)
 dotnet publish -c Release -r win-x64 --self-contained -p:PublishSingleFile=false -o "%PUBDIR%" 2>&1
 if errorlevel 1 (
     echo.

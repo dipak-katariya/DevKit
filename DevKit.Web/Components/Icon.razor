@@ -1,0 +1,11 @@
+<svg class="ic @CssClass" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="@StrokeWidth"
+     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+    @((MarkupString)Inner)
+</svg>
+
+@code {
+    /// <summary>Inner SVG markup, supplied from <see cref="Icons"/>.</summary>
+    [Parameter] public string Inner { get; set; } = "";
+    [Parameter] public string? CssClass { get; set; }
+    [Parameter] public string StrokeWidth { get; set; } = "2";
+}

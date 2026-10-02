@@ -5,7 +5,12 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
     <title>DevKit — DevOps Workflow Suite</title>
-    <link rel="stylesheet" href="app.css" />
+    @* Order is the cascade: app.css holds the tokens and shell, the rest build on it. *@
+    <link rel="stylesheet" href="app.css?v=@AssetVersion" />
+    <link rel="stylesheet" href="components.css?v=@AssetVersion" />
+    <link rel="stylesheet" href="tools.css?v=@AssetVersion" />
+    <link rel="stylesheet" href="merging.css?v=@AssetVersion" />
+    <link rel="stylesheet" href="code-compare.css?v=@AssetVersion" />
     <HeadOutlet @rendermode="RenderMode.InteractiveServer" />
 </head>
 <body>
@@ -19,7 +24,32 @@
         </div>
     </div>
 
-    <script src="_framework/blazor.web.js"></script>
-    <script src="app.js"></script>
+    @* Revealed by blazor-reconnect.js when Blazor's own script never loaded. The page is then
+       only its prerendered HTML: it looks ready but ignores every click. *@
+    <div id="devkit-startup-failed" role="alert" hidden>
+        <div>
+            <h5>DevKit can't respond</h5>
+            <p>Blazor's script (<code>blazor.web.js</code>) didn't load, so this page won't react to clicks.
+               Restart DevKit with <code>devkit run</code>, then refresh.</p>
+            <p>This usually means the NuGet package cache was cleaned while DevKit was running.</p>
+            <a class="btn-sm" href="">Refresh</a>
+        </div>
+    </div>
+
+    @* autostart=false so the circuit can be started with a reconnection policy that keeps
+       retrying and rejoins by itself; the stock policy gives up after a few seconds and
+       leaves the tab needing a manual refresh. *@
+    <script src="_framework/blazor.web.js" autostart="false"></script>
+    @* markdown.js first: markdown-viewer.js and app.js both call into window.devKitMd. *@
+    <script src="markdown.js?v=@AssetVersion"></script>
+    <script src="markdown-viewer.js?v=@AssetVersion"></script>
+    <script src="app.js?v=@AssetVersion"></script>
+    <script src="blazor-reconnect.js?v=@AssetVersion"></script>
 </body>
 </html>
+
+@code {
+    // Bump to force browsers to re-fetch the stylesheets and scripts after a UI change,
+    // so a previously cached stylesheet can't render the new markup unstyled.
+    private const string AssetVersion = "26";
+}

@@ -1,0 +1,83 @@
+@inject IJSRuntime JS
+@implements IDisposable
+
+@* A git ref or SHA: opens in a new tab when it has a URL, and always copies from the icon. *@
+
+<span class="cref @CssClass">
+    @if (string.IsNullOrEmpty(Url))
+    {
+        <span class="cref-text" title="@Tooltip">@DisplayText</span>
+    }
+    else
+    {
+        <a class="cref-text cref-link" href="@Url" target="_blank" rel="noopener"
+           title="@Tooltip" @onclick:stopPropagation>@DisplayText</a>
+    }
+    <button class="cref-copy @(copied ? "done" : "")" type="button"
+            title="@(copied ? "Copied" : $"Copy {Label}")"
+            @onclick="Copy" @onclick:stopPropagation>
+        <Icon Inner="@(copied ? Icons.Check : Icons.Copy)" />
+    </button>
+</span>
+
+@code {
+    private const int CopiedFeedbackMs = 1400;
+
+    /// <summary>The exact value placed on the clipboard.</summary>
+    [Parameter, EditorRequired] public string Text { get; set; } = "";
+
+    /// <summary>What is rendered; defaults to <see cref="Text"/>.</summary>
+    [Parameter] public string? Display { get; set; }
+
+    /// <summary>When set, the text becomes a link opening in a new tab.</summary>
+    [Parameter] public string? Url { get; set; }
+
+    [Parameter] public string Label { get; set; } = "value";
+    [Parameter] public string? CssClass { get; set; }
+
+    private bool copied;
+    private CancellationTokenSource? resetCts;
+
+    private string DisplayText => string.IsNullOrEmpty(Display) ? Text : Display;
+
+    private string Tooltip => string.IsNullOrEmpty(Url) ? Text : $"{Text} — open in a new tab";
+
+    private async Task Copy()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("devKit.copyToClipboard", Text);
+        }
+        catch (JSException)
+        {
+            return;
+        }
+
+        copied = true;
+        resetCts?.Cancel();
+        resetCts?.Dispose();
+        resetCts = new CancellationTokenSource();
+        var token = resetCts.Token;
+
+        // Clear the tick without blocking the click handler.
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(CopiedFeedbackMs, token);
+                copied = false;
+                await InvokeAsync(StateHasChanged);
+            }
+            catch (OperationCanceledException)
+            {
+                // Superseded by a newer copy, or the component went away.
+            }
+        }, token);
+    }
+
+    public void Dispose()
+    {
+        resetCts?.Cancel();
+        resetCts?.Dispose();
+    }
+}

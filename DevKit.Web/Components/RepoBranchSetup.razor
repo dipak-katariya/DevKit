@@ -1,0 +1,122 @@
+@* Per-repository branch configuration for the merging sheet: the QA branch that decides
+   which pull requests appear, and the merging target branch their commits must reach.
+   A one-line summary in the filter row opens the full table over the page.
+   Rows are owned by the page and mutated in place; OnChanged fires after every edit. *@
+
+<Popover Open="@(Expanded && Rows.Count > 0)" OpenChanged="@(open => ExpandedChanged.InvokeAsync(open))"
+         CssClass="cm-bsetup" PanelClass="cm-bsetup-body" Label="Branch setup">
+    <Trigger>
+        <button type="button" class="cm-bsetup-head @(Expanded && Rows.Count > 0 ? "open" : "")" @onclick="Toggle"
+                disabled="@(Rows.Count == 0)" aria-expanded="@(Expanded && Rows.Count > 0 ? "true" : "false")"
+                title="@(Rows.Count == 0 ? "Select at least one repository" : $"Verified against: {TargetsText} — click to change the branches")">
+            <Icon Inner="@Icons.GitBranch" />
+            <span class="cm-bsetup-sum">
+                @if (Rows.Count == 0)
+                {
+                    <text>No repository selected</text>
+                }
+                @foreach (var row in Rows)
+                {
+                    <span class="cm-bsetup-pair" @key="row.Repo.Id"><em>@row.Repo.Name</em> → @TargetOf(row)</span>
+                }
+            </span>
+            @if (UnconfiguredCount > 0)
+            {
+                <span class="cm-bsetup-warn" title="These repositories have no merging target branch, so they cannot be verified.">
+                    @UnconfiguredCount need a target
+                </span>
+            }
+            @if (AnyChanged)
+            {
+                <span class="cm-bsetup-dot" title="Edited in this session — not saved as the defaults"></span>
+            }
+            <span class="gdd-arrow">▾</span>
+        </button>
+    </Trigger>
+    <ChildContent>
+        <div class="cm-bsetup-grid cm-bsetup-hdr">
+            <span>Repository</span>
+            <span>QA branch <em>· which PRs show</em></span>
+            <span>Merging target <em>· verified against</em></span>
+            <span></span>
+        </div>
+
+        @foreach (var row in Rows)
+        {
+            <div class="cm-bsetup-grid cm-bsetup-row" @key="row.Repo.Id">
+                <span class="cm-bsetup-repo" title="@($"{row.Repo.Project} — {row.Repo.Name}")">
+                    @row.Repo.Name
+                    <em>@row.Repo.Project</em>
+                </span>
+                <BranchPicker Branches="@row.Branches" Value="@row.QaBranch"
+                              ValueChanged="@(b => Set(row, qa: true, b))"
+                              Disabled="@Loading"
+                              Placeholder="@(Loading ? "loading…" : "— All branches —")" />
+                <BranchPicker Branches="@row.Branches" Value="@row.MergingBranch"
+                              ValueChanged="@(b => Set(row, qa: false, b))"
+                              Disabled="@Loading"
+                              Placeholder="@(Loading ? "loading…" : "— Select target —")" />
+                <span class="cm-bsetup-tag @(row.MatchesSaved ? "" : "changed")">
+                    @(row.MatchesSaved ? "default" : "changed")
+                </span>
+            </div>
+        }
+
+        <div class="cm-bsetup-foot">
+            <span>Pre-filled from Settings. Edits here apply to this session only.</span>
+            <button class="btn-sm @(AnyChanged ? "btn-sm-active" : "")" disabled="@(!AnyChanged)"
+                    @onclick="() => OnSaveDefaults.InvokeAsync()"
+                    title="Store these branches as the per-repository defaults in Settings">
+                Save as defaults
+            </button>
+        </div>
+    </ChildContent>
+</Popover>
+
+@code {
+    /// <summary>One selected repository and the branches chosen for it.</summary>
+    public sealed class RepoBranchRow
+    {
+        public TfsRepo Repo { get; set; } = new();
+        public List<string> Branches { get; set; } = new();
+        public string QaBranch { get; set; } = "";
+        public string MergingBranch { get; set; } = "";
+
+        /// <summary>What Settings holds, so an edited row can be flagged before it is saved.</summary>
+        public string SavedQaBranch { get; set; } = "";
+        public string SavedMergingBranch { get; set; } = "";
+
+        public bool MatchesSaved =>
+            string.Equals(QaBranch, SavedQaBranch, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(MergingBranch, SavedMergingBranch, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Parameter, EditorRequired] public List<RepoBranchRow> Rows { get; set; } = new();
+    [Parameter] public bool Expanded { get; set; }
+    [Parameter] public EventCallback<bool> ExpandedChanged { get; set; }
+    [Parameter] public bool Loading { get; set; }
+
+    /// <summary>Raised after a branch edit so the page can drop stale verification state.</summary>
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    [Parameter] public EventCallback OnSaveDefaults { get; set; }
+
+    private int UnconfiguredCount => Rows.Count(r => string.IsNullOrWhiteSpace(r.MergingBranch));
+
+    private bool AnyChanged => Rows.Any(r => !r.MatchesSaved);
+
+    private static string TargetOf(RepoBranchRow row) =>
+        string.IsNullOrWhiteSpace(row.MergingBranch) ? "no target" : row.MergingBranch;
+
+    /// <summary>Each repository with its merging target, for the trigger's tooltip once the line runs out of room.</summary>
+    private string TargetsText => string.Join(" · ", Rows.Select(r => $"{r.Repo.Name} → {TargetOf(r)}"));
+
+    private Task Toggle() => Rows.Count == 0 ? Task.CompletedTask : ExpandedChanged.InvokeAsync(!Expanded);
+
+    private Task Set(RepoBranchRow row, bool qa, string branch)
+    {
+        if (qa) row.QaBranch = branch ?? "";
+        else row.MergingBranch = branch ?? "";
+        return OnChanged.InvokeAsync();
+    }
+}

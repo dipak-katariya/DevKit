@@ -1,0 +1,46 @@
+@* The one place a date is rendered, so format and timezone cannot drift between pages.
+
+   Dates arrive in two kinds. TfsJson.Date parses a "…Z" string with DateTime.TryParse, which
+   converts to local time; TfsApiService reads the same field with JsonElement.GetDateTime, which
+   keeps it in UTC. That is why the merging sheet and the merge tool showed the same commit at
+   times an offset apart. ToLocalTime settles both — it is a no-op on a value already local, and
+   converts one still in UTC. *@
+
+@if (Value is { } raw)
+{
+    var stamp = raw.ToLocalTime();
+    <span class="ts @CssClass" title="@Tooltip(stamp)">
+        <span class="ts-d">@stamp.ToString(DateFormat, Culture)</span><span class="ts-t">@stamp.ToString(TimeFormat, Culture)</span>
+    </span>
+}
+else
+{
+    <span class="ts ts-none @CssClass" title="@($"No {Label.ToLowerInvariant()} recorded")">@Empty</span>
+}
+
+@code {
+    private const string DateFormat = "dd MMM yyyy";
+    private const string TimeFormat = "HH:mm:ss";
+
+    // Month names stay readable regardless of the server's locale, and 24-hour time keeps the
+    // width predictable — the merging sheet's date column is only wide enough for a fixed shape.
+    private static readonly System.Globalization.CultureInfo Culture =
+        System.Globalization.CultureInfo.InvariantCulture;
+
+    [Parameter] public DateTime? Value { get; set; }
+
+    /// <summary>What this timestamp means; used in the tooltip.</summary>
+    [Parameter] public string Label { get; set; } = "Date";
+
+    /// <summary>Shown when there is no date.</summary>
+    [Parameter] public string Empty { get; set; } = "—";
+
+    [Parameter] public string? CssClass { get; set; }
+
+    /// <summary>
+    /// Names the zone as well as the time, so a reader never has to wonder whether a commit
+    /// stamp is theirs or the server's.
+    /// </summary>
+    private string Tooltip(DateTime stamp) =>
+        $"{Label}: {stamp.ToString("dddd, dd MMMM yyyy 'at' HH:mm:ss", Culture)} ({TimeZoneInfo.Local.StandardName})";
+}

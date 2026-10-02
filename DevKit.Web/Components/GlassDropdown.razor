@@ -1,4 +1,8 @@
 @inject IJSRuntime JS
+@implements IDisposable
+
+@* Searchable single-select. Only a bounded slice is rendered, so a list with thousands of
+   options cannot flood the DOM — the same cap BranchPicker and MultiSelectDropdown use. *@
 
 <div class="gdd @(IsOpen ? "gdd-open" : "") @CssClass" @ref="rootEl" style="@Style">
     <div class="gdd-trigger" @onclick="Toggle" @onclick:stopPropagation>
@@ -10,61 +14,58 @@
 
     @if (IsOpen)
     {
+        var render = BuildRender();
         <div class="gdd-panel" @onclick:stopPropagation>
             <div class="gdd-search-wrap">
                 <input class="gdd-search" type="text" placeholder="Search…" @oninput="OnSearchInput"
                        @ref="searchInput" @onkeydown="OnKeyDown" />
             </div>
             <div class="gdd-list">
-                @if (Groups != null && Groups.Any())
+                @if (ShowEmptyOption && HasSource)
                 {
-                    @if (ShowEmptyOption)
-                    {
-                        <div class="gdd-item @(string.IsNullOrEmpty(Value) ? "gdd-item-active" : "")"
-                             @onclick="SelectEmpty">
-                            @(EmptyLabel ?? Placeholder)
-                        </div>
-                    }
-                    @foreach (var grp in FilteredGroups)
+                    <div class="gdd-item @(string.IsNullOrEmpty(Value) ? "gdd-item-active" : "")"
+                         @onclick="SelectEmpty">
+                        @(EmptyLabel ?? Placeholder)
+                    </div>
+                }
+
+                @{ var flatIdx = 0; }
+                @foreach (var grp in render.Groups)
+                {
+                    @if (!string.IsNullOrEmpty(grp.Label))
                     {
                         <div class="gdd-group">@grp.Label</div>
-                        @foreach (var opt in grp.Options)
-                        {
-                            <div class="gdd-item @(opt.Value == Value ? "gdd-item-active" : "") @(highlightIdx == GetFlatIndex(opt) ? "gdd-item-hl" : "")"
-                                 @onclick="() => Select(opt.Value, opt.Label)">
-                                @opt.Label
-                            </div>
-                        }
                     }
-                }
-                else if (Options != null)
-                {
-                    @if (ShowEmptyOption)
+                    @foreach (var opt in grp.Options)
                     {
-                        <div class="gdd-item @(string.IsNullOrEmpty(Value) ? "gdd-item-active" : "")"
-                             @onclick="SelectEmpty">
-                            @(EmptyLabel ?? Placeholder)
-                        </div>
-                    }
-                    @foreach (var opt in FilteredOptions)
-                    {
-                        <div class="gdd-item @(opt.Value == Value ? "gdd-item-active" : "") @(highlightIdx == GetFlatIndex(opt) ? "gdd-item-hl" : "")"
-                             @onclick="() => Select(opt.Value, opt.Label)">
+                        var idx = flatIdx++;
+                        <div class="gdd-item @(opt.Value == Value ? "gdd-item-active" : "") @(highlightIdx == idx ? "gdd-item-hl" : "")"
+                             title="@opt.Label" @onclick="() => Select(opt.Value, opt.Label)">
                             @opt.Label
                         </div>
                     }
                 }
 
-                @if (!FilteredFlatList.Any())
+                @if (render.Total == 0)
                 {
                     <div class="gdd-empty">No results</div>
                 }
             </div>
+            @if (render.Hidden > 0)
+            {
+                <div class="bpk-more">@render.Hidden more — keep typing to narrow</div>
+            }
         </div>
     }
 </div>
 
 @code {
+    /// <summary>
+    /// Rows put in the DOM at once. Every option used to be rendered, which on a repository with
+    /// thousands of refs meant thousands of elements pushed over the circuit on every keystroke.
+    /// </summary>
+    private const int MaxRendered = 60;
+
     [Parameter] public string? Value { get; set; }
     [Parameter] public EventCallback<string> ValueChanged { get; set; }
     [Parameter] public EventCallback<ChangeEventArgs> OnChange { get; set; }
@@ -85,33 +86,59 @@
     private ElementReference searchInput;
     private DotNetObjectReference<GlassDropdown>? dotNetRef;
 
-    private List<DropdownOption> FilteredOptions =>
-        Options?.Where(o => string.IsNullOrEmpty(searchText) || o.Label.Contains(searchText, StringComparison.OrdinalIgnoreCase)).ToList()
-        ?? new();
+    private bool HasGroups => Groups is { Count: > 0 };
 
-    private List<DropdownGroup> FilteredGroups =>
-        Groups?.Select(g => new DropdownGroup
-        {
-            Label = g.Label,
-            Options = g.Options.Where(o => string.IsNullOrEmpty(searchText) || o.Label.Contains(searchText, StringComparison.OrdinalIgnoreCase)).ToList()
-        }).Where(g => g.Options.Count > 0).ToList() ?? new();
+    // Matches the pre-cap behaviour: an empty Options list still offers the "— All —" row, which
+    // is what the type and assignee filters show before any work items have loaded.
+    private bool HasSource => HasGroups || Options != null;
 
-    private List<DropdownOption> FilteredFlatList
+    /// <summary>What one render of the open panel shows, plus how much was left out.</summary>
+    private sealed record RenderModel(List<DropdownGroup> Groups, int Total, int Hidden);
+
+    /// <summary>
+    /// Filters and caps in a single pass, and is built once per render. The previous version
+    /// resolved each row's highlight position by rebuilding and rescanning the filtered list,
+    /// which made rendering O(n²) — the reason a large list froze the page on every keystroke.
+    /// </summary>
+    private RenderModel BuildRender()
     {
-        get
+        var groups = new List<DropdownGroup>();
+        var total = 0;
+        var rendered = 0;
+
+        if (HasGroups)
         {
-            if (Groups != null && Groups.Any())
-                return FilteredGroups.SelectMany(g => g.Options).ToList();
-            return FilteredOptions;
+            foreach (var grp in Groups!)
+            {
+                var matched = Match(grp.Options);
+                total += matched.Count;
+
+                var budget = MaxRendered - rendered;
+                if (budget <= 0 || matched.Count == 0) continue;
+
+                var take = matched.Count <= budget ? matched : matched.GetRange(0, budget);
+                rendered += take.Count;
+                groups.Add(new DropdownGroup { Label = grp.Label, Options = take });
+            }
         }
+        else if (Options is { Count: > 0 })
+        {
+            var matched = Match(Options);
+            total = matched.Count;
+
+            var take = matched.Count <= MaxRendered ? matched : matched.GetRange(0, MaxRendered);
+            rendered = take.Count;
+            groups.Add(new DropdownGroup { Label = "", Options = take });
+        }
+
+        return new RenderModel(groups, total, total - rendered);
     }
 
-    private int GetFlatIndex(DropdownOption opt)
+    private List<DropdownOption> Match(List<DropdownOption>? options)
     {
-        var list = FilteredFlatList;
-        for (int i = 0; i < list.Count; i++)
-            if (list[i].Value == opt.Value) return i;
-        return -1;
+        if (options is null) return new List<DropdownOption>();
+        if (string.IsNullOrEmpty(searchText)) return options;
+        return options.Where(o => o.Label.Contains(searchText, StringComparison.OrdinalIgnoreCase)).ToList();
     }
 
     private string GetDisplayText(string val)
@@ -139,13 +166,13 @@
         if (IsOpen)
         {
             await Task.Yield();
-            try { await JS.InvokeVoidAsync("devKit.focusEl", searchInput); } catch { }
+            try { await JS.InvokeVoidAsync("devKit.focusEl", searchInput); } catch (JSException) { }
             dotNetRef ??= DotNetObjectReference.Create(this);
-            try { await JS.InvokeVoidAsync("devKit.registerClickOutside", rootEl, dotNetRef); } catch { }
+            try { await JS.InvokeVoidAsync("devKit.registerClickOutside", rootEl, dotNetRef); } catch (JSException) { }
         }
         else
         {
-            try { await JS.InvokeVoidAsync("devKit.unregisterClickOutside", rootEl); } catch { }
+            await Unregister();
         }
     }
 
@@ -164,7 +191,8 @@
         Value = value;
         IsOpen = false;
         searchText = "";
-        try { await JS.InvokeVoidAsync("devKit.unregisterClickOutside", rootEl); } catch { }
+        highlightIdx = -1;
+        await Unregister();
         await ValueChanged.InvokeAsync(value);
         await OnChange.InvokeAsync(new ChangeEventArgs { Value = value });
     }
@@ -177,21 +205,27 @@
 
     private async Task OnKeyDown(KeyboardEventArgs e)
     {
-        var list = FilteredFlatList;
-        if (e.Key == "ArrowDown") { highlightIdx = Math.Min(highlightIdx + 1, list.Count - 1); }
-        else if (e.Key == "ArrowUp") { highlightIdx = Math.Max(highlightIdx - 1, 0); }
-        else if (e.Key == "Enter" && highlightIdx >= 0 && highlightIdx < list.Count)
+        if (e.Key == "Escape") { await Toggle(); return; }
+
+        // Only the rendered slice is navigable, which is also all the user can see.
+        var visible = BuildRender().Groups.SelectMany(g => g.Options).ToList();
+        if (e.Key == "ArrowDown") highlightIdx = Math.Min(highlightIdx + 1, visible.Count - 1);
+        else if (e.Key == "ArrowUp") highlightIdx = Math.Max(highlightIdx - 1, 0);
+        else if (e.Key == "Enter" && highlightIdx >= 0 && highlightIdx < visible.Count)
         {
-            var opt = list[highlightIdx];
+            var opt = visible[highlightIdx];
             await Select(opt.Value, opt.Label);
         }
-        else if (e.Key == "Escape") { await Toggle(); }
     }
 
-    public void Dispose()
+    private async Task Unregister()
     {
-        dotNetRef?.Dispose();
+        try { await JS.InvokeVoidAsync("devKit.unregisterClickOutside", rootEl); } catch (JSException) { }
     }
+
+    // Previously declared without @implements IDisposable, so Blazor never called it and every
+    // dropdown leaked its DotNetObjectReference for the life of the circuit.
+    public void Dispose() => dotNetRef?.Dispose();
 
     public class DropdownOption
     {

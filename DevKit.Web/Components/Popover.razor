@@ -1,0 +1,81 @@
+@inject IJSRuntime JS
+@inject ILogger<Popover> Log
+@implements IAsyncDisposable
+
+@* A trigger and a panel floating over the page beneath it. A click anywhere outside closes it,
+   through the devKit.registerClickOutside hook the dropdowns use. The owner holds the open state. *@
+
+<div class="pop @CssClass" @ref="rootEl">
+    @Trigger
+    @if (Open)
+    {
+        <div class="pop-panel @PanelClass" role="dialog" aria-label="@Label">
+            @ChildContent
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public bool Open { get; set; }
+    [Parameter] public EventCallback<bool> OpenChanged { get; set; }
+    [Parameter, EditorRequired] public RenderFragment Trigger { get; set; } = default!;
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter] public string? CssClass { get; set; }
+
+    /// <summary>Extra classes on the panel; they set its width and which edge it lines up with.</summary>
+    [Parameter] public string? PanelClass { get; set; }
+
+    /// <summary>Accessible name of the panel.</summary>
+    [Parameter] public string? Label { get; set; }
+
+    private ElementReference rootEl;
+    private DotNetObjectReference<Popover>? selfRef;
+
+    /// <summary>Whether the outside-click listener is on, so it is added and removed once per opening.</summary>
+    private bool listening;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Open == listening)
+        {
+            return;
+        }
+
+        listening = Open;
+        if (Open)
+        {
+            selfRef ??= DotNetObjectReference.Create(this);
+            await CallAsync("devKit.registerClickOutside", rootEl, selfRef);
+        }
+        else
+        {
+            await CallAsync("devKit.unregisterClickOutside", rootEl);
+        }
+    }
+
+    /// <summary>Called by app.js on a click outside; the name is the one the dropdowns answer to.</summary>
+    [JSInvokable]
+    public Task CloseDropdown() => Open ? OpenChanged.InvokeAsync(false) : Task.CompletedTask;
+
+    public async ValueTask DisposeAsync()
+    {
+        if (listening)
+        {
+            listening = false;
+            await CallAsync("devKit.unregisterClickOutside", rootEl);
+        }
+        selfRef?.Dispose();
+    }
+
+    private async Task CallAsync(string identifier, params object?[] args)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync(identifier, args);
+        }
+        catch (Exception ex) when (ex is JSException or JSDisconnectedException or TaskCanceledException)
+        {
+            Log.LogError(ex, "Popover {Label}: {Call} failed", Label, identifier);
+        }
+    }
+}

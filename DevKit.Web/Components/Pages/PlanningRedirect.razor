@@ -1,0 +1,9 @@
+@page "/planning"
+@inject NavigationManager Nav
+
+@* The size grid moved into the TFS Insight Hub as its Size Check tab. This keeps the old
+   /planning bookmarks and links working by forwarding them straight to that tab. *@
+
+@code {
+    protected override void OnInitialized() => Nav.NavigateTo("insights?tab=size", replace: true);
+}

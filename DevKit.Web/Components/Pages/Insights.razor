@@ -1,0 +1,264 @@
+@page "/insights"
+@inject TfsApiService TfsApi
+@inject SettingsService Settings
+@inject PageStateService PageState
+
+<div class="hub">
+    <div class="tabbar">
+        @foreach (var t in Tabs)
+        {
+            <button class="tab @(activeTab == t.Key ? "active" : "")" @onclick="() => activeTab = t.Key">
+                <Icon Inner="@t.Icon" /><span>@t.Label</span>
+            </button>
+        }
+    </div>
+
+    <div class="tab-body">
+        @if (!string.IsNullOrEmpty(metadataError)) { <div class="notice warn">⚠ @metadataError</div> }
+        @if (activeTab == "create")
+        {
+            @* ─── TASK CREATION (Planning Management) ─── *@
+            <TaskCreationPanel Area="@selectedArea" Sprint="@selectedSprint" Selectors="@AreaSprintSelectors" />
+        }
+        else if (activeTab == "planning")
+        {
+            <CapacityPlanningPanel Area="@selectedArea" Sprint="@selectedSprint" Selectors="@AreaSprintSelectors" />
+        }
+        else if (activeTab == "size")
+        {
+            @* ─── SIZE CHECK (requirement size vs. child task estimates) ─── *@
+            <SizeCheckPanel Area="@selectedArea" Sprint="@selectedSprint" Selectors="@AreaSprintSelectors" />
+        }
+        else if (activeTab == "tasks" || activeTab == "bugs")
+        {
+            @* ─── TASKS / BUGS AUDIT ─── *@
+            <div class="cfg-bar">
+                @AreaSprintSelectors
+                <div class="cfg-divider"></div>
+                <div class="cfg-col" style="flex:0 0 auto;">
+                    <button class="cfg-load-btn" @onclick="LoadAudit" disabled="@(selectedArea == null || string.IsNullOrEmpty(selectedSprint) || auditLoading)">
+                        @if (auditLoading) { <span class="spin spin-sm" style="color:#fff;"></span> } else { <span>⬇</span> }
+                        Run Checks
+                    </button>
+                </div>
+            </div>
+            <div style="flex:1;overflow:auto;margin-top:16px;">
+                @if (!string.IsNullOrEmpty(auditError)) { <div class="notice warn">⚠ @auditError</div> }
+                <AuditCheckList Checks="@(activeTab == "tasks" ? taskChecks : bugChecks)" />
+            </div>
+        }
+        else if (activeTab == "burndown")
+        {
+            @* ─── BURNDOWN (Hours Updated by Members) ─── *@
+            <div class="cfg-bar">
+                @AreaSprintSelectors
+                <div class="cfg-divider"></div>
+                <div class="cfg-col" style="flex:0 0 auto;">
+                    <div class="cfg-field">
+                        <label class="cfg-label">📆 View</label>
+                        <div style="display:flex;gap:4px;">
+                            <button class="btn-sm @(burndownWeekly ? "" : "btn-sm-active")" @onclick="() => SetBurndownView(false)">Daily</button>
+                            <button class="btn-sm @(burndownWeekly ? "btn-sm-active" : "")" @onclick="() => SetBurndownView(true)">Weekly</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="cfg-divider"></div>
+                <div class="cfg-col" style="flex:1;min-width:160px;">
+                    <div class="cfg-field">
+                        <label class="cfg-label">🔍 Member</label>
+                        <input class="cfg-fi" placeholder="Filter by name…" @oninput="OnBurndownSearch" />
+                    </div>
+                </div>
+                <div class="cfg-divider"></div>
+                <div class="cfg-col" style="flex:0 0 auto;">
+                    <button class="cfg-load-btn" @onclick="LoadBurndown" disabled="@(selectedArea == null || string.IsNullOrEmpty(selectedSprint) || burndownLoading)">
+                        @if (burndownLoading) { <span class="spin spin-sm" style="color:#fff;"></span> } else { <span>⬇</span> }
+                        Load
+                    </button>
+                </div>
+            </div>
+            <div style="flex:1;overflow:auto;margin-top:16px;">
+                @if (!string.IsNullOrEmpty(burndownError)) { <div class="notice warn">⚠ @burndownError</div> }
+                @if (burndownLoading)
+                {
+                    <div class="loading-line"><span class="spin spin-sm"></span> Fetching revision history (one request per work item)…</div>
+                }
+                else if (burndownLoaded)
+                {
+                    <BurndownGrid Matrix="@burndownMatrix" Project="@(selectedArea?.Project ?? "")" DailyThreshold="@burndownThreshold" />
+                }
+                else
+                {
+                    <div class="tbl-empty">Select an area and sprint, then Load to see per-member daily hours from revision history.</div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private record TabDef(string Key, string Label, string Icon, string Summary);
+
+    private static readonly TabDef[] Tabs =
+    {
+        new("create", "Task Creation", Icons.Copy, "Create a standardized set of child tasks (correct discipline, with the Product tag — or Bug/Maintenance under a Bug) from a Requirement / CHR / Bug in one action, with a Default tasks option and multi-create behaviour."),
+        new("planning", "Capacity Planning", Icons.Planning, ""),
+        new("size", "Size Check", Icons.Planning, "Requirement / CHR sizes verified against the estimates on their child tasks, with the calculated size (past sprints' completed work + this sprint's original estimate) applied individually or in bulk. Bugs are off by default — tick Bug in the Type filter to include them."),
+        new("burndown", "Burndown", Icons.Insights, "Per-member daily logged hours from work-item revision history, split into regular vs. bug work, highlighted against the hours per day set in Capacity Planning, with Daily/Weekly views."),
+        new("tasks", "Tasks", Icons.GitBranch, "Task validation checks — missing discipline or estimates, invalid title prefixes, discipline/title mismatches, manual-execution tasks, and remaining/completed anomalies."),
+        new("bugs", "Bugs", Icons.Trash, "Bug audits — missing root cause or proposed fix, bugs without a dev task, resolved-with-published flag dates, and the global exclusion rules (Duplicate / Deferred / Cannot Reproduce / Rejected)."),
+    };
+
+    // Tied to the order above, so moving a tab to the front also makes it the one the hub opens on.
+    private string activeTab = Tabs[0].Key;
+
+    /// <summary>Opens the hub on a given tab, e.g. /insights?tab=size. Used by the /planning redirect.</summary>
+    [Parameter]
+    [SupplyParameterFromQuery(Name = "tab")]
+    public string? Tab { get; set; }
+
+    private string? appliedTab;
+
+    private List<TfsArea> areas => PageState.TfsData.Areas;
+    private List<TfsIteration> iterations => PageState.TfsData.Iterations;
+
+    private TfsArea? selectedArea;
+    private string? selectedSprint;
+
+    // Shown above every tab: the area and sprint pickers are empty without this metadata.
+    private string? metadataError;
+
+    // Tasks / Bugs audit
+    private bool auditLoading;
+    private string? auditError;
+    private List<AuditCheck> taskChecks = new();
+    private List<AuditCheck> bugChecks = new();
+
+    // Burndown
+    private bool burndownLoading, burndownLoaded, burndownWeekly;
+    private string? burndownError;
+    private string burndownSearch = "";
+    private List<BurndownContribution> burndownContribs = new();
+    private BurndownMatrix burndownMatrix = new();
+    private double burndownThreshold = CapacityPlanningSettings.DefaultHoursPerDay;
+    private BurndownScope burndownScope = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Settings.IsConfigured) return;
+        if (!PageState.TfsData.IsLoaded)
+        {
+            try
+            {
+                PageState.TfsData.Projects = await TfsApi.GetProjectsAsync();
+                foreach (var p in PageState.TfsData.Projects)
+                {
+                    PageState.TfsData.Areas.AddRange(await TfsApi.GetAreasAsync(p.Name));
+                    PageState.TfsData.Iterations.AddRange(await TfsApi.GetIterationsAsync(p.Name));
+                }
+                PageState.TfsData.IsLoaded = true;
+            }
+            catch (Exception ex) { metadataError = $"Failed to load TFS metadata: {ex.Message}"; }
+        }
+
+        selectedArea = AreaSprintSelect.Parse(Settings.DefaultAreaPath) ?? selectedArea;
+        if (!string.IsNullOrEmpty(Settings.DefaultSprint)) selectedSprint = Settings.DefaultSprint;
+    }
+
+    // Only honour ?tab= when it actually changes, so a re-render can't yank the user back
+    // off a tab they clicked (clicking a tab does not touch the URL).
+    protected override void OnParametersSet()
+    {
+        if (Tab == appliedTab) return;
+        appliedTab = Tab;
+        if (!string.IsNullOrEmpty(Tab) && Tabs.Any(t => t.Key == Tab)) activeTab = Tab;
+    }
+
+    private void OnAreaChange(ChangeEventArgs e)
+    {
+        var val = e.Value?.ToString();
+        selectedArea = string.IsNullOrEmpty(val) ? null : AreaSprintSelect.Parse(val) ?? selectedArea;
+    }
+
+    private void OnSprintChange(ChangeEventArgs e) => selectedSprint = e.Value?.ToString();
+
+    private async Task LoadAudit()
+    {
+        if (selectedArea == null || string.IsNullOrEmpty(selectedSprint)) return;
+        auditLoading = true; auditError = null; taskChecks = new(); bugChecks = new();
+        StateHasChanged();
+        try
+        {
+            var iterPath = TfsApiService.ToWiqlPath(selectedSprint);
+            var areaPath = TfsApiService.ToWiqlPath(selectedArea.Path);
+            var data = await TfsApi.LoadAuditDataAsync(selectedArea.Project, areaPath, iterPath);
+            taskChecks = InsightAuditService.RunTaskChecks(data);
+            bugChecks = InsightAuditService.RunBugChecks(data);
+
+            // Fill §5.3 Flag Provided Date from revision history (bounded to qualifying bugs).
+            var published = bugChecks.FirstOrDefault(c => c.ExtraColumn2 == "Flag Provided Date");
+            if (published != null)
+                foreach (var r in published.Rows)
+                    r.Expected2 = (await TfsApi.GetPublishedFlagDateAsync(selectedArea.Project, r.Item.Id))?.ToString("dd/MM/yyyy hh:mm tt");
+        }
+        catch (Exception ex) { auditError = $"Load failed: {ex.Message}"; }
+        auditLoading = false;
+    }
+
+    private async Task LoadBurndown()
+    {
+        if (selectedArea == null || string.IsNullOrEmpty(selectedSprint)) return;
+        burndownLoading = true; burndownError = null; burndownContribs = new(); burndownMatrix = new();
+        // Read per load, so a change in Capacity Planning shows on the next Load. The sprint's own
+        // dates come from the iterations already in memory, so a short first or last week is held
+        // only to the days it covers.
+        var planning = Settings.CapacityPlanning;
+        var iteration = iterations.Find(i => i.Path == selectedSprint);
+        burndownThreshold = planning.HoursPerDay;
+        burndownScope = new BurndownScope
+        {
+            Start = iteration?.StartDate,
+            Finish = iteration?.FinishDate,
+            Today = DateTime.Today,
+            WorkingDays = planning.WorkingDays
+        };
+        StateHasChanged();
+        try
+        {
+            var iterPath = TfsApiService.ToWiqlPath(selectedSprint);
+            var areaPath = TfsApiService.ToWiqlPath(selectedArea.Path);
+            burndownContribs = await TfsApi.LoadBurndownAsync(selectedArea.Project, areaPath, iterPath);
+            burndownLoaded = true;
+            RebuildBurndown();
+            if (burndownContribs.Count == 0) burndownError = "No CompletedWork changes recorded for this sprint and area yet.";
+        }
+        catch (Exception ex) { burndownError = $"Load failed: {ex.Message}"; }
+        burndownLoading = false;
+    }
+
+    private void RebuildBurndown() => burndownMatrix = BurndownCalculator.Build(burndownContribs, burndownWeekly, burndownSearch, burndownScope);
+    private void SetBurndownView(bool weekly) { if (burndownWeekly != weekly) { burndownWeekly = weekly; RebuildBurndown(); } }
+    private void OnBurndownSearch(ChangeEventArgs e) { burndownSearch = e.Value?.ToString() ?? ""; RebuildBurndown(); }
+
+    private RenderFragment AreaSprintSelectors => @<text>
+        <div class="cfg-col" style="flex:0 0 auto;">
+            <div class="cfg-field">
+                <label class="cfg-label">📂 Area Path</label>
+                <GlassDropdown Style="min-width:240px;" Value="@(selectedArea != null ? AreaSprintSelect.Serialize(selectedArea) : "")"
+                               Placeholder="— Select area —" Disabled="@(areas.Count==0)" Groups="@AreaGroups" OnChange="OnAreaChange" />
+            </div>
+        </div>
+        <div class="cfg-divider"></div>
+        <div class="cfg-col" style="flex:0 0 auto;">
+            <div class="cfg-field">
+                <label class="cfg-label">📅 Sprint</label>
+                <GlassDropdown Style="min-width:220px;" Value="@(selectedSprint ?? "")" Placeholder="— Select sprint —"
+                               ShowEmptyOption="false" Disabled="@(iterations.Count==0)" Groups="@SprintGroups" OnChange="OnSprintChange" />
+            </div>
+        </div>
+    </text>;
+
+    private List<GlassDropdown.DropdownGroup> AreaGroups => AreaSprintSelect.AreaGroups(areas);
+
+    private List<GlassDropdown.DropdownGroup> SprintGroups => AreaSprintSelect.SprintGroups(iterations);
+}

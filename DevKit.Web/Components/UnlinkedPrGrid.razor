@@ -1,0 +1,184 @@
+@* Pull requests raised recently with no work-item link, grouped repository → PR → commits,
+   in the same shape as the Merge Tool so the two read the same way. *@
+
+@if (!Bundle.HasRun)
+{
+    <div class="cm-blank">
+        <div class="cm-blank-icon"><Icon Inner="@Icons.GitBranch" CssClass="ic-xl" /></div>
+        <h3>Unlinked Pull Requests</h3>
+        <p>
+            Find pull requests merged into each repository's <b>QA branch</b> that nobody tied to a
+            Requirement, Change Request or Bug — the ones the sheet can never show, because there is
+            no work item to hang them on. Choose how far back to look, then <b>Search</b>.
+        </p>
+    </div>
+}
+else if (Bundle.PullRequests.Count == 0)
+{
+    <div class="cm-blank">
+        <div class="cm-blank-icon"><Icon Inner="@Icons.CheckCircle" CssClass="ic-xl" /></div>
+        <h3>Every pull request is linked</h3>
+        <p>
+            @Bundle.ScannedPrCount of @Bundle.RaisedPrCount pull request(s) raised since
+            @(Bundle.SearchedFrom?.ToLocalTime().ToString("dd MMM yy") ?? "the cutoff") targeted a QA
+            branch, and all of them reference a work item.
+            @if (Bundle.ReferencedByIdCount > 0)
+            {
+                <text>
+                    @Bundle.ReferencedByIdCount of those had no formal link but name a work item in
+                    their branch or title.
+                </text>
+            }
+        </p>
+        @if (UnfilteredRepos.Count > 0)
+        {
+            <p class="upr-hint">
+                No QA branch is set for <b>@string.Join(", ", UnfilteredRepos)</b>, so every branch was
+                included. Set one under Branch setup to narrow this.
+            </p>
+        }
+    </div>
+}
+else
+{
+    <div class="upr-wrap">
+        <div class="upr-scope">
+            <Icon Inner="@Icons.GitBranch" />
+            <span>
+                @Bundle.PullRequests.Count unlinked of @Bundle.ScannedPrCount pull request(s) that
+                targeted a QA branch, out of @Bundle.RaisedPrCount raised since
+                @(Bundle.SearchedFrom?.ToLocalTime().ToString("dd MMM yy") ?? "the cutoff").
+                @if (Bundle.ReferencedByIdCount > 0)
+                {
+                    <text>
+                        A further <b>@Bundle.ReferencedByIdCount</b> had no link but name a work item
+                        in their branch or title, so the sheet still finds them — switch Discovery to
+                        <b>Links only</b> to include those here.
+                    </text>
+                }
+                @if (UnfilteredRepos.Count > 0)
+                {
+                    <text>
+                        No QA branch is set for <b>@string.Join(", ", UnfilteredRepos)</b>, so every
+                        branch was included there.
+                    </text>
+                }
+            </span>
+        </div>
+        @foreach (var group in Bundle.ByRepository)
+        {
+            var repoOpen = !collapsedRepos.Contains(group.Key);
+            <div class="proj-section">
+                <div class="proj-hdr" @onclick="() => ToggleRepo(group.Key)">
+                    <span class="proj-chevron">@(repoOpen ? "▼" : "▶")</span>
+                    <span class="proj-name">@group.Key</span>
+                    <span class="proj-branch-badge">→ @QaBranchFor(group.Key)</span>
+                    <span class="upr-count">@group.Count() PR(s)</span>
+                    <span class="upr-count">@group.Sum(p => p.Commits.Count) commit(s)</span>
+                </div>
+
+                @if (repoOpen)
+                {
+                    @foreach (var pr in group)
+                    {
+                        var key = $"{pr.RepositoryId}-{pr.PullRequestId}";
+                        var prOpen = expandedPr == key;
+                        <div class="mr-row">
+                            <div class="mr-hdr" @onclick="() => TogglePr(key)">
+                                <button class="cm-expander @(prOpen ? "open" : "")" disabled="@(pr.Commits.Count == 0)"
+                                        title="@(pr.Commits.Count == 0 ? "No commits" : "Show commits")"
+                                        @onclick="() => TogglePr(key)" @onclick:stopPropagation>
+                                    <Icon Inner="@Icons.ChevronRight" />
+                                </button>
+                                <span class="pr-badge @PrStatusCls(pr.Status)">@pr.Status</span>
+                                <a class="id-link" href="@pr.Url" target="_blank" rel="noopener"
+                                   @onclick:stopPropagation>!@pr.PullRequestId</a>
+                                <span class="mr-title" title="@pr.Title">@pr.Title</span>
+                                <div class="mr-meta">
+                                    <span class="mr-branch">@pr.SourceBranch → @pr.TargetBranch</span>
+                                    <span>@pr.CreatedBy</span>
+                                    <TimeStamp Value="@pr.CreationDate" Label="Raised" />
+                                    <span class="upr-count">@pr.Commits.Count commit(s)</span>
+                                </div>
+                            </div>
+
+                            @if (prOpen)
+                            {
+                                <div class="cm-commit-wrap">
+                                    @if (pr.Commits.Count == 0)
+                                    {
+                                        <div class="cm-empty-inline">No commits were returned for this pull request.</div>
+                                    }
+                                    else
+                                    {
+                                        <table class="cm-commit-table">
+                                            <thead>
+                                                <tr>
+                                                    <th class="cm-k-sha" title="Commit SHA — click to copy">Commit</th>
+                                                    <th title="Commit message — click to copy">Message</th>
+                                                    <th class="cm-p-user" title="Who authored the commit">Author</th>
+                                                    <th class="cm-p-date" title="When the commit was authored">Date</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                @foreach (var c in pr.Commits)
+                                                {
+                                                    <tr @key="c.CommitId">
+                                                        <td class="cm-k-sha">
+                                                            <CopyableRef Text="@c.CommitId" Display="@c.ShortId"
+                                                                         Url="@c.Url" Label="commit SHA" CssClass="cref-sha" />
+                                                        </td>
+                                                        <td class="cm-k-msg">
+                                                            <CopyableRef Text="@c.Message" Label="message" CssClass="cref-src" />
+                                                        </td>
+                                                        <td class="cm-p-user" title="Authored by @c.Author">@c.Author</td>
+                                                        <td class="cm-p-date"><TimeStamp Value="@c.Date" Label="Authored" /></td>
+                                                    </tr>
+                                                }
+                                            </tbody>
+                                        </table>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public UnlinkedPrBundle Bundle { get; set; } = new();
+
+    private readonly HashSet<string> collapsedRepos = new(StringComparer.OrdinalIgnoreCase);
+
+    // One pull request's commits on screen at a time, matching the sheet's grid.
+    private string? expandedPr;
+
+    /// <summary>Repositories with no QA branch configured, so nothing narrowed their results.</summary>
+    private List<string> UnfilteredRepos => Bundle.QaBranchByRepo
+        .Where(kv => string.IsNullOrWhiteSpace(kv.Value))
+        .Select(kv => kv.Key)
+        .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    private string QaBranchFor(string repoName) =>
+        Bundle.QaBranchByRepo.TryGetValue(repoName, out var b) && !string.IsNullOrWhiteSpace(b)
+            ? b
+            : "all branches";
+
+    private void ToggleRepo(string repo)
+    {
+        if (!collapsedRepos.Add(repo)) collapsedRepos.Remove(repo);
+    }
+
+    private void TogglePr(string key) => expandedPr = expandedPr == key ? null : key;
+
+    private static string PrStatusCls(string? status) => (status ?? "").ToLowerInvariant() switch
+    {
+        "completed" => "pr-completed",
+        "abandoned" => "pr-abandoned",
+        _ => "pr-active"
+    };
+}

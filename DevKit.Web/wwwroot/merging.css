@@ -1,0 +1,462 @@
+/* ═══════════════════════════════════════════════════════
+   CODE MERGING SHEET
+   ═══════════════════════════════════════════════════════ */
+
+.cm-page{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0;overflow:hidden;}
+
+/* ─── Toolbar ─── */
+.cm-toolbar{flex:0 0 auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);padding:10px 14px;display:flex;flex-direction:column;gap:10px;}
+.cm-tb-row{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px;}
+.cm-fld{display:flex;flex-direction:column;gap:4px;min-width:0;}
+.cm-fld-btn{flex:0 0 auto;margin-left:auto;}
+.cm-hint{font-weight:500;text-transform:none;letter-spacing:0;color:var(--muted);opacity:.75;}
+
+/* The merging sheet's view filters stay narrow so Branch setup fits on their row. */
+.cm-fld-filter{flex:0 1 188px;min-width:140px;}
+.cm-fld-filter.cm-fld-state{flex-basis:214px;}
+.cm-fld-branch{flex:1 1 280px;min-width:220px;}
+
+/* ─── Per-repository branch setup: a one-line summary that opens the table over the page ─── */
+.cm-bsetup{width:100%;}
+.cm-bsetup-head{
+  width:100%;height:30px;display:flex;align-items:center;gap:8px;padding:0 10px;
+  background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);
+  font-family:inherit;font-size:.72rem;cursor:pointer;text-align:left;transition:var(--t);
+}
+.cm-bsetup-head:hover:not(:disabled){border-color:var(--border2);}
+.cm-bsetup-head.open{border-color:var(--accent-line);box-shadow:0 0 0 3px var(--accent-soft);}
+.cm-bsetup-head.open .gdd-arrow{transform:rotate(180deg);}
+.cm-bsetup-head:disabled{opacity:.4;cursor:default;}
+.cm-bsetup-head .ic{width:14px;height:14px;color:var(--accent2);flex-shrink:0;}
+.cm-bsetup-sum{
+  flex:1;min-width:0;font-family:var(--mono);font-size:.64rem;color:var(--purple);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.cm-bsetup-warn{
+  flex:0 0 auto;font-size:.56rem;font-weight:700;padding:1px 7px;border-radius:999px;
+  background:rgba(251,191,36,.12);color:var(--amber);
+}
+.cm-bsetup-pair em{font-style:normal;font-family:var(--sans);font-size:.68rem;color:var(--muted2);}
+.cm-bsetup-pair + .cm-bsetup-pair::before{content:'·';margin:0 8px;color:var(--muted);}
+.cm-bsetup-dot{width:7px;height:7px;border-radius:50%;background:var(--amber);flex-shrink:0;}
+/* Lined up with the trigger's right edge: the trigger always ends inside the toolbar, its left edge may not. */
+.cm-bsetup-body{right:0;width:min(780px,calc(100vw - 48px));padding:4px 14px 12px;}
+.cm-bsetup-grid{
+  display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr) minmax(0,1.2fr) 66px;
+  gap:10px;align-items:center;
+}
+.cm-bsetup-hdr{
+  padding:8px 0 6px;font-size:.54rem;font-weight:700;text-transform:uppercase;
+  letter-spacing:.07em;color:var(--muted);border-bottom:1px solid var(--border2);
+}
+.cm-bsetup-hdr em{font-style:normal;font-weight:500;text-transform:none;letter-spacing:0;opacity:.7;}
+.cm-bsetup-row{padding:7px 0;border-bottom:1px solid var(--border2);}
+.cm-bsetup-row:last-of-type{border-bottom:none;}
+.cm-bsetup-repo{
+  display:flex;flex-direction:column;gap:1px;min-width:0;font-size:.72rem;font-weight:700;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.cm-bsetup-repo em{font-style:normal;font-weight:500;font-size:.56rem;color:var(--muted);}
+.cm-bsetup-tag{font-size:.54rem;font-weight:700;color:var(--muted);text-align:right;}
+.cm-bsetup-tag.changed{color:var(--amber);}
+.cm-bsetup-foot{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding-top:9px;margin-top:8px;border-top:1px solid var(--border2);font-size:.6rem;color:var(--muted);
+}
+
+.cm-seg{display:inline-flex;gap:0;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:2px;height:32px;}
+.cm-seg-btn{
+  padding:0 12px;border:1px solid transparent;border-radius:8px;background:transparent;
+  color:var(--muted2);font-size:.7rem;font-weight:700;cursor:pointer;font-family:inherit;
+  display:inline-flex;align-items:center;gap:5px;transition:var(--t);white-space:nowrap;height:100%;
+}
+.cm-seg-btn:hover{color:var(--text);}
+.cm-seg-btn.on{background:var(--accent-soft);color:#cdd9ff;border-color:var(--accent-line);}
+.cm-fld > .cm-seg-btn{background:var(--bg);border-color:var(--border);}
+
+.cm-verify-btn{
+  padding:0 16px;height:32px;border:1px solid var(--accent-line);border-radius:10px;
+  background:var(--accent-soft);color:#cdd9ff;font-size:.73rem;font-weight:700;cursor:pointer;
+  display:flex;align-items:center;gap:6px;transition:var(--t);white-space:nowrap;font-family:inherit;
+}
+.cm-verify-btn:hover:not(:disabled){background:rgba(79,124,255,.24);color:#fff;}
+.cm-verify-btn:disabled{opacity:.35;cursor:not-allowed;}
+.cm-verify-btn .ic{width:14px;height:14px;}
+.cm-toolbar .cfg-load-btn .ic{width:14px;height:14px;}
+
+/* ─── Repo multi-select ─── */
+.msd .gdd-trigger{gap:6px;}
+.msd-count{
+  flex-shrink:0;font-size:.58rem;font-weight:700;font-family:var(--mono);
+  background:var(--accent-soft);color:var(--accent2);border-radius:var(--pill);padding:1px 7px;
+}
+.msd-bulk{display:flex;gap:6px;padding:6px 8px;border-bottom:1px solid var(--border);}
+.msd-bulk-btn{
+  flex:1;padding:4px 8px;border:1px solid var(--border2);border-radius:7px;background:var(--surface2);
+  color:var(--muted2);font-size:.63rem;font-weight:700;cursor:pointer;font-family:inherit;transition:var(--t);
+}
+.msd-bulk-btn:hover:not(:disabled){background:var(--surface3);color:var(--text);}
+.msd-bulk-btn:disabled{opacity:.35;cursor:not-allowed;}
+.msd-item{display:flex;align-items:center;gap:8px;}
+.msd-box{
+  flex-shrink:0;width:14px;height:14px;border-radius:4px;border:1px solid var(--border2);
+  background:var(--bg);display:inline-flex;align-items:center;justify-content:center;
+  font-size:.6rem;line-height:1;color:transparent;transition:var(--t);
+}
+.msd-box.on{background:var(--accent);border-color:var(--accent);color:#fff;}
+.msd-label{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.msd-badge{
+  flex-shrink:0;font-size:.55rem;font-family:var(--mono);color:var(--purple);
+  background:rgba(167,139,250,.12);border-radius:5px;padding:1px 6px;
+}
+
+/* ─── Target-branch typeahead ─── */
+.cm-branch-box{position:relative;}
+.cm-branch-box .cfg-fi{padding-right:28px;}
+.cm-branch-clear{
+  position:absolute;right:6px;top:50%;transform:translateY(-50%);
+  border:none;background:none;color:var(--muted);cursor:pointer;font-size:.7rem;
+  padding:3px 5px;border-radius:5px;line-height:1;
+}
+.cm-branch-clear:hover{color:var(--red);background:rgba(248,113,113,.1);}
+.cm-suggest{
+  position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:60;
+  background:var(--surface);border:1px solid var(--border2);border-radius:var(--r2);
+  box-shadow:var(--shadow-lg);max-height:240px;overflow-y:auto;padding:4px;
+}
+.cm-suggest-item{
+  display:block;width:100%;text-align:left;padding:6px 10px;border:none;background:none;
+  color:var(--muted2);font-size:.7rem;font-family:var(--mono);border-radius:7px;cursor:pointer;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.cm-suggest-item:hover{background:var(--accent-soft);color:#cdd9ff;}
+
+/* ─── Body ─── */
+.cm-body{flex:1;display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden;padding-top:10px;}
+
+.cm-panel{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden;margin-bottom:0;}
+.cm-phead{gap:12px;flex-wrap:wrap;padding:8px 14px;}
+.cm-phead .ptitle{display:inline-flex;align-items:center;gap:7px;}
+.cm-phead .ptitle .ic{width:15px;height:15px;color:var(--accent2);}
+.cm-phead-tools{display:flex;align-items:center;gap:10px;margin-left:auto;}
+
+.cm-search{
+  display:flex;align-items:center;gap:6px;background:var(--bg);border:1px solid var(--border);
+  border-radius:9px;padding:0 10px;height:30px;transition:var(--t);
+}
+.cm-search:focus-within{border-color:var(--accent-line);box-shadow:0 0 0 3px var(--accent-soft);}
+.cm-search .ic{width:13px;height:13px;color:var(--muted);flex-shrink:0;}
+.cm-search input{
+  border:none;background:none;outline:none;color:var(--text);font-size:.72rem;
+  font-family:inherit;width:190px;max-width:32vw;
+}
+.cm-search input::placeholder{color:var(--muted);}
+
+.cm-check{display:inline-flex;align-items:center;gap:6px;font-size:.7rem;font-weight:600;color:var(--muted2);cursor:pointer;white-space:nowrap;user-select:none;}
+.cm-check input{accent-color:var(--accent);width:14px;height:14px;cursor:pointer;}
+.cm-check:hover{color:var(--text);}
+.cm-check-on{color:var(--amber);}
+
+/* A pull request listed only because "All PRs" is on: it missed the QA branch, so it is not
+   part of the release check and is tinted to keep that obvious while scanning the table. */
+tr.cm-pr-offqa{background:rgba(251,191,36,.05);}
+tr.cm-pr-offqa:hover{background:rgba(251,191,36,.09);}
+tr.cm-pr-offqa .cm-p-branch .cref-tgt .cref-text{color:var(--amber);}
+
+/* ─── Grid ─── */
+.cm-grid-wrap{flex:1;min-height:0;overflow:auto;scrollbar-width:thin;}
+.cm-grid-wrap::-webkit-scrollbar{width:8px;height:8px;}
+.cm-grid-wrap::-webkit-scrollbar-thumb{background:var(--surface3);border-radius:4px;}
+
+table.cm-grid{width:100%;table-layout:fixed;border-collapse:collapse;font-size:.75rem;}
+table.cm-grid thead th{
+  position:sticky;top:0;z-index:5;background:var(--surface2);
+  text-align:left;font-size:.56rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;
+  color:var(--muted);padding:8px 10px;border-bottom:1px solid var(--border2);white-space:nowrap;
+}
+/* One line per row, about 35px, roughly twice the rows on screen of the old two-line cells. */
+table.cm-grid tbody td{padding:6px 10px;vertical-align:middle;border-bottom:1px solid var(--border);}
+tr.cm-row{cursor:pointer;transition:background var(--t);}
+tr.cm-row:hover{background:var(--surface2);}
+tr.cm-row.open{background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent);}
+
+/* Fixed column widths keep long titles from pushing the grid off-screen. */
+.cm-c-exp{width:36px;}
+.cm-c-id{width:82px;}
+.cm-c-title{width:auto;}
+.cm-c-type{width:112px;}
+.cm-c-state{width:88px;}
+.cm-c-user{width:136px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.71rem;}
+.cm-c-num{width:68px;text-align:right;}
+.cm-c-merged{width:190px;}
+.cm-c-act{width:46px;text-align:center;}
+
+.cm-merged-cell{display:flex;align-items:center;gap:6px;min-width:0;}
+.cm-merged-cell .merge-pill{min-width:0;}
+
+.cm-title-text{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);}
+.cm-num{font-family:var(--mono);font-size:.72rem;color:var(--muted);}
+.cm-num.has{color:var(--accent2);font-weight:700;}
+
+.cm-expander{
+  width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;
+  border:1px solid var(--border2);border-radius:6px;background:var(--surface2);
+  color:var(--muted2);cursor:pointer;transition:var(--t);padding:0;flex-shrink:0;
+}
+.cm-expander:hover:not(:disabled){background:var(--surface3);color:var(--text);}
+.cm-expander:disabled{opacity:.22;cursor:default;}
+.cm-expander .ic{width:13px;height:13px;transition:transform var(--t);}
+.cm-expander.open .ic{transform:rotate(90deg);}
+
+/* ─── Nested tables ─── */
+.cm-detail-row > .cm-detail-cell{padding:0!important;background:var(--bg);border-bottom:1px solid var(--border2)!important;}
+.cm-detail{padding:10px 14px 12px 40px;border-left:2px solid var(--accent-line);}
+
+table.cm-pr-table,table.cm-commit-table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:.7rem;}
+table.cm-pr-table thead th,table.cm-commit-table thead th{
+  text-align:left;font-size:.54rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;
+  color:var(--muted);padding:6px 10px;border-bottom:1px solid var(--border);white-space:nowrap;
+}
+table.cm-pr-table tbody td,table.cm-commit-table tbody td{padding:7px 10px;vertical-align:middle;}
+tr.cm-pr-row{border-bottom:1px solid var(--border);cursor:pointer;transition:background var(--t);}
+tr.cm-pr-row:hover{background:var(--surface2);}
+tr.cm-pr-row.open{background:var(--accent-soft);}
+table.cm-commit-table{background:var(--bg-elev);border-radius:9px;}
+table.cm-commit-table tbody tr{border-bottom:1px solid var(--border);}
+table.cm-commit-table tbody tr:last-child{border-bottom:none;}
+.cm-commit-wrap{padding:8px 0 4px 26px;}
+.cm-empty-inline{padding:14px;text-align:center;font-size:.7rem;color:var(--muted);}
+
+.cm-p-id{width:74px;}
+.cm-p-repo{width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.66rem;color:var(--muted2);}
+.cm-p-branch{width:auto;min-width:0;}
+.cm-p-status{width:96px;}
+.cm-p-user{width:126px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.66rem;color:var(--muted2);}
+/* overflow:hidden is the guard: this cell used to let a too-long stamp spill over the column
+   beside it, which is how the commit date ended up drawn on top of the Merged badge. */
+.cm-p-date{width:112px;font-family:var(--mono);font-size:.63rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.cm-p-merged{width:132px;}
+.cm-k-sha{width:132px;}
+.cm-k-merged{width:118px;}
+.cm-k-msg{overflow:hidden;}
+.cm-k-msg span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+/* Count of a row's pull requests held back for targeting something other than the QA branch. */
+.cm-num-off{margin-left:4px;font-size:.55rem;color:var(--muted);font-family:var(--mono);}
+
+/* ─── Timestamp (TimeStamp.razor) ─── */
+.ts{display:inline-flex;align-items:baseline;gap:5px;min-width:0;}
+.ts-d,.ts-t{white-space:nowrap;}
+.ts-t{color:var(--muted2);}
+.ts-none{color:var(--muted);}
+
+/* One line of "dd MMM yyyy HH:mm:ss" in mono does not fit the merging tables' date column, so
+   there it stacks instead — the date above, the time with seconds below. */
+.cm-p-date .ts{flex-direction:column;align-items:flex-start;gap:0;line-height:1.4;}
+
+/* ─── Copyable ref (branch / SHA) ─── */
+.cref{display:inline-flex;align-items:center;gap:4px;max-width:100%;min-width:0;}
+.cref-text{
+  font-family:var(--mono);font-size:.64rem;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;text-decoration:none;min-width:0;
+}
+a.cref-text:hover{text-decoration:underline;}
+.cref-src .cref-text{color:var(--cyan);}
+.cref-tgt .cref-text{color:var(--purple);}
+.cref-sha .cref-text{color:var(--accent2);font-weight:600;}
+.cref-copy{
+  flex-shrink:0;width:19px;height:19px;padding:0;border:none;border-radius:5px;
+  background:transparent;color:var(--muted);cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;transition:var(--t);opacity:.5;
+}
+.cref:hover .cref-copy{opacity:1;}
+.cref-copy:hover{background:var(--surface3);color:var(--text);}
+.cref-copy.done{opacity:1;color:var(--green);}
+.cref-copy .ic{width:12px;height:12px;}
+
+/* ─── Merge status pills ─── */
+.merge-pill{
+  display:inline-flex;align-items:center;gap:4px;font-size:.57rem;font-weight:700;
+  padding:3px 9px;border-radius:var(--pill);white-space:nowrap;max-width:100%;
+}
+.merge-pill .ic{width:12px;height:12px;flex-shrink:0;}
+.merge-pill span{overflow:hidden;text-overflow:ellipsis;}
+.merge-ok{background:rgba(52,211,153,.1);color:var(--green);}
+.merge-no{background:rgba(248,113,113,.1);color:#fca5a5;}
+.merge-opt{background:var(--surface3);color:var(--muted);}
+.merge-unknown{background:var(--surface2);color:var(--muted);}
+
+/* ─── Active-filter marker ─── */
+.cm-col-active{color:var(--accent2)!important;}
+.cm-col-active::after{content:'●';margin-left:4px;font-size:.5rem;vertical-align:middle;}
+
+/* ─── Empty state ─── */
+.cm-blank{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:6px;}
+.cm-blank-icon{color:var(--accent2);opacity:.7;margin-bottom:6px;}
+.cm-blank h3{font-size:1rem;}
+.cm-blank p{font-size:.78rem;color:var(--muted2);line-height:1.65;max-width:460px;}
+
+/* Laptop widths: narrower filters and columns keep the toolbar on two rows and give titles room.
+   Before the 1100px block, which narrows some of the same columns further. */
+@media(max-width:1600px){
+  .cm-fld-filter{flex-basis:150px;}
+  .cm-fld-filter.cm-fld-state{flex-basis:176px;}
+  .cm-fld-branch{flex-basis:200px;min-width:180px;}
+  .cm-c-type{width:106px;}
+  .cm-c-state{width:80px;}
+  .cm-c-user{width:120px;}
+  .cm-c-num{width:58px;}
+  .cm-c-merged{width:178px;}
+}
+
+@media(max-width:1100px){
+  .cm-fld-btn{margin-left:0;}
+  .cm-c-type,.cm-c-state{width:88px;}
+  .cm-c-user{width:108px;}
+}
+
+/* ─── Merging sheet: roll-up + pickers ─── */
+.merge-part{background:rgba(251,191,36,.12);color:#fcd34d;}
+
+/* ─── Merging sheet: grid tabs + unlinked pull requests ─── */
+.cm-gridtabs{display:flex;gap:4px;align-items:center;}
+.cm-gridtab{
+  display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:9px;
+  border:1px solid transparent;background:transparent;color:var(--muted2);
+  font-family:inherit;font-size:.72rem;font-weight:700;cursor:pointer;transition:var(--t);
+}
+.cm-gridtab:hover{color:var(--text);background:var(--surface2);}
+.cm-gridtab.active{background:var(--surface3);border-color:var(--border2);color:var(--text);}
+.cm-gridtab .ic{width:14px;height:14px;}
+.cm-gridtab-n{
+  font-family:var(--mono);font-size:.58rem;padding:1px 6px;border-radius:999px;
+  background:rgba(255,255,255,.07);color:var(--muted);
+}
+.cm-gridtab.active .cm-gridtab-n{background:rgba(99,102,241,.18);color:var(--accent2);}
+
+.upr-wrap{padding:6px 2px 10px;}
+
+/* Rows whose commits are not read yet, as a chip beside the grid tabs rather than a bar above the rows. */
+.cm-pending-chip{
+  display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 3px 0 10px;border-radius:var(--pill);
+  border:1px solid rgba(251,191,36,.28);background:rgba(251,191,36,.06);color:var(--muted2);
+  font-family:inherit;font-size:.64rem;cursor:pointer;white-space:nowrap;transition:var(--t);
+}
+.cm-pending-chip:hover:not(:disabled){border-color:rgba(251,191,36,.55);color:var(--text);}
+.cm-pending-chip:disabled{opacity:.6;cursor:default;}
+.cm-pending-chip .ic{width:13px;height:13px;color:var(--amber);}
+.cm-pending-chip b{font-family:var(--mono);color:var(--text);}
+.cm-pending-act{padding:3px 9px;border-radius:var(--pill);background:rgba(251,191,36,.16);color:#fde68a;font-weight:700;}
+.cm-num-pending{color:var(--muted3);letter-spacing:1px;}
+
+.upr-scope{
+  display:flex;gap:8px;align-items:flex-start;padding:7px 12px;margin-bottom:10px;
+  border:1px solid var(--border2);border-radius:9px;background:rgba(99,102,241,.05);
+  font-size:.66rem;color:var(--muted2);line-height:1.55;
+}
+.upr-scope .ic{width:13px;height:13px;color:var(--accent2);flex-shrink:0;margin-top:2px;}
+.upr-hint{font-size:.66rem;color:var(--amber);margin-top:6px;}
+.upr-count{font-size:.58rem;font-family:var(--mono);color:var(--muted);white-space:nowrap;}
+.upr-wrap .mr-hdr{display:flex;align-items:center;gap:8px;}
+.upr-wrap .cm-commit-wrap{padding:6px 10px 10px 34px;}
+
+/* Rolled back reads as its own colour: the code was on the branch and came off again, which
+   is a regression to chase rather than work still queued. Purple keeps it distinct from both
+   the amber "partial" and the red "never merged". */
+.merge-back{background:rgba(167,139,250,.14);color:#c4b5fd;}
+.merge-back .ic{transform:rotate(-45deg);}
+.cm-rollup-sub{
+  display:inline-flex;align-items:center;gap:3px;flex-shrink:0;
+  font-size:.62rem;font-family:var(--mono);color:var(--muted2);white-space:nowrap;
+}
+.cm-rollup-sub .ic{width:11px;height:11px;color:var(--muted);}
+
+.bpk-disabled{opacity:.4;cursor:not-allowed;}
+.bpk-branch{font-family:var(--mono);font-size:.7rem;color:var(--purple);}
+.bpk-item{font-family:var(--mono);font-size:.68rem;}
+.bpk-clear{
+  flex-shrink:0;border:none;background:none;color:var(--muted);cursor:pointer;font-size:.65rem;
+  padding:2px 5px;border-radius:5px;line-height:1;
+}
+.bpk-clear:hover{color:var(--red);background:rgba(248,113,113,.1);}
+.bpk-more{
+  padding:6px 10px;border-top:1px solid var(--border);font-size:.6rem;
+  color:var(--muted);text-align:center;
+}
+
+/* ─── Insight strip (MergingInsights.razor): the toolbar's footer band ─── */
+.cm-ins{
+  display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;margin:0 -14px -10px;padding:8px 14px;
+  border-top:1px solid var(--border);border-radius:0 0 var(--r2) var(--r2);
+  background:linear-gradient(90deg,rgba(79,124,255,.05),rgba(255,255,255,.01) 45%,rgba(167,139,250,.04));
+}
+.cm-ins-seg{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;min-width:0;}
+.cm-ins-div{width:1px;height:20px;background:var(--border2);flex-shrink:0;}
+.cm-ins-stat{font-size:.65rem;color:var(--muted2);white-space:nowrap;}
+.cm-ins-stat b{font-family:var(--mono);font-size:.78rem;color:var(--text);}
+.cm-ins-stat b.cm-ins-acc,.cm-ins-acc{color:var(--accent2);}
+.cm-ins-of{font-family:var(--mono);font-size:.62rem;color:var(--muted);}
+.cm-ins-muted{font-size:.63rem;color:var(--muted);white-space:nowrap;}
+.cm-ins-muted b{color:var(--muted2);}
+.cm-ins-warn{color:var(--amber);}
+.cm-ins-lbl{display:inline-flex;align-items:center;gap:5px;font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);}
+.cm-ins-lbl .ic{width:13px;height:13px;color:var(--accent2);}
+.cm-ins-pct{font-family:var(--mono);font-size:.78rem;color:var(--green);}
+.cm-ins-pct.cm-ins-acc{color:var(--accent2);}
+
+/* Work items by merge state; the segments grow by count, so no width needs working out. */
+.cm-ins-bar{display:flex;gap:2px;width:120px;height:6px;flex-shrink:0;border-radius:var(--pill);overflow:hidden;background:var(--surface3);}
+.cm-ins-bar-seg{min-width:3px;background:var(--st);transition:flex-grow .4s ease;}
+
+.cm-ins-meter{width:110px;height:5px;flex-shrink:0;border-radius:var(--pill);background:var(--surface3);overflow:hidden;}
+.cm-ins-meter > span{display:block;height:100%;border-radius:var(--pill);background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .3s ease;}
+.cm-ins-now{max-width:22vw;font-family:var(--mono);font-size:.6rem;color:var(--muted2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+/* Quick-filter chips. --st is the state's colour, shared with the bar. */
+.cm-st-ok{--st:var(--green);}
+.cm-st-warn{--st:var(--amber);}
+.cm-st-bad{--st:var(--red);}
+.cm-st-back{--st:var(--purple);}
+.cm-st-none{--st:var(--muted2);}
+.cm-st-nopr{--st:#45455a;}
+.cm-qf{
+  display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:var(--pill);
+  border:1px solid var(--border2);background:var(--surface2);color:var(--muted2);
+  font-family:inherit;font-size:.63rem;font-weight:600;white-space:nowrap;cursor:pointer;transition:var(--t);
+}
+.cm-qf b{font-family:var(--mono);font-size:.7rem;color:var(--st,var(--text));}
+.cm-st-nopr b{color:var(--muted2);}
+.cm-qf .ic{width:12px;height:12px;color:var(--st);}
+.cm-qf-dot{width:7px;height:7px;border-radius:50%;background:var(--st);flex-shrink:0;}
+button.cm-qf:hover{background:var(--surface3);border-color:color-mix(in srgb,var(--st) 45%,transparent);color:var(--text);}
+.cm-qf.on{background:color-mix(in srgb,var(--st) 16%,transparent);border-color:color-mix(in srgb,var(--st) 60%,transparent);color:var(--text);}
+.cm-qf-x{font-size:.55rem;color:var(--muted2);margin-left:1px;}
+.cm-qf-static{cursor:default;}
+button.cm-qf:focus-visible,.cm-ins-info:focus-visible{outline:2px solid var(--accent-line);outline-offset:1px;}
+
+.cm-ins-help{margin-left:auto;}
+.cm-ins-info{
+  display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:8px;
+  border:1px solid var(--border2);background:transparent;color:var(--muted2);
+  font-family:inherit;font-size:.63rem;font-weight:700;cursor:pointer;white-space:nowrap;transition:var(--t);
+}
+.cm-ins-info:hover,.cm-ins-info.on{background:var(--accent-soft);border-color:var(--accent-line);color:#cdd9ff;}
+.cm-ins-info .ic{width:13px;height:13px;color:var(--accent2);}
+
+.cm-ins-pop{right:0;width:min(600px,calc(100vw - 48px));max-height:min(70vh,560px);overflow-y:auto;padding:14px 16px 6px;scrollbar-width:thin;}
+.cm-pop-h{font-size:.78rem;font-weight:700;margin-bottom:10px;}
+.cm-pop-sec{padding:10px 0;border-top:1px solid var(--border);}
+.cm-pop-sec h4{display:flex;align-items:center;gap:6px;font-size:.64rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted2);margin-bottom:6px;}
+.cm-pop-sec h4 .ic{width:13px;height:13px;color:var(--accent2);}
+.cm-pop-sec h4 em{font-style:normal;font-weight:600;text-transform:none;letter-spacing:0;color:var(--muted);}
+.cm-pop-sec p{font-size:.68rem;line-height:1.6;color:var(--muted2);margin-bottom:6px;}
+.cm-pop-sec p b{color:var(--text);}
+.cm-pop-sec code{font-family:var(--mono);font-size:.62rem;padding:0 4px;border-radius:4px;background:var(--surface3);color:var(--text);}
+.cm-pop-run{padding:7px 10px;border-radius:8px;background:var(--surface2);}
+
+/* Laptop widths: a tighter strip, and the help button keeps only its icon. */
+@media(max-width:1600px){
+  .cm-ins{gap:8px 12px;}
+  .cm-ins-bar{width:80px;}
+  .cm-ins-info span{display:none;}
+}
