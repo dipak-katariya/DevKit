@@ -1,0 +1,316 @@
+@* The Insight Hub's Task Creation tab: standardized child tasks for a Requirement, Change Request
+   or Bug, created in one action. *@
+@inject TfsApiService TfsApi
+@inject PageStateService PageState
+@inject ILogger<TaskCreationPanel> Logger
+
+<div class="cfg-bar">
+    @Selectors
+    <div class="cfg-divider"></div>
+    <div class="cfg-col" style="flex:0 0 auto;">
+        <button class="cfg-load-btn" @onclick="LoadRequirements" disabled="@(Area == null || string.IsNullOrEmpty(Sprint) || loading)">
+            @if (loading) { <span class="spin spin-sm" style="color:#fff;"></span> } else { <span>⬇</span> }
+            Load Requirements
+        </button>
+        @if (Requirements.Count > 0) { <span class="chip chip-green" style="font-size:.56rem;">@Requirements.Count req(s)</span> }
+    </div>
+</div>
+@if (Requirements.Count > 0)
+{
+    <div class="cfg-bar-filters" style="margin-top:16px;">
+        <div style="flex:2;min-width:200px;"><div class="cfg-field"><label class="cfg-label">🔍 Search</label><input class="cfg-fi" placeholder="ID, title, assignee…" value="@State.SearchQ" @oninput="OnSearch" /></div></div>
+        <div style="flex:1;min-width:150px;"><div class="cfg-field"><label class="cfg-label">🏷 Type</label>
+            <GlassDropdown Value="@State.TypeFilter" Placeholder="— All —" EmptyLabel="— All —" EmptyValue="" Options="@TypeOptions" OnChange="OnType" /></div></div>
+        <div style="flex:1;min-width:150px;"><div class="cfg-field"><label class="cfg-label">👤 Assignee</label>
+            <GlassDropdown Value="@State.AssigneeFilter" Placeholder="— All —" EmptyLabel="— All —" EmptyValue="" Options="@AssigneeOptions" OnChange="OnAssignee" /></div></div>
+    </div>
+}
+<div class="content" style="flex-direction:column;">
+    <div class="gpanel" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+        <div class="phead">
+            <span class="ptitle">🧩 Create Standardized Tasks</span>
+            <span style="font-size:.64rem;color:var(--muted);">Pick a requirement → choose categories → create child tasks (discipline + @PlanningTaskCatalog.ProductTag tag, or @BugWork.MaintenanceTag under a Bug).</span>
+        </div>
+        <div class="pbody" style="flex:1;overflow:auto;padding:0;">
+            @if (!string.IsNullOrEmpty(error)) { <div class="notice warn" style="margin:12px;">⚠ @error</div> }
+            @if (Requirements.Count == 0 && !loading)
+            {
+                <div class="tbl-empty">Select an area and sprint, then Load Requirements.</div>
+            }
+            else
+            {
+                var rows = Filtered;
+                <table class="req-table">
+                    <thead><tr><th style="width:64px;">ID</th><th>Title</th><th style="width:120px;">Assigned</th><th style="width:90px;">State</th><th style="width:210px;"></th></tr></thead>
+                    <tbody>
+                        @if (rows.Count == 0)
+                        {
+                            <tr><td colspan="5" class="tbl-empty">No items match the filters.</td></tr>
+                        }
+                        @foreach (var r in rows)
+                        {
+                            <tr @key="r.Id">
+                                <td><a class="id-link" href="@TfsApi.WorkItemUrl(r.Project, r.Id)" target="_blank" rel="noopener">#@r.Id</a></td>
+                                <td>
+                                    <span class="type-pill @(r.Type == "Bug" ? "bug" : r.Type == "Change Request" ? "cr" : "")">@r.Type</span>
+                                    <div class="cell-title">@r.Title</div>
+                                </td>
+                                <td style="font-size:.7rem;">@r.Assigned</td>
+                                <td><span class="state-pill @StateCls(r.State)">@r.State</span></td>
+                                <td>
+                                    <button class="btn-sm btn-sm-active" @onclick="() => OpenCreate(r)">
+                                        @if (State.CreatedCounts.TryGetValue(r.Id, out var n) && n > 0) { <text>✅ @n Created · add more</text> }
+                                        else { <text>Create Tasks</text> }
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+</div>
+
+@if (target != null)
+{
+    <div class="modal-overlay" @onclick="CloseCreate">
+        <div class="modal" style="max-width:560px;" @onclick:stopPropagation>
+            <h3>Create tasks under #@target.Id</h3>
+            <div class="modal-body">
+                <div style="font-size:.74rem;color:var(--muted2);margin-bottom:14px;">@target.Title</div>
+                @if (confirmShown)
+                {
+                    <div class="notice info">Create these @confirmTitles.Count task(s)? They'll be children of #@target.Id with a <b>@PlanningTaskCatalog.TagFor(target.Type)</b> tag.</div>
+                    <ul style="font-size:.76rem;line-height:1.9;margin:10px 0 0 18px;">
+                        @foreach (var t in confirmTitles) { <li>@t</li> }
+                    </ul>
+                }
+                else
+                {
+                    <label class="cat-defaults" title="Ticks the standard set for a @(target.Type) in one go: @DefaultTasksList. Without it, each box creates only its own task.">
+                        <input type="checkbox" checked="@selection.AllDefaultsSelected" @onchange="() => selection.ToggleDefaults()" />
+                        <span>Default tasks</span>
+                        <span class="cat-defaults-count">@selection.SelectedDefaults of @selection.Defaults.Count</span>
+                    </label>
+                    <div class="cat-grid">
+                        @foreach (var grp in PlanningTaskCatalog.Categories.GroupBy(c => c.Group))
+                        {
+                            <div>
+                                <div class="cat-head">@(grp.Key == "dev" ? "Development" : "Test")</div>
+                                @foreach (var cat in grp)
+                                {
+                                    <label class="cat-item">
+                                        <input type="checkbox" checked="@selection.Contains(cat.Prefix)" @onchange="() => selection.Toggle(cat.Prefix)" />
+                                        <span>@cat.Prefix</span>
+                                        @if (selection.IsDefault(cat.Prefix)) { <span class="cat-default" title="One of the default tasks for a @target.Type">default</span> }
+                                        @if (createdThisSession.Contains(cat.Prefix)) { <span class="cat-done">✓ Created</span> }
+                                    </label>
+                                    @if (cat.ExecTypes.Length > 1)
+                                    {
+                                        <div class="cat-exec">
+                                            @foreach (var opt in cat.ExecTypes)
+                                            {
+                                                <label class="cat-exec-opt">
+                                                    <input type="radio" name="@ExecGroupName(cat.Prefix)" checked="@(SelectedExec(cat) == opt)"
+                                                           @onchange="() => selectedExec[cat.Prefix] = opt" />
+                                                    <span>@opt</span>
+                                                </label>
+                                            }
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="cat-exec-single">⚙ @cat.ExecTypes[0]</div>
+                                    }
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+                @if (!string.IsNullOrEmpty(createResult))
+                {
+                    <div style="margin-top:12px;font-size:.74rem;color:@(createOk ? "var(--green)" : "var(--red)");">@createResult</div>
+                }
+            </div>
+            <div class="modal-actions">
+                @if (confirmShown)
+                {
+                    <button class="btn-ghost" @onclick="() => confirmShown = false" disabled="@creating">Back</button>
+                    <button class="btn-primary" style="width:auto;" @onclick="ConfirmCreate" disabled="@creating">
+                        @if (creating) { <span class="spin spin-sm"></span> }
+                        Confirm & Create
+                    </button>
+                }
+                else
+                {
+                    <button class="btn-ghost" @onclick="CloseCreate">Close</button>
+                    <button class="btn-primary" style="width:auto;" @onclick="PrepareConfirm" disabled="@(selection.Count == 0)">
+                        Create Selected Tasks (@selection.Count)
+                    </button>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private static readonly List<GlassDropdown.DropdownOption> TypeOptions = new()
+    {
+        new() { Value = "Requirement", Label = "Requirement" },
+        new() { Value = "Change Request", Label = "Change Request" },
+        new() { Value = "Bug", Label = "Bug" }
+    };
+
+    [Parameter] public TfsArea? Area { get; set; }
+    [Parameter] public string? Sprint { get; set; }
+
+    /// <summary>The hub's shared area and sprint pickers, rendered at the start of the bar.</summary>
+    [Parameter] public RenderFragment? Selectors { get; set; }
+
+    private bool loading;
+    private string? error;
+
+    private WorkItem? target;
+
+    // Replaced per parent: a Bug's default tasks are not a Requirement's.
+    private TaskCreationSelection selection = new(PlanningTaskCatalog.DefaultTasksFor(null));
+    private readonly HashSet<string> createdThisSession = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> selectedExec = new(StringComparer.Ordinal);
+    private List<string> confirmTitles = new();
+    private bool confirmShown, creating, createOk;
+    private string? createResult;
+
+    // Kept in PageState so the list and the "n Created" badges survive switching tabs.
+    private TaskCreationState State => PageState.TaskCreation;
+
+    private string SelectionKey => $"{Area?.Project}|{Area?.Path}|{Sprint}";
+
+    // A list loaded for another area or sprint is hidden rather than shown under the new
+    // selection: creating from it would put tasks into a sprint their requirement isn't in.
+    private IReadOnlyList<WorkItem> Requirements =>
+        State.LoadedKey.Length > 0 && State.LoadedKey == SelectionKey ? State.Requirements : Array.Empty<WorkItem>();
+
+    private List<WorkItem> Filtered => Requirements.Where(Matches).ToList();
+
+    private List<GlassDropdown.DropdownOption> AssigneeOptions => Requirements
+        .Select(r => r.Assigned).Where(a => !string.IsNullOrEmpty(a)).Distinct().OrderBy(a => a)
+        .Select(a => new GlassDropdown.DropdownOption { Value = a, Label = a }).ToList();
+
+    private async Task LoadRequirements()
+    {
+        var area = Area;
+        var sprint = Sprint;
+        if (area == null || string.IsNullOrEmpty(sprint)) return;
+
+        var key = SelectionKey;
+        loading = true; error = null;
+        State.LoadedKey = ""; State.Requirements = new(); State.CreatedCounts = new();
+        StateHasChanged();
+        try
+        {
+            var iterPath = TfsApiService.ToWiqlPath(sprint);
+            var areaPath = TfsApiService.ToWiqlPath(area.Path);
+            var items = await TfsApi.LoadPlanningItemsAsync(area.Project, iterPath);
+            State.Requirements = items.Where(r => InArea(r, areaPath)).ToList();
+            State.LoadedKey = key;
+            State.LoadedSprint = sprint;
+            State.SearchQ = ""; State.TypeFilter = ""; State.AssigneeFilter = "";
+            if (State.Requirements.Count == 0) error = "No Requirements, Change Requests, or Bugs found for this area and sprint.";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Task Creation load failed for {Area} / {Sprint}", area.Path, sprint);
+            error = $"Load failed: {ex.Message}";
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private static bool InArea(WorkItem r, string areaPath) =>
+        r.Area.Replace("\\Area\\", "\\").Contains(areaPath, StringComparison.OrdinalIgnoreCase)
+        || r.Area.Equals(areaPath, StringComparison.OrdinalIgnoreCase);
+
+    private void OpenCreate(WorkItem r)
+    {
+        target = r;
+        selection = new TaskCreationSelection(PlanningTaskCatalog.DefaultTasksFor(r.Type));
+        createdThisSession.Clear(); selectedExec.Clear();
+        confirmShown = false; createResult = null;
+    }
+
+    private string DefaultTasksList => string.Join(", ", selection.Defaults);
+
+    private void CloseCreate() { target = null; confirmShown = false; }
+
+    private string SelectedExec(PlanningCategory cat) => selectedExec.TryGetValue(cat.Prefix, out var v) ? v : cat.ExecTypes[0];
+    private static string ExecGroupName(string prefix) => "exec-" + new string(prefix.Where(char.IsLetterOrDigit).ToArray());
+    private static string TaskTitle(PlanningCategory cat, WorkItem parent) => $"{cat.Prefix} : {parent.Title}";
+
+    private void PrepareConfirm()
+    {
+        var parent = target;
+        if (parent == null || selection.Count == 0) return;
+        confirmTitles = selection.InCatalogOrder().Select(c => $"{TaskTitle(c, parent)}  ·  {SelectedExec(c)}").ToList();
+        confirmShown = true; createResult = null;
+    }
+
+    private async Task ConfirmCreate()
+    {
+        var parent = target;
+        if (parent == null || selection.Count == 0 || string.IsNullOrEmpty(State.LoadedSprint)) return;
+        creating = true;
+        StateHasChanged();
+
+        var iterPath = TfsApiService.ToWiqlPath(State.LoadedSprint);
+        var tag = PlanningTaskCatalog.TagFor(parent.Type);
+        var failed = new List<string>();
+        var created = 0;
+        foreach (var cat in selection.InCatalogOrder())
+        {
+            try
+            {
+                await TfsApi.CreateChildTaskAsync(parent.Project, parent.Id, TaskTitle(cat, parent), cat.Discipline, parent.Area, iterPath, SelectedExec(cat), tag);
+                created++;
+                createdThisSession.Add(cat.Prefix);
+            }
+            catch (Exception ex)
+            {
+                // One rejected task must not stop the rest of the set; it stays ticked for a retry.
+                Logger.LogWarning(ex, "Creating '{Prefix}' under #{ParentId} failed", cat.Prefix, parent.Id);
+                failed.Add(cat.Prefix);
+            }
+        }
+
+        if (created > 0) State.CreatedCounts[parent.Id] = State.CreatedCounts.GetValueOrDefault(parent.Id) + created;
+        selection.RetainOnly(failed);
+        confirmShown = false;
+        createOk = failed.Count == 0;
+        createResult = createOk
+            ? $"✓ Created {created} task(s) tagged {tag}."
+            : $"Created {created}, {failed.Count} failed: {string.Join(", ", failed)}. They are still ticked — try again.";
+        creating = false;
+    }
+
+    private bool Matches(WorkItem r) =>
+        (string.IsNullOrEmpty(State.SearchQ)
+            || r.Id.Contains(State.SearchQ, StringComparison.OrdinalIgnoreCase)
+            || r.Title.Contains(State.SearchQ, StringComparison.OrdinalIgnoreCase)
+            || r.Assigned.Contains(State.SearchQ, StringComparison.OrdinalIgnoreCase))
+        && (string.IsNullOrEmpty(State.TypeFilter) || r.Type == State.TypeFilter)
+        && (string.IsNullOrEmpty(State.AssigneeFilter) || r.Assigned == State.AssigneeFilter);
+
+    private void OnSearch(ChangeEventArgs e) => State.SearchQ = e.Value?.ToString() ?? "";
+    private void OnType(ChangeEventArgs e) => State.TypeFilter = e.Value?.ToString() ?? "";
+    private void OnAssignee(ChangeEventArgs e) => State.AssigneeFilter = e.Value?.ToString() ?? "";
+
+    private static string StateCls(string? s) => (s ?? "").ToLowerInvariant() switch
+    {
+        "active" => "state-active",
+        "resolved" => "state-resolved",
+        "closed" => "state-closed",
+        _ => "state-new"
+    };
+}

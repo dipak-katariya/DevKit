@@ -1,303 +1,245 @@
 @page "/branch-delete"
 @inject TfsApiService TfsApi
+@inject BranchCleanupService Cleanup
 @inject SettingsService Settings
 @inject PageStateService PageState
+@inject ILogger<BranchDelete> Logger
 
-<div style="display:flex;flex-direction:column;gap:0;flex:1;overflow:hidden;">
-    <!-- Config Bar -->
-    <div class="cfg-bar">
-        <div class="cfg-col" style="flex:0 0 auto;">
-            <div class="cfg-field">
-                <label class="cfg-label">🔀 Repository</label>
-                <GlassDropdown Style="min-width:260px;"
-                               Value="@selectedRepoId"
-                               Placeholder="— Select repo —"
-                               Disabled="@(repos.Count==0)"
-                               Groups="@RepoGroups"
-                               OnChange="OnRepoChange" />
+<div class="cm-page">
+    <div class="cm-toolbar">
+        <div class="cm-tb-row">
+            <div class="cm-fld" style="flex:1 1 230px;">
+                <label class="cfg-label">📂 Area Path <span class="cm-hint">for sprint work items</span></label>
+                <GlassDropdown Value="@(selectedArea != null ? AreaSprintSelect.Serialize(selectedArea) : "")"
+                               Placeholder="— Any area —" EmptyLabel="— Any area —" EmptyValue=""
+                               Disabled="@(areas.Count == 0 || Busy)" Groups="@AreaGroups" OnChange="OnAreaChange" />
             </div>
-        </div>
-        <div class="cfg-divider"></div>
-        <div class="cfg-col" style="flex:0 0 auto;">
-            <button class="cfg-load-btn" @onclick="LoadBranches" disabled="@(string.IsNullOrEmpty(selectedRepoId) || loadingBranches)">
-                @if (loadingBranches) { <span class="spin spin-sm" style="color:var(--text);"></span> }
-                else { <span>⬇</span> }
-                Load Branches
-            </button>
-            @if (allRefs.Count > 0) { <span class="chip chip-green" style="font-size:.56rem;">@allRefs.Count branches</span> }
-        </div>
-        <div class="cfg-divider"></div>
-        <div class="cfg-col" style="flex:1;">
-            <div class="cfg-field">
-                <label class="cfg-label">🔍 Filter</label>
-                <input class="cfg-fi" placeholder="Search branches…" @oninput="OnFilter" />
+            <div class="cm-fld" style="flex:1 1 200px;">
+                <label class="cfg-label">
+                    📅 Sprint
+                    @if (selectedSprints.Count > 1) { <span class="cm-hint">@selectedSprints.Count selected</span> }
+                </label>
+                <MultiSelectDropdown Options="@SprintOptions" Selected="@selectedSprints"
+                                     SelectedChanged="OnSprintsChanged" ItemNoun="sprint"
+                                     Disabled="@(selectedArea == null || Busy)"
+                                     Placeholder="@(selectedArea == null ? "— Pick an area first —" : "— Sprints to clean up —")"
+                                     SearchPlaceholder="Search sprints…" />
             </div>
-        </div>
-        <div class="cfg-divider"></div>
-        <div class="cfg-col" style="flex:0 0 auto;">
-            @if (selectedBranches.Count > 0)
-            {
-                <button class="cfg-load-btn" style="background:rgba(248,113,113,.12);border-color:rgba(248,113,113,.25);color:#fca5a5;" @onclick="ShowDeleteConfirm" disabled="@deleting">
-                    @if (deleting) { <span class="spin spin-sm"></span> }
-                    else { <span>🗑</span> }
-                    Delete Selected (@selectedBranches.Count)
+            <div class="cm-fld" style="flex:1 1 210px;">
+                <label class="cfg-label">
+                    📦 Repositories
+                    @if (selectedRepoIds.Count > 1) { <span class="cm-hint">@selectedRepoIds.Count selected</span> }
+                </label>
+                <MultiSelectDropdown Options="@RepoOptions" Selected="@selectedRepoIds"
+                                     SelectedChanged="OnReposChanged" ItemNoun="repository"
+                                     Disabled="@(AvailableRepos.Count == 0 || Busy)"
+                                     Placeholder="— Select repositories —" SearchPlaceholder="Search repositories…" />
+            </div>
+            <div class="cm-fld" style="flex:0 1 150px;">
+                <label class="cfg-label" title="The team name Branch Creator puts at the front of every branch. Shared with Branch Creator.">👥 Team</label>
+                <input class="cfg-fi" value="@teamName" @onchange="OnTeamNameChange" placeholder="e.g. FXCPMGR"
+                       maxlength="@MaxTeamNameLength" disabled="@Busy" />
+            </div>
+            <div class="cm-fld cm-fld-btn">
+                <button class="cfg-load-btn" @onclick="Load" disabled="@(!CanLoad)">
+                    @if (loading) { <span class="spin spin-sm" style="color:#fff;"></span> } else { <Icon Inner="@Icons.Refresh" /> }
+                    Load Branches
                 </button>
-            }
+                @if (stale) { <span class="cm-hint bdel-stale" title="The grid still shows the last load">changed — load again</span> }
+            </div>
         </div>
-    </div>
 
-    <!-- Main content -->
-    <div class="content" style="flex:1;overflow:hidden;">
-        <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
-            <div class="gpanel" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
-                <div class="phead">
-                    <span class="ptitle">🗑 Branch Manager</span>
-                    <div style="display:flex;gap:6px;align-items:center;">
-                        @if (filteredRefs.Count > 0)
-                        {
-                            <button class="btn-sm" @onclick="SelectAll">Select All (@filteredRefs.Count)</button>
-                            <button class="btn-sm" @onclick="DeselectAll">Deselect All</button>
-                        }
-                        @if (selectedBranches.Count > 0)
-                        {
-                            <span class="chip chip-green" style="font-size:.54rem;">@selectedBranches.Count selected</span>
-                        }
+        @if (loaded)
+        {
+            <div class="cm-tb-row">
+                <div class="cm-fld">
+                    <label class="cfg-label">🔗 Work item link</label>
+                    <div class="cm-seg">
+                        <button class="cm-seg-btn @(linkFilter == LinkFilter.All ? "on" : "")" @onclick="() => SetLinkFilter(LinkFilter.All)">All</button>
+                        <button class="cm-seg-btn @(linkFilter == LinkFilter.Linked ? "on" : "")" @onclick="() => SetLinkFilter(LinkFilter.Linked)"
+                                title="Branches a work item links to">Linked</button>
+                        <button class="cm-seg-btn @(linkFilter == LinkFilter.Unattached ? "on" : "")" @onclick="() => SetLinkFilter(LinkFilter.Unattached)"
+                                title="Team branches no work item links to">Unattached</button>
                     </div>
                 </div>
-                <div class="pbody" style="padding:0;flex:1;overflow:hidden;">
-                    @if (allRefs.Count == 0 && !loadingBranches)
-                    {
-                        <div class="pr-placeholder">
-                            <div style="font-size:2rem;opacity:.2;">🌿</div>
-                            <div class="bp-title">Select a Repository</div>
-                            <div class="bp-sub">Choose a repository and click Load Branches to see all branches.</div>
-                        </div>
-                    }
-                    else
-                    {
-                        <div class="grid-wrap" style="overflow:auto;height:100%;">
-                            <table class="req-table">
-                                <thead><tr>
-                                    <th style="width:36px;"></th>
-                                    <th>Branch Name</th>
-                                    <th style="width:100px;">SHA</th>
-                                </tr></thead>
-                                <tbody>
-                                    @if (filteredRefs.Count == 0)
-                                    {
-                                        <tr><td colspan="3" class="tbl-empty">No branches match the filter.</td></tr>
-                                    }
-                                    @foreach (var r in filteredRefs)
-                                    {
-                                        var isProtected = IsProtected(r.Name);
-                                        var isSelected = selectedBranches.Contains(r.Name);
-                                        <tr class="@(isSelected ? "selected" : "")" style="@(isProtected ? "opacity:.4;" : "")" @onclick="() => ToggleBranch(r.Name, isProtected)">
-                                            <td style="text-align:center;">
-                                                <input type="checkbox" checked="@isSelected" disabled="@isProtected"
-                                                       @onclick:stopPropagation @onclick="() => ToggleBranch(r.Name, isProtected)"
-                                                       style="accent-color:var(--red);" />
-                                            </td>
-                                            <td>
-                                                <span style="font-family:var(--mono);font-size:.72rem;@(isProtected ? "color:var(--amber);" : "")">
-                                                    @r.Name
-                                                </span>
-                                                @if (isProtected)
-                                                {
-                                                    <span style="font-size:.52rem;color:var(--amber);margin-left:6px;">🔒 protected</span>
-                                                }
-                                            </td>
-                                            <td>
-                                                <span style="font-family:var(--mono);font-size:.64rem;color:var(--muted);">@r.ObjectId[..8]</span>
-                                            </td>
-                                        </tr>
-                                    }
-                                </tbody>
-                            </table>
-                        </div>
-                    }
+                <div class="cm-fld">
+                    <label class="cfg-label">📅 Sprint</label>
+                    <div class="cm-seg">
+                        <button class="cm-seg-btn @(sprintOnly ? "on" : "")" disabled="@(!loadedWithSprints)" @onclick="() => SetSprintOnly(true)"
+                                title="@(loadedWithSprints ? "Linked from the selected sprints' work items, or named after one of those sprints" : "Pick sprints and load again to filter by sprint")">Selected sprints</button>
+                        <button class="cm-seg-btn @(sprintOnly ? "" : "on")" @onclick="() => SetSprintOnly(false)">All</button>
+                    </div>
+                </div>
+                <div class="cm-fld" style="flex:1 1 180px;">
+                    <label class="cfg-label">👤 Created by</label>
+                    <GlassDropdown Value="@creatorFilter" Placeholder="— Anyone —" EmptyLabel="— Anyone —" EmptyValue=""
+                                   Options="@CreatorOptions" OnChange="OnCreatorChange" />
+                </div>
+                <div class="cm-fld" style="flex:2 1 220px;">
+                    <label class="cfg-label">🔍 Search</label>
+                    <input class="cfg-fi" placeholder="Branch, work item id or title…" value="@search" @oninput="OnSearchInput" />
+                </div>
+                <div class="cm-fld cm-fld-btn">
+                    <button class="cfg-load-btn bdel-delete-btn" @onclick="OpenConfirm" disabled="@(!CanDelete)">
+                        🗑 Delete selected (@selectedKeys.Count)
+                    </button>
                 </div>
             </div>
+        }
+    </div>
 
-            <!-- Delete results log -->
-            @if (deleteLog.Count > 0)
+    @if (Busy && progress is { } p)
+    {
+        <div class="bdel-progress">
+            <div class="bdel-progress-text">
+                <span class="spin spin-sm"></span> @p.Stage
+                @if (p.Total > 0) { <b>@p.Done / @p.Total (@p.Percent%)</b> }
+            </div>
+            <div class="progress-bar"><div class="progress-fill" style="width:@(p.Percent)%;"></div></div>
+        </div>
+    }
+    @if (!string.IsNullOrEmpty(error)) { <div class="notice warn">⚠ @error</div> }
+    @foreach (var warning in result.Warnings) { <div class="notice warn">⚠ @warning</div> }
+
+    <div class="gpanel bdel-panel">
+        <div class="phead">
+            <span class="ptitle">🗑 Branch Manager</span>
+            @if (loaded)
             {
-                <div class="gpanel" style="flex:none;max-height:200px;overflow-y:auto;margin-top:12px;">
-                    <div class="phead">
-                        <span class="ptitle">📋 Delete Log</span>
-                        <button class="btn-sm" @onclick="() => deleteLog.Clear()">Clear</button>
-                    </div>
-                    <div class="pbody" style="padding:8px 14px;">
-                        @foreach (var log in deleteLog)
-                        {
-                            <div style="font-size:.68rem;padding:2px 0;font-family:var(--mono);color:@(log.Ok ? "var(--green)" : "var(--red)");">
-                                @(log.Ok ? "✓" : "✕") @log.Branch — @log.Message
-                            </div>
-                        }
-                    </div>
+                <div class="bdel-chips">
+                    <span class="chip">@result.Rows.Count branches</span>
+                    @if (loadedWithSprints) { <span class="chip chip-green" title="Linked from the selected sprints, or named after one">@SprintCount in sprint</span> }
+                    <span class="chip">@LinkedCount linked</span>
+                    <span class="chip bdel-chip-warn" title="Team branches no work item links to">@UnattachedCount unattached</span>
+                    <span class="chip bdel-chip-lock">@ProtectedCount locked</span>
+                </div>
+                <div style="display:flex;gap:6px;align-items:center;">
+                    @if (HiddenSelection > 0) { <span class="cm-hint">@HiddenSelection selected outside the filter</span> }
+                    <button class="btn-sm" @onclick="SelectAllVisible" disabled="@(VisibleDeletable == 0 || Busy)">Select all shown (@VisibleDeletable)</button>
+                    <button class="btn-sm" @onclick="ClearSelection" disabled="@(selectedKeys.Count == 0 || Busy)">Clear selection</button>
+                </div>
+            }
+        </div>
+        <div class="pbody" style="padding:0;flex:1;overflow:hidden;">
+            @if (!loaded && !loading)
+            {
+                <div class="pr-placeholder">
+                    <div style="font-size:2rem;opacity:.2;">🌿</div>
+                    <div class="bp-title">Pick the repositories to clean up</div>
+                    <div class="bp-sub">Add an area and old sprints to find the branches their work items link, and set the team to find unattached team branches.</div>
+                </div>
+            }
+            else
+            {
+                <div class="grid-wrap bdel-grid">
+                    <table class="req-table bdel-table">
+                        <thead>
+                            <tr>
+                                <th class="bdel-check"></th>
+                                <th>Branch</th>
+                                <th class="bdel-repo">Repository</th>
+                                <th class="bdel-wi">Work item</th>
+                                <th class="bdel-sprint">Sprint</th>
+                                <th class="bdel-creator">Created by</th>
+                                <th class="bdel-sha">SHA</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @if (loaded && visible.Count == 0)
+                            {
+                                <tr><td colspan="7" class="tbl-empty">No branches match the filters.</td></tr>
+                            }
+                            <Virtualize Items="@visible" Context="r" ItemSize="46" OverscanCount="12" SpacerElement="tr">
+                                <tr @key="r.Key" class="@RowClass(r)" @onclick="() => Toggle(r)">
+                                    <td class="bdel-check">
+                                        <input type="checkbox" checked="@selectedKeys.Contains(r.Key)" disabled="@(!r.CanDelete || Busy)"
+                                               @onclick:stopPropagation @onchange="() => Toggle(r)" />
+                                    </td>
+                                    <td class="bdel-branch">
+                                        <CopyableRef Text="@r.Branch" Url="@TfsApi.BranchUrl(r.Repo, r.Branch)" Label="branch" />
+                                        @if (!r.CanDelete) { <div class="bdel-lock">🔒 @r.ProtectedReason</div> }
+                                    </td>
+                                    <td class="bdel-repo">@r.Repo.Name</td>
+                                    <td class="bdel-wi">
+                                        @if (r.LinkedBy.Count > 0)
+                                        {
+                                            @foreach (var wi in r.LinkedBy)
+                                            {
+                                                <div class="bdel-wi-line" title="@wi.Type · @wi.Sprint · @wi.Title">
+                                                    <a class="id-link" href="@TfsApi.WorkItemUrl(wi.Project, wi.Id)" target="_blank" rel="noopener" @onclick:stopPropagation>#@wi.Id</a>
+                                                    <span class="state-pill @WorkItemBadges.StateClass(wi.State)">@wi.State</span>
+                                                    <span class="bdel-wi-title">@wi.Title</span>
+                                                </div>
+                                            }
+                                        }
+                                        else if (r.LinkState == BranchLinkState.Unattached)
+                                        {
+                                            <span class="bdel-unattached" title="@UnattachedHint(r)">Unattached</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="bdel-muted" title="Not a team branch, so its links were not looked up">—</span>
+                                        }
+                                    </td>
+                                    <td class="bdel-sprint">
+                                        <span class="@(r.InSelectedSprint ? "bdel-sprint-on" : "")">@(r.Parsed?.Sprint ?? "—")</span>
+                                    </td>
+                                    <td class="bdel-creator">@(string.IsNullOrEmpty(r.Creator) ? "—" : r.Creator)</td>
+                                    <td class="bdel-sha"><CopyableRef Text="@r.ObjectId" Display="@WorkItemBadges.ShortSha(r.ObjectId)" Label="SHA" /></td>
+                                </tr>
+                            </Virtualize>
+                        </tbody>
+                    </table>
                 </div>
             }
         </div>
     </div>
+
+    @if (deleteLog.Count > 0)
+    {
+        <div class="gpanel bdel-log">
+            <div class="phead">
+                <span class="ptitle">📋 Delete log</span>
+                <span class="cm-hint">@DeletedCount deleted · @(deleteLog.Count - DeletedCount) not deleted</span>
+                <button class="btn-sm" @onclick="() => deleteLog.Clear()" disabled="@deleting">Clear</button>
+            </div>
+            <div class="pbody bdel-log-body">
+                @foreach (var entry in deleteLog.OrderBy(o => o.Deleted))
+                {
+                    <div class="bdel-log-line @(entry.Deleted ? "ok" : "err")">
+                        @(entry.Deleted ? "✓" : "✕") @entry.RepoName / @entry.Branch — @entry.Message
+                    </div>
+                }
+            </div>
+        </div>
+    }
 </div>
 
-<!-- Confirm Modal -->
 @if (showConfirm)
 {
     <div class="modal-overlay" @onclick="() => showConfirm = false">
-        <div class="modal" @onclick:stopPropagation>
-            <h3>⚠ Confirm Bulk Delete</h3>
+        <div class="modal" style="max-width:640px;" @onclick:stopPropagation>
+            <h3>⚠ Delete @SelectedRows.Count branch(es)?</h3>
             <div class="modal-body">
-                <p style="font-size:.78rem;margin-bottom:10px;">
-                    You are about to delete <strong style="color:var(--red);">@selectedBranches.Count branch(es)</strong> from
-                    <strong>@selectedRepoName</strong>. This action cannot be undone.
+                <p style="font-size:.76rem;margin-bottom:10px;">
+                    This cannot be undone. Work items keep their links to deleted branches — Branch Creator shows
+                    those as stale and can remove them. A branch someone has pushed to since it was loaded is refused.
                 </p>
-                <div style="max-height:200px;overflow-y:auto;background:rgba(0,0,0,.2);border-radius:8px;padding:8px 12px;margin-bottom:10px;">
-                    @foreach (var b in selectedBranches.OrderBy(b => b))
+                <div class="bdel-confirm-list">
+                    @foreach (var byRepo in SelectedRows.GroupBy(r => r.Repo.Name).OrderBy(g => g.Key))
                     {
-                        <div style="font-family:var(--mono);font-size:.66rem;color:var(--red);padding:2px 0;">🗑 @b</div>
+                        <div class="bdel-confirm-repo">@byRepo.Key · @byRepo.Count() branch(es)</div>
+                        @foreach (var r in byRepo.OrderBy(r => r.Branch, StringComparer.OrdinalIgnoreCase))
+                        {
+                            <div class="bdel-confirm-branch">🗑 @r.Branch</div>
+                        }
                     }
                 </div>
             </div>
             <div class="modal-actions">
                 <button class="btn-ghost" @onclick="() => showConfirm = false">Cancel</button>
-                <button class="btn-ghost btn-danger" @onclick="ExecuteBulkDelete">
-                    🗑 Delete @selectedBranches.Count Branch(es)
-                </button>
+                <button class="btn-ghost btn-danger" @onclick="ExecuteDelete">🗑 Delete @SelectedRows.Count branch(es)</button>
             </div>
         </div>
     </div>
-}
-
-@code {
-    private List<TfsRepo> repos => PageState.TfsData.Repos;
-
-    private string selectedRepoId = "";
-    private string selectedRepoName = "";
-    private bool loadingBranches, deleting, showConfirm;
-    private string filterText = "";
-
-    private List<TfsRef> allRefs = new();
-    private List<TfsRef> filteredRefs = new();
-    private HashSet<string> selectedBranches = new();
-    private List<DeleteLogEntry> deleteLog = new();
-
-    private static readonly HashSet<string> ProtectedNames = new(StringComparer.OrdinalIgnoreCase)
-    { "main", "master", "develop", "release", "hotfix" };
-
-    protected override async Task OnInitializedAsync()
-    {
-        if (!Settings.IsConfigured) return;
-        if (!PageState.TfsData.IsLoaded)
-        {
-            try
-            {
-                PageState.TfsData.Projects = await TfsApi.GetProjectsAsync();
-                PageState.TfsData.Repos = await TfsApi.GetRepositoriesAsync();
-                foreach (var p in PageState.TfsData.Projects)
-                {
-                    PageState.TfsData.Areas.AddRange(await TfsApi.GetAreasAsync(p.Name));
-                    PageState.TfsData.Iterations.AddRange(await TfsApi.GetIterationsAsync(p.Name));
-                }
-                PageState.TfsData.IsLoaded = true;
-            }
-            catch { }
-        }
-    }
-
-    private void OnRepoChange(ChangeEventArgs e)
-    {
-        selectedRepoId = e.Value?.ToString() ?? "";
-        var repo = repos.FirstOrDefault(r => r.Id == selectedRepoId);
-        selectedRepoName = repo != null ? $"{repo.Project} / {repo.Name}" : "";
-        allRefs.Clear(); filteredRefs.Clear(); selectedBranches.Clear();
-    }
-
-    private async Task LoadBranches()
-    {
-        if (string.IsNullOrEmpty(selectedRepoId)) return;
-        var repo = repos.FirstOrDefault(r => r.Id == selectedRepoId);
-        if (repo == null) return;
-        loadingBranches = true; allRefs.Clear(); filteredRefs.Clear(); selectedBranches.Clear();
-        StateHasChanged();
-        try
-        {
-            allRefs = await TfsApi.GetRefsAsync(repo.Project, repo.Id);
-            ApplyFilter();
-        }
-        catch { }
-        loadingBranches = false;
-    }
-
-    private void OnFilter(ChangeEventArgs e)
-    {
-        filterText = (e.Value?.ToString() ?? "").ToLower();
-        ApplyFilter();
-    }
-
-    private void ApplyFilter()
-    {
-        filteredRefs = string.IsNullOrEmpty(filterText)
-            ? allRefs.ToList()
-            : allRefs.Where(r => r.Name.ToLower().Contains(filterText)).ToList();
-    }
-
-    private bool IsProtected(string name)
-    {
-        return ProtectedNames.Contains(name) || name.StartsWith("release/", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private void ToggleBranch(string name, bool isProtected)
-    {
-        if (isProtected) return;
-        if (!selectedBranches.Remove(name)) selectedBranches.Add(name);
-    }
-
-    private void SelectAll()
-    {
-        foreach (var r in filteredRefs.Where(r => !IsProtected(r.Name)))
-            selectedBranches.Add(r.Name);
-    }
-
-    private void DeselectAll() => selectedBranches.Clear();
-
-    private void ShowDeleteConfirm() => showConfirm = true;
-
-    private async Task ExecuteBulkDelete()
-    {
-        showConfirm = false;
-        if (selectedBranches.Count == 0) return;
-        var repo = repos.FirstOrDefault(r => r.Id == selectedRepoId);
-        if (repo == null) return;
-
-        deleting = true; StateHasChanged();
-        var toDelete = selectedBranches.ToList();
-
-        foreach (var branchName in toDelete)
-        {
-            try
-            {
-                var refInfo = allRefs.FirstOrDefault(r => r.Name == branchName);
-                if (refInfo == null) { deleteLog.Insert(0, new DeleteLogEntry { Branch = branchName, Ok = false, Message = "Ref not found" }); continue; }
-
-                await TfsApi.DeleteBranchAsync(repo.Project, repo.Id, branchName, refInfo.ObjectId);
-                deleteLog.Insert(0, new DeleteLogEntry { Branch = branchName, Ok = true, Message = "Deleted" });
-                allRefs.RemoveAll(r => r.Name == branchName);
-                selectedBranches.Remove(branchName);
-            }
-            catch (Exception ex)
-            {
-                deleteLog.Insert(0, new DeleteLogEntry { Branch = branchName, Ok = false, Message = ex.Message });
-            }
-            StateHasChanged();
-        }
-
-        ApplyFilter();
-        deleting = false;
-    }
-
-    // ─── Dropdown Data ───
-    private List<GlassDropdown.DropdownGroup> RepoGroups => repos.GroupBy(r => r.Project).Select(grp => new GlassDropdown.DropdownGroup
-    { Label = "📁 " + grp.Key, Options = grp.Select(r => new GlassDropdown.DropdownOption { Value = r.Id, Label = grp.Key + " — " + r.Name }).ToList() }).ToList();
-
-    private class DeleteLogEntry { public string Branch { get; set; } = ""; public bool Ok { get; set; } public string Message { get; set; } = ""; }
 }

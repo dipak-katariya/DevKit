@@ -1,0 +1,294 @@
+@* One pull request's code comparison: the verdict, then each file that needs a look, opening onto the
+   blocks that are missing — the lines QA has, marked with whether the branch has each of them. *@
+
+@if (Pr.CodeCheck is { } check)
+{
+    <div class="cc-panel">
+        <div class="cc-head">
+            <span class="merge-pill @PillClass(check)" title="@check.Summary">
+                <Icon Inner="@PillIcon(check)" /><span>@PillLabel(check)</span>
+            </span>
+            <span class="cc-sum">@check.Summary</span>
+            @if (check.DestinationCommit.Length > 0)
+            {
+                <span class="cc-snap" title="Compared against commit @check.DestinationCommit of @check.DestinationBranch, read at @check.CheckedAt.ToString("dd MMM yyyy HH:mm")">
+                    vs @check.DestinationBranch @@ @Short(check.DestinationCommit)
+                </span>
+            }
+        </div>
+
+        @if (Pr.CodeContradictsCommits)
+        {
+            <div class="cc-alert">
+                <Icon Inner="@Icons.AlertTriangle" />
+                <span>
+                    Every commit of this pull request is on <b>@check.DestinationBranch</b>, but not all of its code is —
+                    most likely lost while resolving a merge conflict, or undone by hand.
+                </span>
+            </div>
+        }
+
+        @if (problems.Count > 0)
+        {
+            <table class="cc-files">
+                <thead>
+                    <tr>
+                        <th class="cc-f-exp"></th>
+                        <th>File</th>
+                        <th class="cc-f-kind">Change</th>
+                        <th class="cc-f-status">On branch</th>
+                        <th>Why</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var file in problems)
+                    {
+                        var open = expanded.Contains(file.Path);
+                        <tr @key="file.Path" class="cc-file-row @(open ? "open" : "")">
+                            <td class="cc-f-exp">
+                                @if (file.Hunks.Count > 0)
+                                {
+                                    <button class="cm-expander @(open ? "open" : "")" title="@(open ? "Hide the lines" : "Show the lines")"
+                                            @onclick="() => Toggle(file.Path)">
+                                        <Icon Inner="@Icons.ChevronRight" />
+                                    </button>
+                                }
+                            </td>
+                            <td class="cc-f-path">
+                                <CopyableRef Text="@file.Path" Label="path" CssClass="cref-path" />
+                                @if (file.OriginalPath is not null)
+                                {
+                                    <span class="cc-from" title="Renamed from @file.OriginalPath">from @file.OriginalPath</span>
+                                }
+                            </td>
+                            <td class="cc-f-kind"><span class="cc-kind cc-kind-@KindClass(file.Change)">@file.Change</span></td>
+                            <td class="cc-f-status">
+                                <span class="merge-pill @FileClass(file.Status)" title="@file.Reason"><span>@FileLabel(file)</span></span>
+                            </td>
+                            <td class="cc-f-why">
+                                <span>@file.Reason</span>
+                                @if (file.CanExplain)
+                                {
+                                    var busy = ExplainingPath == file.Path;
+                                    <button class="cc-link" disabled="@busy" title="Read the file's versions and show which lines are missing"
+                                            @onclick="() => Explain(file)">
+                                        @if (busy) { <span class="spin spin-sm"></span> }
+                                        Show lines
+                                    </button>
+                                }
+                                @if (file.DetailError.Length > 0)
+                                {
+                                    <span class="cc-err">@file.DetailError</span>
+                                }
+                            </td>
+                        </tr>
+                        @if (open && file.Hunks.Count > 0)
+                        {
+                            <tr class="cc-hunks-row">
+                                <td colspan="5">
+                                    @foreach (var hunk in file.Hunks)
+                                    {
+                                        <div class="cc-hunk">
+                                            <div class="cc-hunk-head">
+                                                <span class="merge-pill @HunkClass(hunk.Status)"><span>@HunkLabel(hunk.Status)</span></span>
+                                                <span class="cc-hunk-where">@Location(hunk)</span>
+                                                <span class="cc-hunk-note">@hunk.Note</span>
+                                            </div>
+                                            <div class="cc-code">
+                                                @foreach (var line in hunk.Lines)
+                                                {
+                                                    <div class="cc-ln cc-ln-@KindClass(line.Kind)">
+                                                        <span class="cc-ln-no">@line.LineNumber</span>
+                                                        <span class="cc-ln-mark">@Mark(line.Kind)</span>
+                                                        <span class="cc-ln-text">@line.Text</span>
+                                                        <span class="cc-ln-flag @FlagClass(line)">@FlagText(line)</span>
+                                                    </div>
+                                                }
+                                                @if (hunk.HiddenLines > 0)
+                                                {
+                                                    <div class="cc-ln cc-ln-more">… @hunk.HiddenLines more lines in this block</div>
+                                                }
+                                            </div>
+                                        </div>
+                                    }
+                                    @if (UnshownProblems(file) > 0)
+                                    {
+                                        <div class="cc-more">…and @UnshownProblems(file) more blocks that need a look.</div>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        }
+
+        @if (matching.Count > 0)
+        {
+            <button class="cc-toggle" @onclick="() => showMatching = !showMatching">
+                <Icon Inner="@Icons.ChevronRight" CssClass="@(showMatching ? "cc-rot" : "")" />
+                @(showMatching ? "Hide" : "Show") @(matching.Count == 1 ? "1 file" : $"{matching.Count} files") already on the branch
+            </button>
+            @if (showMatching)
+            {
+                <ul class="cc-matching">
+                    @foreach (var file in matching)
+                    {
+                        <li @key="file.Path">
+                            <Icon Inner="@Icons.Check" />
+                            <span class="cc-mpath">@file.Path</span>
+                            <span class="cc-mwhy">@file.Reason</span>
+                        </li>
+                    }
+                </ul>
+            }
+        }
+    </div>
+}
+
+@code {
+    private const int ShortShaLength = 8;
+
+    [Parameter, EditorRequired] public MergingPullRequest Pr { get; set; } = new();
+
+    /// <summary>The file whose lines are being read right now, so its button can show it.</summary>
+    [Parameter] public string? ExplainingPath { get; set; }
+
+    [Parameter] public EventCallback<FileCodeCheck> OnExplain { get; set; }
+
+    private readonly HashSet<string> expanded = new(StringComparer.Ordinal);
+    private List<FileCodeCheck> problems = new();
+    private List<FileCodeCheck> matching = new();
+    private bool showMatching;
+
+    protected override void OnParametersSet()
+    {
+        var files = Pr.CodeCheck?.Files ?? Array.Empty<FileCodeCheck>();
+        problems = files.Where(f => !f.IsPresent).OrderBy(f => Severity(f.Status)).ThenBy(f => f.Path, StringComparer.OrdinalIgnoreCase).ToList();
+        matching = files.Where(f => f.IsPresent).ToList();
+    }
+
+    private void Toggle(string path)
+    {
+        if (!expanded.Remove(path))
+        {
+            expanded.Add(path);
+        }
+    }
+
+    private async Task Explain(FileCodeCheck file)
+    {
+        // Opened up front, so the lines show the moment they arrive.
+        expanded.Add(file.Path);
+        await OnExplain.InvokeAsync(file);
+    }
+
+    private static int UnshownProblems(FileCodeCheck file) =>
+        Math.Max(0, file.HunkCount - file.HunksPresent - file.Hunks.Count);
+
+    private static int Severity(FileCodeStatus status) => status switch
+    {
+        FileCodeStatus.Missing => 0,
+        FileCodeStatus.Partial => 1,
+        FileCodeStatus.Error => 2,
+        _ => 3
+    };
+
+    private static string Short(string sha) => sha.Length > ShortShaLength ? sha[..ShortShaLength] : sha;
+
+    private static string Location(HunkCheck hunk) => hunk.DestinationLine is int line
+        ? $"QA line {hunk.QaLine} · branch line {line}"
+        : $"QA line {hunk.QaLine}";
+
+    private static string KindClass<T>(T value) where T : Enum => value.ToString().ToLowerInvariant();
+
+    private static string Mark(CodeLineKind kind) => kind switch
+    {
+        CodeLineKind.Added => "+",
+        CodeLineKind.Removed => "−",
+        _ => ""
+    };
+
+    // An added line should be on the branch; a removed line should not.
+    private static string FlagText(CodeLine line) => (line.Kind, line.InDestination) switch
+    {
+        (CodeLineKind.Added, true) => "on branch",
+        (CodeLineKind.Added, false) => "missing",
+        (CodeLineKind.Removed, true) => "still there",
+        (CodeLineKind.Removed, false) => "removed",
+        _ => ""
+    };
+
+    private static string FlagClass(CodeLine line) => (line.Kind, line.InDestination) switch
+    {
+        (CodeLineKind.Added, true) or (CodeLineKind.Removed, false) => "cc-flag-ok",
+        (CodeLineKind.Added, false) or (CodeLineKind.Removed, true) => "cc-flag-bad",
+        _ => ""
+    };
+
+    private static string FileLabel(FileCodeCheck file) => file.Status switch
+    {
+        FileCodeStatus.Missing => "Missing",
+        FileCodeStatus.Partial => file.HunkCount > 0 ? $"{file.HunksPresent} of {file.HunkCount} blocks" : "Partly",
+        FileCodeStatus.Unverified => "Not compared",
+        FileCodeStatus.Error => "Error",
+        FileCodeStatus.MatchesQa => "Matches QA",
+        _ => "Present"
+    };
+
+    private static string FileClass(FileCodeStatus status) => status switch
+    {
+        FileCodeStatus.Present or FileCodeStatus.MatchesQa => "merge-ok",
+        FileCodeStatus.Missing or FileCodeStatus.Error => "merge-no",
+        FileCodeStatus.Partial => "merge-part",
+        _ => "merge-unknown"
+    };
+
+    private static string HunkLabel(HunkStatus status) => status switch
+    {
+        HunkStatus.Missing => "Missing",
+        HunkStatus.Altered => "Changed",
+        HunkStatus.MatchesQa => "Matches QA",
+        _ => "Present"
+    };
+
+    private static string HunkClass(HunkStatus status) => status switch
+    {
+        HunkStatus.Missing => "merge-no",
+        HunkStatus.Altered => "merge-part",
+        _ => "merge-ok"
+    };
+
+    // Shared with the pull-request table, so the pill there and the panel here always agree.
+
+    public static string PillClass(PrCodeCheck check) => check.Verdict switch
+    {
+        CodeVerdict.Present => "merge-ok",
+        CodeVerdict.Missing or CodeVerdict.Failed => "merge-no",
+        CodeVerdict.Partial or CodeVerdict.TooLarge => "merge-part",
+        CodeVerdict.Skipped => "merge-opt",
+        _ => "merge-unknown"
+    };
+
+    public static string PillIcon(PrCodeCheck check) => check.Verdict switch
+    {
+        CodeVerdict.Present => Icons.CheckCircle,
+        CodeVerdict.Missing => Icons.XCircle,
+        CodeVerdict.Partial or CodeVerdict.Skipped => Icons.MinusCircle,
+        CodeVerdict.Failed or CodeVerdict.TooLarge => Icons.AlertTriangle,
+        CodeVerdict.Checking => Icons.Clock,
+        _ => Icons.HelpCircle
+    };
+
+    public static string PillLabel(PrCodeCheck check) => check.Verdict switch
+    {
+        CodeVerdict.Checking => "Comparing…",
+        CodeVerdict.Present => "Present",
+        CodeVerdict.Missing => "Missing",
+        CodeVerdict.Partial => $"{check.FilesMissing + check.FilesPartial} of {check.Files.Count} differ",
+        CodeVerdict.Unverified => $"{check.FilesUnverified} not compared",
+        CodeVerdict.Skipped => "Skipped",
+        CodeVerdict.TooLarge => "Too large here",
+        _ => "Failed"
+    };
+}

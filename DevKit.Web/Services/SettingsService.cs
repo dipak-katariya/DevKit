@@ -3,8 +3,15 @@ using DevKit.Web.Models;
 
 namespace DevKit.Web.Services;
 
-public class SettingsService
+/// <summary>
+/// Reads and writes usersettings.json, with the PAT encrypted at rest. Repository settings and the
+/// local-clone scan live in SettingsService.Repos.cs; the stored shape is <see cref="UserSettings"/>.
+/// </summary>
+public partial class SettingsService
 {
+    private const string SettingsFileName = "usersettings.json";
+    private const string TargetFolderPrefix = "net";
+
     private readonly string _settingsPath;
     private readonly ILogger<SettingsService> _logger;
     private UserSettings _settings = new();
@@ -12,8 +19,85 @@ public class SettingsService
     public SettingsService(ILogger<SettingsService> logger)
     {
         _logger = logger;
-        _settingsPath = Path.Combine(AppContext.BaseDirectory, "usersettings.json");
+        _settingsPath = Path.Combine(AppContext.BaseDirectory, SettingsFileName);
+        AdoptFromPreviousTarget(_settingsPath, _logger);
         Load();
+    }
+
+    /// <summary>
+    /// A source build keeps its files in bin/&lt;Configuration&gt;/&lt;target framework&gt;/, so moving to a
+    /// newer target framework moves the binary away from the settings it wrote. When the settings file
+    /// is missing from such a folder, it is copied from the newest older target framework folder beside
+    /// it — bin/Debug/net9.0 for bin/Debug/net10.0 — instead of the app opening unconfigured. The old
+    /// file is left in place. Returns the file adopted from, or null when nothing was.
+    /// </summary>
+    public static string? AdoptFromPreviousTarget(string settingsPath, ILogger logger)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(settingsPath);
+        ArgumentNullException.ThrowIfNull(logger);
+        if (File.Exists(settingsPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var previous = FindPreviousTargetSettings(Path.GetFullPath(settingsPath));
+            if (previous is null)
+            {
+                return null;
+            }
+
+            File.Copy(previous, settingsPath, overwrite: false);
+            logger.LogInformation("Settings carried over from {Folder} after a target framework upgrade",
+                Path.GetFileName(Path.GetDirectoryName(previous)));
+            return previous;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            logger.LogError(ex, "Settings from an earlier target framework could not be carried over; starting unconfigured");
+            return null;
+        }
+    }
+
+    private static string? FindPreviousTargetSettings(string settingsPath)
+    {
+        var outputDir = Path.GetDirectoryName(settingsPath);
+        var configurationDir = Path.GetDirectoryName(outputDir);
+        if (outputDir is null || configurationDir is null || TargetVersion(Path.GetFileName(outputDir)) is not { } current)
+        {
+            return null;
+        }
+
+        return Directory.EnumerateDirectories(configurationDir)
+            .Select(dir => (Dir: dir, Version: TargetVersion(Path.GetFileName(dir))))
+            .Where(candidate => candidate.Version is not null && candidate.Version < current)
+            .OrderByDescending(candidate => candidate.Version)
+            .Select(candidate => Path.Combine(candidate.Dir, Path.GetFileName(settingsPath)))
+            .FirstOrDefault(file => IsConfinedRegularFile(file, configurationDir));
+    }
+
+    /// <summary>The version a build output folder is named for — net10.0 is 10.0 — or null for any other folder.</summary>
+    private static Version? TargetVersion(string folderName) =>
+        folderName.StartsWith(TargetFolderPrefix, StringComparison.OrdinalIgnoreCase)
+        && Version.TryParse(folderName[TargetFolderPrefix.Length..], out var version)
+            ? version
+            : null;
+
+    /// <summary>Exists inside <paramref name="root"/>, and neither the file nor its folder is a link.</summary>
+    private static bool IsConfinedRegularFile(string path, string root)
+    {
+        var full = Path.GetFullPath(path);
+        var rootWithSeparator = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)) + Path.DirectorySeparatorChar;
+        if (!full.StartsWith(rootWithSeparator, StringComparison.Ordinal) || !File.Exists(full))
+        {
+            return false;
+        }
+
+        var file = new FileInfo(full);
+        return !file.Attributes.HasFlag(FileAttributes.ReparsePoint)
+               && file.Directory is { } folder
+               && !folder.Attributes.HasFlag(FileAttributes.ReparsePoint);
     }
 
     public TfsSettings Tfs => _settings.Tfs;
@@ -39,6 +123,58 @@ public class SettingsService
         get => _settings.DefaultRepoId;
         set { _settings.DefaultRepoId = value; Save(); }
     }
+
+    // ═══ MOST-USED REPOSITORIES ═══
+
+    /// <summary>Upper bound on the pinned list, so a hand-edited settings file cannot fill a dropdown.</summary>
+    public const int MaxMostUsedRepoCount = 20;
+
+    /// <summary>
+    /// How many repositories may be pinned to the top of every repository picker. Zero turns the
+    /// feature off. Lowering it trims the pinned list so the two can never disagree.
+    /// </summary>
+    public int MostUsedRepoCount
+    {
+        get => Math.Clamp(_settings.MostUsedRepoCount, 0, MaxMostUsedRepoCount);
+        set
+        {
+            var clamped = Math.Clamp(value, 0, MaxMostUsedRepoCount);
+            _settings.MostUsedRepoCount = clamped;
+            TrimMostUsedRepos(clamped);
+            Save();
+        }
+    }
+
+    /// <summary>
+    /// Pinned repository ids, in the order the user picked them — that order is the display order.
+    /// Ids, not names: names are not unique across projects.
+    /// </summary>
+    public IReadOnlyList<string> MostUsedRepoIds => _settings.MostUsedRepoIds;
+
+    public void SetMostUsedRepoIds(IEnumerable<string>? repoIds)
+    {
+        var deduped = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var cap = MostUsedRepoCount;
+        foreach (var id in repoIds ?? Enumerable.Empty<string>())
+        {
+            // Checked before adding, not after: the other way round a cap of zero still kept one.
+            if (deduped.Count >= cap) break;
+            if (string.IsNullOrWhiteSpace(id)) continue;
+
+            var trimmed = id.Trim();
+            if (seen.Add(trimmed)) deduped.Add(trimmed);
+        }
+
+        _settings.MostUsedRepoIds = deduped;
+        Save();
+    }
+
+    private void TrimMostUsedRepos(int count)
+    {
+        if (_settings.MostUsedRepoIds.Count > count)
+            _settings.MostUsedRepoIds = _settings.MostUsedRepoIds.Take(count).ToList();
+    }
     public string TeamName
     {
         get => _settings.TeamName;
@@ -55,176 +191,42 @@ public class SettingsService
         Save();
     }
 
-    public string GetBaseBranch(string repoId) =>
-        _settings.BaseBranches.TryGetValue(repoId, out var b) ? b : "";
+    // ═══ CAPACITY PLANNING ═══
 
-    public void SetBaseBranch(string repoId, string branch)
-    {
-        _settings.BaseBranches[repoId] = branch;
-        Save();
-    }
+    private readonly object _capacityPlanningSync = new();
 
     /// <summary>
-    /// Scans DefaultProjectPath for subdirectories containing .git folders.
-    /// Reads the git remote origin URL from each to identify the TFS repo.
+    /// The Capacity Planning formula settings, sanitised. The first read on a machine that
+    /// predates them builds them from the older per-tag Deliverable toggles and saves, so the
+    /// tab opens showing the same numbers it did before. Returns a copy: callers edit it and
+    /// hand it back through <see cref="SaveCapacityPlanning"/>, so a half-finished edit in the
+    /// settings dialog never leaks into another page's calculation.
     /// </summary>
-    public List<LocalRepoInfo> ScanLocalRepos(List<TfsRepo>? tfsRepos = null)
+    public CapacityPlanningSettings CapacityPlanning
     {
-        var result = new List<LocalRepoInfo>();
-        var basePath = _settings.DefaultProjectPath;
-        if (string.IsNullOrWhiteSpace(basePath) || !Directory.Exists(basePath))
-            return result;
-
-        try
+        get
         {
-            foreach (var dir in Directory.GetDirectories(basePath))
+            lock (_capacityPlanningSync)
             {
-                var gitDir = System.IO.Path.Combine(dir, ".git");
-                if (!Directory.Exists(gitDir)) continue;
-
-                var info = new LocalRepoInfo
+                if (_settings.CapacityPlanning is null)
                 {
-                    FolderName = System.IO.Path.GetFileName(dir),
-                    LocalPath = dir,
-                    RemoteUrl = ReadGitRemoteUrl(dir)
-                };
-
-                // Try to match to a TFS repo by remote URL or name
-                if (tfsRepos != null)
-                    MatchToTfsRepo(info, tfsRepos);
-
-                result.Add(info);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to scan local repos in {Path}", basePath);
-        }
-        return result;
-    }
-
-    /// <summary>
-    /// Reads the git remote origin URL from a local repo.
-    /// First tries git config file, falls back to running git command.
-    /// </summary>
-    private string ReadGitRemoteUrl(string repoPath)
-    {
-        try
-        {
-            // Read from .git/config directly (no process needed)
-            var configPath = System.IO.Path.Combine(repoPath, ".git", "config");
-            if (File.Exists(configPath))
-            {
-                var lines = File.ReadAllLines(configPath);
-                bool inOrigin = false;
-                foreach (var line in lines)
-                {
-                    var trimmed = line.Trim();
-                    if (trimmed == "[remote \"origin\"]")
-                    {
-                        inOrigin = true;
-                        continue;
-                    }
-                    if (inOrigin && trimmed.StartsWith("["))
-                        break;
-                    if (inOrigin && trimmed.StartsWith("url = ", StringComparison.OrdinalIgnoreCase))
-                        return trimmed["url = ".Length..].Trim();
+                    _settings.CapacityPlanning = CapacityPlanningSettings.FromLegacy(_settings.DeliverableTags).Normalized();
+                    Save();
                 }
+                // Normalized is itself a deep copy, and re-sanitises a value hand-edited on disk.
+                return _settings.CapacityPlanning.Normalized();
             }
         }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Could not read git remote URL from {RepoPath}", repoPath);
-        }
-        return "";
     }
 
-    /// <summary>
-    /// Matches a local repo to a TFS repo by comparing remote URLs, then by repo name extracted from URL.
-    /// Handles clones like FX-CPFOIA-Migration_2 which have the same remote as FX-CPFOIA-Migration.
-    /// </summary>
-    private void MatchToTfsRepo(LocalRepoInfo local, List<TfsRepo> tfsRepos)
+    public void SaveCapacityPlanning(CapacityPlanningSettings settings)
     {
-        // Strategy 1: Exact remote URL match
-        if (!string.IsNullOrEmpty(local.RemoteUrl))
+        ArgumentNullException.ThrowIfNull(settings);
+        lock (_capacityPlanningSync)
         {
-            var normalizedLocal = NormalizeUrl(local.RemoteUrl);
-            var match = tfsRepos.FirstOrDefault(r => NormalizeUrl(r.RemoteUrl) == normalizedLocal);
-            if (match != null)
-            {
-                local.TfsRepoId = match.Id;
-                local.TfsRepoName = match.Name;
-                local.TfsProject = match.Project;
-                return;
-            }
-
-            // Strategy 2: Extract repo name from remote URL and match
-            var repoNameFromUrl = ExtractRepoNameFromUrl(local.RemoteUrl);
-            if (!string.IsNullOrEmpty(repoNameFromUrl))
-            {
-                match = tfsRepos.FirstOrDefault(r =>
-                    r.Name.Equals(repoNameFromUrl, StringComparison.OrdinalIgnoreCase));
-                if (match != null)
-                {
-                    local.TfsRepoId = match.Id;
-                    local.TfsRepoName = match.Name;
-                    local.TfsProject = match.Project;
-                    return;
-                }
-            }
+            _settings.CapacityPlanning = settings.Normalized();
+            Save();
         }
-
-        // Strategy 3: Folder name exact match
-        var nameMatch = tfsRepos.FirstOrDefault(r =>
-            r.Name.Equals(local.FolderName, StringComparison.OrdinalIgnoreCase));
-        if (nameMatch != null)
-        {
-            local.TfsRepoId = nameMatch.Id;
-            local.TfsRepoName = nameMatch.Name;
-            local.TfsProject = nameMatch.Project;
-        }
-    }
-
-    private static string NormalizeUrl(string url)
-    {
-        if (string.IsNullOrEmpty(url)) return "";
-        return url.TrimEnd('/').ToLowerInvariant()
-            .Replace("http://", "").Replace("https://", "");
-    }
-
-    private static string ExtractRepoNameFromUrl(string url)
-    {
-        if (string.IsNullOrEmpty(url)) return "";
-        // TFS/Azure DevOps: https://tfs.example.com/tfs/Collection/Project/_git/RepoName
-        var gitIdx = url.LastIndexOf("/_git/", StringComparison.OrdinalIgnoreCase);
-        if (gitIdx >= 0)
-            return url[(gitIdx + 6)..].TrimEnd('/');
-        // Generic: last segment of URL
-        var lastSlash = url.TrimEnd('/').LastIndexOf('/');
-        if (lastSlash >= 0)
-        {
-            var name = url[(lastSlash + 1)..].TrimEnd('/');
-            if (name.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
-                name = name[..^4];
-            return name;
-        }
-        return "";
-    }
-
-    /// <summary>
-    /// Auto-maps all scanned local repos to TFS repos and saves paths.
-    /// </summary>
-    public int AutoMapLocalRepos(List<TfsRepo> tfsRepos)
-    {
-        var localRepos = ScanLocalRepos(tfsRepos);
-        int mapped = 0;
-        foreach (var local in localRepos.Where(l => l.IsMapped))
-        {
-            _settings.RepoPaths[local.TfsRepoId!] = local.LocalPath;
-            mapped++;
-        }
-        if (mapped > 0) Save();
-        return mapped;
     }
 
     public void SaveTfs(string url, string pat)
@@ -297,20 +299,16 @@ public class SettingsService
         DefaultAreaPath = _settings.DefaultAreaPath,
         DefaultSprint = _settings.DefaultSprint,
         DefaultRepoId = _settings.DefaultRepoId,
+        MostUsedRepoCount = _settings.MostUsedRepoCount,
+        MostUsedRepoIds = _settings.MostUsedRepoIds,
         TeamName = _settings.TeamName,
         RepoPaths = _settings.RepoPaths,
-        BaseBranches = _settings.BaseBranches
+        BaseBranches = _settings.BaseBranches,
+        DeliverableTags = _settings.DeliverableTags,
+        CapacityPlanning = _settings.CapacityPlanning,
+        CodeMergingTargetBranch = _settings.CodeMergingTargetBranch,
+        CodeMergingRepoIds = _settings.CodeMergingRepoIds,
+        RepoTargetBranches = _settings.RepoTargetBranches,
+        RepoBranches = _settings.RepoBranches
     };
-}
-
-public class UserSettings
-{
-    public TfsSettings Tfs { get; set; } = new();
-    public string DefaultProjectPath { get; set; } = "";
-    public string DefaultAreaPath { get; set; } = "";
-    public string DefaultSprint { get; set; } = "";
-    public string DefaultRepoId { get; set; } = "";
-    public string TeamName { get; set; } = "";
-    public Dictionary<string, string> RepoPaths { get; set; } = new();
-    public Dictionary<string, string> BaseBranches { get; set; } = new();
 }

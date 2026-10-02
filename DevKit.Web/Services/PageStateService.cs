@@ -13,6 +13,9 @@ public class PageStateService
     // ═══ MERGE TOOL STATE ═══
     public MergeToolState MergeTool { get; } = new();
 
+    /// <summary>The Insight Hub's Task Creation tab, which lives in its own component.</summary>
+    public TaskCreationState TaskCreation { get; } = new();
+
     // ═══ SHARED TFS DATA (loaded once, shared across pages) ═══
     public SharedTfsData TfsData { get; } = new();
 }
@@ -39,15 +42,20 @@ public class BranchCreatorState
     // Work items
     public List<WorkItem> WorkItems { get; set; } = new();
     public List<WorkItem> Filtered { get; set; } = new();
-    public List<string> Branches { get; set; } = new();
+
+    /// <summary>
+    /// Branches of the selected repository. Read-only because it is handed straight to the picker
+    /// and is shared with <see cref="BranchCacheService"/>, which owns the list.
+    /// </summary>
+    public IReadOnlyList<string> Branches { get; set; } = Array.Empty<string>();
 
     // Branch form
     public string BranchName { get; set; } = "";
     public string PrName { get; set; } = "";
     public string BaseBranch { get; set; } = "develop";
 
-    // Existing branches
-    public List<string> ExistingBranches { get; set; } = new();
+    /// <summary>Branches already linked to the selected work item, across every repository.</summary>
+    public List<WorkItemBranchLink> ExistingBranches { get; set; } = new();
 
     // Filters
     public string SearchQ { get; set; } = "";
@@ -59,6 +67,25 @@ public class BranchCreatorState
     // Result
     public string ResultMsg { get; set; } = "";
     public bool ResultOk { get; set; }
+}
+
+public class TaskCreationState
+{
+    /// <summary>Project, area and sprint the requirements were loaded for; empty before the first load.</summary>
+    public string LoadedKey { get; set; } = "";
+
+    /// <summary>Sprint the requirements came from — the iteration their new tasks go into.</summary>
+    public string LoadedSprint { get; set; } = "";
+
+    public List<WorkItem> Requirements { get; set; } = new();
+
+    /// <summary>Tasks created per requirement id since the last load, for the "n Created" badge.</summary>
+    public Dictionary<string, int> CreatedCounts { get; set; } = new();
+
+    // Filters
+    public string SearchQ { get; set; } = "";
+    public string TypeFilter { get; set; } = "";
+    public string AssigneeFilter { get; set; } = "";
 }
 
 public class MergeToolState
@@ -82,7 +109,9 @@ public class MergeToolState
 
     // PR data
     public Dictionary<string, RepoPrData> RepoPRs { get; set; } = new();
-    public Dictionary<string, List<string>> BranchCache { get; set; } = new();
+
+    /// <summary>Number of the latest pull request search. An older search stops writing once a newer one starts.</summary>
+    public int PrSearch { get; set; }
     public Dictionary<string, CherryPickHistoryEntry> CherryHistory { get; set; } = new();
 
     // UI state

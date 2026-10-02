@@ -1,51 +1,75 @@
 @inherits LayoutComponentBase
 @inject SettingsService Settings
 @inject NavigationManager Nav
+@inject IJSRuntime JS
 
 <div class="devkit-app">
-    <!-- Header -->
-    <header class="hdr">
-        <div class="hdr-r1">
-            <div class="hdr-logo">
-                <div class="hdr-icon">DK</div>
-                <span class="hdr-title">DevKit</span>
-                <span class="hdr-sub">TFS · Casepoint</span>
+    <aside class="sidebar">
+        <div class="sidebar-profile">
+            <div class="profile-avatar">DK</div>
+            <div class="profile-meta">
+                <span class="profile-name">DevKit</span>
+                <span class="profile-sub">TFS · Casepoint</span>
             </div>
-            <NavMenu />
-            <div class="hdr-r1-right">
-                <div class="api-pill @(Settings.IsConfigured ? "ok" : "err")">
+            <span class="profile-bell"><Icon Inner="@Icons.Bell" /></span>
+        </div>
+        <div class="sidebar-sep"></div>
+        <NavMenu />
+    </aside>
+
+    <div class="main">
+        <header class="topbar">
+            <div class="tb-nav">
+                <button class="tb-btn" title="Back" @onclick="GoBack"><Icon Inner="@Icons.ChevronLeft" /></button>
+                <button class="tb-btn" title="Forward" @onclick="GoForward"><Icon Inner="@Icons.ChevronRight" /></button>
+            </div>
+            <CommandSearch />
+            <div class="tb-spacer"></div>
+            <div class="tb-actions">
+                <div class="conn-pill @(Settings.IsConfigured ? "ok" : "err")">
                     <span class="dot"></span>
                     <span>@(Settings.IsConfigured ? "Connected" : "Not configured")</span>
                 </div>
             </div>
-        </div>
-    </header>
+        </header>
 
-    <!-- Main content -->
-    <div class="shell">
-        @if (!Settings.IsConfigured && !IsSettingsPage)
-        {
-            <div class="setup-guard">
-                <div class="setup-card">
-                    <div style="font-size:2rem;margin-bottom:12px;">⚙</div>
-                    <h2>Setup Required</h2>
-                    <p>Configure your TFS server URL and Personal Access Token to get started.</p>
-                    <button class="btn-primary" style="margin-top:16px;width:auto;padding:10px 24px;" @onclick='() => Nav.NavigateTo("/settings")'>
-                        Open Settings
-                    </button>
+        <div class="shell">
+            @if (!Settings.IsConfigured && RequiresSetup)
+            {
+                <div class="setup-guard">
+                    <div class="setup-card">
+                        <div style="display:flex;justify-content:center;margin-bottom:14px;color:var(--accent2);">
+                            <Icon Inner="@Icons.Settings" CssClass="ic-xl" />
+                        </div>
+                        <h2>Setup Required</h2>
+                        <p>Configure your TFS server URL and Personal Access Token to get started.</p>
+                        <button class="btn-primary" style="margin-top:18px;width:auto;padding:10px 24px;"
+                                @onclick='() => Nav.NavigateTo("/settings")'>
+                            Open Settings
+                        </button>
+                    </div>
                 </div>
-            </div>
-        }
-        else
-        {
-            @Body
-        }
+            }
+            else
+            {
+                @Body
+            }
+        </div>
     </div>
 </div>
 
 @code {
-    private bool IsSettingsPage =>
-        Nav.Uri.Contains("/settings", StringComparison.OrdinalIgnoreCase)
-        || Nav.Uri.Contains("/markdown", StringComparison.OrdinalIgnoreCase)
-        || Nav.Uri.Contains("/workday", StringComparison.OrdinalIgnoreCase);
+    private static readonly string[] NoSetupPaths = { "", "/markdown", "/workday", "/settings" };
+
+    private bool RequiresSetup
+    {
+        get
+        {
+            var path = new Uri(Nav.Uri).AbsolutePath.TrimEnd('/');
+            return !NoSetupPaths.Contains(path, StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private async Task GoBack() => await JS.InvokeVoidAsync("devKit.historyBack");
+    private async Task GoForward() => await JS.InvokeVoidAsync("devKit.historyForward");
 }

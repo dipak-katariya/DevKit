@@ -1,0 +1,272 @@
+@page "/code-merging"
+@inject TfsApiService TfsApi
+@inject CodeMergingService Merging
+@inject MergeVerificationService Verifier
+@inject CodeCompareService CodeCompare
+@inject ILogger<CodeMergingSheet> Log
+@inject SettingsService Settings
+@inject PageStateService PageState
+@implements IDisposable
+
+<div class="cm-page">
+    <div class="cm-toolbar">
+        <div class="cm-tb-row">
+            <div class="cm-fld" style="flex:1 1 200px;">
+                <label class="cfg-label">📂 Area Path</label>
+                <GlassDropdown Value="@(selectedArea != null ? AreaSprintSelect.Serialize(selectedArea) : "")"
+                               Placeholder="— Select area —" Disabled="@(areas.Count == 0)"
+                               Groups="@AreaGroups" OnChange="OnAreaChange" />
+            </div>
+            <div class="cm-fld" style="flex:1 1 170px;">
+                <label class="cfg-label">
+                    📅 Sprint
+                    @if (selectedSprints.Count > 1) { <span class="cm-hint">@selectedSprints.Count selected</span> }
+                </label>
+                <MultiSelectDropdown Options="@SprintOptions" Selected="@selectedSprints"
+                                     SelectedChanged="OnSprintsChanged" ItemNoun="sprint"
+                                     Disabled="@(iterations.Count == 0)"
+                                     Placeholder="— Select sprint —" SearchPlaceholder="Search sprints…" />
+            </div>
+            <div class="cm-fld" style="flex:1 1 190px;">
+                <label class="cfg-label">
+                    📦 Repositories
+                    @if (selectedRepoIds.Count > 1) { <span class="cm-hint">@selectedRepoIds.Count selected</span> }
+                </label>
+                <MultiSelectDropdown Options="@RepoOptions" Selected="@selectedRepoIds"
+                                     SelectedChanged="OnReposChanged" ItemNoun="repository"
+                                     Disabled="@(AvailableRepos.Count == 0)"
+                                     Placeholder="— Select repositories —" SearchPlaceholder="Search repositories…" />
+            </div>
+            <div class="cm-fld" style="flex:0 0 auto;">
+                <label class="cfg-label">🏷 Scope</label>
+                <div class="cm-seg">
+                    <button class="cm-seg-btn @(deliverableOnly ? "on" : "")" @onclick="() => deliverableOnly = true"
+                            title="Requirements need the Deliverable tag; Bugs and Change Requests are always included.">Deliverable</button>
+                    <button class="cm-seg-btn @(deliverableOnly ? "" : "on")" @onclick="() => deliverableOnly = false">All</button>
+                </div>
+            </div>
+            <div class="cm-fld" style="flex:0 0 auto;">
+                <label class="cfg-label">🔗 Discovery</label>
+                <button class="cm-seg-btn @(matchByBranchOrTitle ? "on" : "")" style="height:32px;"
+                        @onclick="() => matchByBranchOrTitle = !matchByBranchOrTitle"
+                        title="Also match pull requests whose source branch or title contains the work item id, for PRs nobody linked.">
+                    @(matchByBranchOrTitle ? "Links + branch/title" : "Links only")
+                </button>
+            </div>
+            <div class="cm-fld cm-fld-btn">
+                <button class="cfg-load-btn" @onclick="Load" disabled="@(!CanLoad)">
+                    @if (loading) { <span class="spin spin-sm" style="color:#fff;"></span> } else { <Icon Inner="@Icons.Refresh" /> }
+                    Load Data
+                </button>
+            </div>
+        </div>
+
+        <div class="cm-tb-row">
+            <div class="cm-fld cm-fld-filter">
+                <label class="cfg-label @(Marked(filter.Member))">👤 Assigned To</label>
+                <GlassDropdown Value="@filter.Member" Placeholder="— All members —" EmptyLabel="— All members —"
+                               EmptyValue="" Options="@MemberOptions" OnChange="OnMemberChange" />
+            </div>
+            <div class="cm-fld cm-fld-filter">
+                <label class="cfg-label @(Marked(filter.Author))">✍ Created By</label>
+                <GlassDropdown Value="@filter.Author" Placeholder="— All creators —" EmptyLabel="— All creators —"
+                               EmptyValue="" Options="@AuthorOptions" OnChange="OnAuthorChange" />
+            </div>
+            <div class="cm-fld cm-fld-filter cm-fld-state">
+                <label class="cfg-label @(Marked(filter.MergeState))">✅ Merge State</label>
+                <GlassDropdown Value="@filter.MergeState" Placeholder="— All —" EmptyLabel="— All —" EmptyValue=""
+                               Disabled="@(bundle.TargetBranchName is null)" Options="@MergedOptions" OnChange="OnMergedChange" />
+            </div>
+            <div class="cm-fld cm-fld-branch">
+                <label class="cfg-label">🔀 Branch Setup</label>
+                <RepoBranchSetup Rows="@branchRows" Expanded="@branchSetupOpen"
+                                 ExpandedChanged="@(open => branchSetupOpen = open)"
+                                 Loading="@branchesLoading" OnChanged="OnBranchSetupChanged"
+                                 OnSaveDefaults="SaveBranchDefaults" />
+            </div>
+            <div class="cm-fld cm-fld-btn">
+                <div class="cm-actions">
+                    <button class="cm-verify-btn" @onclick="Verify" disabled="@(!CanVerify)"
+                            title="@(CanVerify ? VerifyAllTooltip : VerifyBlockedReason)">
+                        @if (verifying) { <span class="spin spin-sm"></span> } else { <Icon Inner="@Icons.CheckCircle" /> }
+                        @VerifyAllLabel
+                    </button>
+                    @if (ComparingCode)
+                    {
+                        <button class="cm-verify-btn cm-stop-btn" @onclick="StopCodeCompare" title="Stop comparing; pull requests already done keep their result">
+                            <Icon Inner="@Icons.Stop" /> Stop
+                        </button>
+                    }
+                    else
+                    {
+                        <button class="cm-verify-btn cm-compare-btn" @onclick="CompareAllCode" disabled="@(!CanCompareCode)"
+                                title="@(CanCompareCode ? CompareAllTooltip : VerifyBlockedReason)">
+                            <Icon Inner="@Icons.Code" /> Compare Code
+                        </button>
+                    }
+                </div>
+            </div>
+        </div>
+
+        @if (bundle.Requirements.Count > 0)
+        {
+            <MergingInsights Bundle="@bundle" Filter="@filter" VisibleRows="@visibleRows" ScopeRows="@scopeRows"
+                             Comparing="@ComparingCode" Progress="@codeProgress" OnMergeStateChanged="SetMergeState" />
+        }
+    </div>
+
+    <div class="cm-body">
+        @if (!string.IsNullOrEmpty(bundle.ErrorMessage)) { <div class="notice warn">⚠ @bundle.ErrorMessage</div> }
+        @if (!string.IsNullOrEmpty(bundle.TruncationNotice)) { <div class="notice info">@bundle.TruncationNotice</div> }
+
+        @if (bundle.Requirements.Count > 0 || showUnlinked)
+        {
+            <div class="gpanel cm-panel">
+                <div class="phead cm-phead">
+                    <div class="cm-gridtabs">
+                        <button class="cm-gridtab @(showUnlinked ? "" : "active")" @onclick="() => showUnlinked = false">
+                            <Icon Inner="@Icons.List" /><span>Work Items</span>
+                            <span class="cm-gridtab-n">@visibleRows.Count</span>
+                        </button>
+                        <button class="cm-gridtab @(showUnlinked ? "active" : "")" @onclick="ShowUnlinked">
+                            <Icon Inner="@Icons.GitBranch" /><span>Unlinked PRs</span>
+                            @if (unlinked.HasRun)
+                            {
+                                <span class="cm-gridtab-n">@unlinked.PullRequests.Count</span>
+                            }
+                        </button>
+                    </div>
+                    @if (!showUnlinked && PendingRowCount > 0)
+                    {
+                        <button class="cm-pending-chip" disabled="@loadingRest" @onclick="LoadRemainingCommits" title="@PendingTooltip">
+                            @if (loadingRest)
+                            {
+                                <span class="spin spin-sm"></span>
+                            }
+                            else
+                            {
+                                <Icon Inner="@Icons.Clock" />
+                            }
+                            <span>Commits for <b>@LoadedRowCount</b>/@bundle.Requirements.Count work items</span>
+                            <span class="cm-pending-act">Load all @PendingRowCount</span>
+                        </button>
+                    }
+                    <div class="cm-phead-tools">
+                        @if (showUnlinked)
+                        {
+                            <label class="cm-check" title="How far back to look for pull requests.">
+                                <span>Last</span>
+                                <input type="number" min="1" max="180" value="@unlinkedDays" style="width:52px;"
+                                       @onchange="OnUnlinkedDaysChanged" />
+                                <span>days</span>
+                            </label>
+                            <button class="cm-verify-btn" @onclick="SearchUnlinked"
+                                    disabled="@(selectedRepoIds.Count == 0 || unlinkedSearching)"
+                                    title="@(selectedRepoIds.Count == 0 ? "Select at least one repository" : "Find pull requests with no work item linked")">
+                                @if (unlinkedSearching) { <span class="spin spin-sm"></span> }
+                                else { <Icon Inner="@Icons.Search" /> }
+                                Search
+                            </button>
+                        }
+                        else
+                        {
+                        <div class="cm-search">
+                            <Icon Inner="@Icons.Search" />
+                            <input placeholder="Filter by ID or title…" @oninput="OnSearchInput" />
+                        </div>
+                        <label class="cm-check" title="Order by when work started — each pull request's earliest commit, or its creation until its commits are read — so the work item started first comes first. Follows All PRs and Created By.">
+                            <input type="checkbox" checked="@filter.CommitWise" @onchange="OnCommitWiseChanged" />
+                            <span>Commit-wise</span>
+                        </label>
+                        <label class="cm-check @(filter.ShowAllPrs ? "cm-check-on" : "")"
+                               title="Also list pull requests that did not target the repository's QA branch — intermediate feature-branch ones. Off by default because they cannot reach the release branch; turn it on to cross-check that no pull request for a work item has been missed.">
+                            <input type="checkbox" checked="@filter.ShowAllPrs" @onchange="OnShowAllPrsChanged" />
+                            <span>All PRs@(OffQaPrTotal > 0 ? $" (+{OffQaPrTotal})" : "")</span>
+                        </label>
+                        }
+                    </div>
+                </div>
+
+                @if (showUnlinked)
+                {
+                    <div class="cm-grid-wrap">
+                        @if (!string.IsNullOrEmpty(unlinked.ErrorMessage)) { <div class="notice warn">⚠ @unlinked.ErrorMessage</div> }
+                        @if (!string.IsNullOrEmpty(unlinked.TruncationNotice)) { <div class="notice info">@unlinked.TruncationNotice</div> }
+                        @if (unlinkedSearching)
+                        {
+                            <div class="loading-line">
+                                <span class="spin spin-sm"></span>
+                                Reading pull requests and their work-item links…
+                            </div>
+                        }
+                        else
+                        {
+                            <UnlinkedPrGrid Bundle="@unlinked" />
+                        }
+                    </div>
+                }
+                else
+                {
+                <div class="cm-grid-wrap">
+                    <table class="cm-grid">
+                        <thead>
+                            <tr>
+                                <th class="cm-c-exp"></th>
+                                <th class="cm-c-id" title="Work item id">ID</th>
+                                <th class="cm-c-title" title="Work item title">Title</th>
+                                <th class="cm-c-type" title="Requirement, Bug or Change Request">Type</th>
+                                <th class="cm-c-state" title="Current workflow state">State</th>
+                                <th class="cm-c-user" title="Who the work item is assigned to">Assigned To</th>
+                                <th class="cm-c-num" title="Pull requests found for this work item">PRs</th>
+                                <th class="cm-c-num" title="Commits across those pull requests">Commits</th>
+                                @if (ShowMergeColumns)
+                                {
+                                    <th class="cm-c-merged" title="Whether this work item's work reached @(bundle.TargetBranchName ?? "its merging branch") — by its code once compared, by its commits until then">Merged</th>
+                                    <th class="cm-c-act"></th>
+                                }
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @if (visibleRows.Count == 0)
+                            {
+                                <tr>
+                                    <td colspan="10" class="tbl-empty">
+                                        @(bundle.Requirements.Count == 0
+                                            ? "Nothing loaded yet — press Load Data to see work items."
+                                            : "No work items match the filters.")
+                                    </td>
+                                </tr>
+                            }
+                            @{ var codeState = RowCodeState; }
+                            @foreach (var row in visibleRows)
+                            {
+                                <MergingRow @key="row.WorkItemId" Row="row" VisiblePrs="@filter.VisiblePrs(row)"
+                                            TargetBranch="@bundle.TargetBranchName" ExpandedPrKey="@expandedPrKey"
+                                            ShowingAllPrs="@filter.ShowAllPrs" Code="@codeState"
+                                            OnToggleRow="ToggleRow" OnTogglePr="TogglePr" OnReverify="ReverifyRow"
+                                            OnCompareRow="CompareRowCode" OnComparePr="ComparePrCode" OnExplainFile="ExplainFile" />
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                }
+            </div>
+        }
+        else if (!loading)
+        {
+            <div class="cm-blank">
+                <div class="cm-blank-icon"><Icon Inner="@Icons.Sheet" CssClass="ic-xl" /></div>
+                <h3>Code Merging Sheet</h3>
+                <p>
+                    Pick an area, a sprint and one or more repositories, set each repository's branches under
+                    <b>Branch setup</b>, then <b>Load Data</b> to see whether every work item's code actually
+                    reached its release branch.
+                </p>
+                <button class="btn-sm" @onclick="ShowUnlinked" disabled="@(selectedRepoIds.Count == 0)"
+                        title="@(selectedRepoIds.Count == 0 ? "Select at least one repository first" : "Find recent pull requests with no work item linked")">
+                    <Icon Inner="@Icons.GitBranch" /> Or find unlinked pull requests
+                </button>
+            </div>
+        }
+    </div>
+</div>

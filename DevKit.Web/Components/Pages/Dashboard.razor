@@ -1,0 +1,35 @@
+@page "/"
+@inject NavigationManager Nav
+
+<div class="dash">
+    <div class="dash-head">
+        <div>
+            <div class="dash-title">Dashboard</div>
+            <div class="dash-sub">Your DevOps workflow tools, all in one place.</div>
+        </div>
+        <div class="dash-view">
+            <button class="tb-btn @(grid ? "on" : "")" title="Grid view" @onclick="() => grid = true">
+                <Icon Inner="@Icons.Dashboard" />
+            </button>
+            <button class="tb-btn @(grid ? "" : "on")" title="List view" @onclick="() => grid = false">
+                <Icon Inner="@Icons.List" />
+            </button>
+        </div>
+    </div>
+
+    <div class="@(grid ? "dash-grid" : "dash-list")">
+        @foreach (var tool in ToolCatalog.Tools)
+        {
+            <a class="tool-card" href="@tool.Path" @onclick="() => Nav.NavigateTo(tool.Path)" @onclick:preventDefault>
+                <div class="tool-icon"><Icon Inner="@tool.Icon" /></div>
+                <div class="tool-name">@tool.Name</div>
+                <div class="tool-desc">@tool.Description</div>
+                <div class="tool-foot"><span>Open</span><Icon Inner="@Icons.ArrowRight" /></div>
+            </a>
+        }
+    </div>
+</div>
+
+@code {
+    private bool grid = true;
+}

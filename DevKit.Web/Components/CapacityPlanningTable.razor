@@ -1,0 +1,176 @@
+@* The member table of the Capacity Planning tab, in either of its two views: Planning (capacity,
+   over-plan and planned hours) or Progress (completed against the plan, bug hours kept apart). *@
+
+@if (ShowProgress)
+{
+    <table class="req-table cp-table">
+        <thead>
+            <tr>
+                <th>Member</th>
+                <th class="cp-num" title="Capacity per day × available days">Actual</th>
+                <th class="cp-num" title="Leave and team days off on working days">Leave</th>
+                <th class="cp-num" title="Planned Deliverable hours and their share of planned hours">Deliverable</th>
+                <th class="cp-num" title="Planned Non-Deliverable hours and their share of planned hours">Non-Deliverable</th>
+                <th class="cp-num" title="Planned hours (revised else original) and Planning % against the target">Planning</th>
+                <th class="cp-num" title="Completed Work on non-bug tasks, as a share of planned hours">Completed</th>
+                <th class="cp-num" title="Remaining Work on non-bug tasks, as a share of planned hours">Remaining</th>
+                <th class="cp-num" title="Completed Work on bug work, as a share of all hours logged — not counted as Completed">Bugs</th>
+                <th style="width:44px;"></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var m in Rows)
+            {
+                <tr @key="m.DisplayName">
+                    <td>@MemberCell(m)</td>
+                    <td class="cp-num">@m.ActualCapacity.ToString("0.##")</td>
+                    <td class="cp-num" style="color:var(--amber);">@m.LeaveDays.ToString("0.##")</td>
+                    <td class="cp-num cp-del">@HoursPct(m.Split.DeliverableHours, m.Split.DeliverablePct)</td>
+                    <td class="cp-num cp-non">@HoursPct(m.Split.NonDeliverableHours, m.Split.NonDeliverablePct)</td>
+                    <td class="cp-num" style="color:var(--accent2);">@HoursPct(m.PlannedReviewDay, m.PlanningPctReviewDay)</td>
+                    <td class="cp-num">@CompletedCell(m.CompletedHours, m.CompletedPct, m.ExpectedPct, m.RemainingHours)</td>
+                    <td class="cp-num" style="color:var(--muted2);">@HoursPct(m.RemainingHours, m.RemainingPct)</td>
+                    <td class="cp-num cp-bug">@HoursPct(m.BugHours, m.BugPct)</td>
+                    <td style="text-align:center;">@BreakdownButton(m)</td>
+                </tr>
+            }
+        </tbody>
+        <tfoot>
+            <tr class="cp-foot">
+                <td>@ScopeName · @Summary.MemberCount</td>
+                <td class="cp-num">@Summary.ActualCapacity.ToString("0.##")</td>
+                <td></td>
+                <td class="cp-num cp-del">@HoursPct(Summary.Split.DeliverableHours, Summary.Split.DeliverablePct)</td>
+                <td class="cp-num cp-non">@HoursPct(Summary.Split.NonDeliverableHours, Summary.Split.NonDeliverablePct)</td>
+                <td class="cp-num" style="color:var(--accent2);">@HoursPct(Summary.PlannedReviewDay, Summary.PlanningPct)</td>
+                <td class="cp-num">@CompletedCell(Summary.CompletedHours, Summary.CompletedPct, Summary.ExpectedPct, Summary.RemainingHours)</td>
+                <td class="cp-num" style="color:var(--muted2);">@HoursPct(Summary.RemainingHours, Summary.RemainingPct)</td>
+                <td class="cp-num cp-bug">@HoursPct(Summary.BugHours, Summary.BugPct)</td>
+                <td></td>
+            </tr>
+        </tfoot>
+    </table>
+}
+else
+{
+    <table class="req-table cp-table">
+        <thead>
+            <tr>
+                <th>Member</th>
+                <th class="cp-num" title="Capacity per day">Cap/Day</th>
+                <th class="cp-num" title="Working days in the sprint">Days</th>
+                <th class="cp-num" title="Leave and team days off on working days">Leave</th>
+                <th class="cp-num" title="Capacity per day × available days">Actual</th>
+                @if (IsAi) { <th class="cp-num" title="(Actual − carved-out hours) × @OverPlanLabel">AI h</th> }
+                <th class="cp-num" title="@(IsAi ? "Actual + AI hours" : "Regular mode: the target is the actual capacity")">Target (@TargetLabel)</th>
+                <th class="cp-num" title="Sum of Original Estimate">Planned · Plan</th>
+                <th class="cp-num" title="Sum of Revised-else-Original — what Planning % uses">Planned · Review</th>
+                <th class="cp-num" title="Deliverable hours and their share of planned hours">Deliverable</th>
+                <th class="cp-num" title="Non-Deliverable hours and their share of planned hours">Non-Deliv</th>
+                <th style="width:90px;text-align:center;" title="Planned · Review ÷ Target">Planning %</th>
+                <th style="width:44px;"></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var m in Rows)
+            {
+                <tr @key="m.DisplayName">
+                    <td>@MemberCell(m)</td>
+                    <td class="cp-num">@m.CapacityPerDay.ToString("0.##")</td>
+                    <td class="cp-num">@m.SprintDays</td>
+                    <td class="cp-num" style="color:var(--amber);">@m.LeaveDays.ToString("0.##")</td>
+                    <td class="cp-num">@m.ActualCapacity.ToString("0.##")</td>
+                    @if (IsAi) { <td class="cp-num" style="color:var(--cyan);">+@m.AiHours.ToString("0.##")</td> }
+                    <td class="cp-num" style="color:var(--purple);font-weight:700;">@m.TargetCapacity.ToString("0.##")</td>
+                    <td class="cp-num" style="color:var(--muted2);">@m.PlannedPlanningDay.ToString("0.##")</td>
+                    <td class="cp-num" style="color:var(--accent2);font-weight:700;">@m.PlannedReviewDay.ToString("0.##")</td>
+                    <td class="cp-num cp-del">@HoursPct(m.Split.DeliverableHours, m.Split.DeliverablePct)</td>
+                    <td class="cp-num cp-non">@HoursPct(m.Split.NonDeliverableHours, m.Split.NonDeliverablePct)</td>
+                    <td style="text-align:center;"><span class="pct-pill @PctClass(m.PlanningPctReviewDay)">@m.PlanningPctReviewDay.ToString("0.#")%</span></td>
+                    <td style="text-align:center;">@BreakdownButton(m)</td>
+                </tr>
+            }
+        </tbody>
+        <tfoot>
+            <tr class="cp-foot">
+                <td>@ScopeName · @Summary.MemberCount</td>
+                <td></td><td></td><td></td>
+                <td class="cp-num">@Summary.ActualCapacity.ToString("0.##")</td>
+                @if (IsAi) { <td class="cp-num" style="color:var(--cyan);">+@Summary.AiHours.ToString("0.##")</td> }
+                <td class="cp-num" style="color:var(--purple);">@Summary.TargetCapacity.ToString("0.##")</td>
+                <td class="cp-num">@Summary.PlannedPlanningDay.ToString("0.##")</td>
+                <td class="cp-num" style="color:var(--accent2);">@Summary.PlannedReviewDay.ToString("0.##")</td>
+                <td class="cp-num cp-del">@HoursPct(Summary.Split.DeliverableHours, Summary.Split.DeliverablePct)</td>
+                <td class="cp-num cp-non">@HoursPct(Summary.Split.NonDeliverableHours, Summary.Split.NonDeliverablePct)</td>
+                <td style="text-align:center;"><span class="pct-pill @PctClass(Summary.PlanningPct)">@Summary.PlanningPct.ToString("0.#")%</span></td>
+                <td></td>
+            </tr>
+        </tfoot>
+    </table>
+}
+
+@code {
+    /// <summary>Points of slack before a member reads as behind the time already elapsed.</summary>
+    private const double ProgressTolerancePct = 5;
+
+    [Parameter, EditorRequired] public IReadOnlyList<MemberPlanning> Rows { get; set; } = Array.Empty<MemberPlanning>();
+    [Parameter, EditorRequired] public TeamPlanningSummary Summary { get; set; } = TeamPlanningSummary.Empty(PlanningScope.All);
+    [Parameter, EditorRequired] public CapacityPlanningSettings Settings { get; set; } = new();
+
+    /// <summary>Label for the footer row, e.g. "Development team".</summary>
+    [Parameter] public string ScopeName { get; set; } = "";
+
+    /// <summary>True for the Progress view; otherwise the Planning view.</summary>
+    [Parameter] public bool ShowProgress { get; set; }
+
+    [Parameter] public EventCallback<MemberPlanning> OnBreakdown { get; set; }
+
+    private bool IsAi => Settings.Mode == PlanningMode.AiOverPlan;
+    private string OverPlanLabel => $"{Settings.AiOverPlanPercent:0.##}%";
+    private string TargetLabel => IsAi ? $"{100 + Settings.AiOverPlanPercent:0.##}%" : "100%";
+
+    private RenderFragment MemberCell(MemberPlanning m) => @<text>
+        <div class="cell-title">@m.DisplayName</div>
+        <div class="cell-meta">
+            @m.TaskCount task(s)@(m.CapacityFromTfs ? "" : $" · {m.CapacityPerDay:0.##} h default")
+            @if (m.WorksAcrossTeams) { <span class="cp-cross" title="Has both development and QA work">· Dev + QA</span> }
+        </div>
+    </text>;
+
+    private RenderFragment BreakdownButton(MemberPlanning m) =>
+        @<button type="button" class="btn-sm" @onclick="() => OnBreakdown.InvokeAsync(m)" title="Show the calculation for @m.DisplayName">ƒ</button>;
+
+    private static RenderFragment HoursPct(double hours, double pct) =>
+        @<text>@hours.ToString("0.##")<div class="cp-sub">@pct.ToString("0.#")%</div></text>;
+
+    /// <summary>Completed hours, with the pill coloured by whether they keep pace with elapsed time.</summary>
+    private static RenderFragment CompletedCell(double hours, double pct, double? expected, double remaining) => @<text>
+        <b>@hours.ToString("0.##")</b>
+        <div><span class="pct-pill @ProgressClass(pct, expected, remaining, hours)" title="@ProgressTitle(pct, expected, remaining, hours)">@pct.ToString("0.#")%</span></div>
+    </text>;
+
+    /// <summary>
+    /// Green while keeping pace with elapsed time (within a small tolerance), amber when behind.
+    /// Work with nothing left to do is green whatever the percentage: finishing under estimate
+    /// leaves Completed below 100% and is done, not behind.
+    /// </summary>
+    private static string ProgressClass(double completedPct, double? expectedPct, double remaining, double completed)
+    {
+        if (IsFinished(remaining, completed)) return "pct-ok";
+        if (expectedPct is not { } expected) return completedPct >= 100 ? "pct-ok" : "pct-under";
+        return completedPct + ProgressTolerancePct >= expected ? "pct-ok" : "pct-under";
+    }
+
+    private static string ProgressTitle(double completedPct, double? expectedPct, double remaining, double completed)
+    {
+        if (IsFinished(remaining, completed))
+            return $"{completedPct:0.#}% of planned hours used and nothing remaining — finished under estimate";
+        return expectedPct is { } expected
+            ? $"{completedPct:0.#}% of planned hours done; {expected:0.#}% of the available days have passed"
+            : $"{completedPct:0.#}% of planned hours done";
+    }
+
+    private static bool IsFinished(double remaining, double completed) => remaining <= 0 && completed > 0;
+
+    private static string PctClass(double pct) => pct < 90 ? "pct-under" : pct > 110 ? "pct-over" : "pct-ok";
+}

@@ -1,64 +1,47 @@
 @inject NavigationManager Nav
 @implements IDisposable
 
-<nav class="nav-menu">
-    <a class="nav-item @ActiveClass("/markdown")" href="/markdown" @onclick='() => Navigate("/markdown")' @onclick:preventDefault>
-        <span class="nav-icon">📝</span>
-        <span>Markdown</span>
+<nav class="sidebar-nav">
+    <a class="nav-item @ActiveClass(ToolCatalog.Dashboard.Path)" href="@ToolCatalog.Dashboard.Path"
+       @onclick="() => Go(ToolCatalog.Dashboard.Path)" @onclick:preventDefault>
+        <Icon Inner="@ToolCatalog.Dashboard.Icon" />
+        <span>@ToolCatalog.Dashboard.Name</span>
     </a>
-    <a class="nav-item @ActiveClass("/workday")" href="/workday" @onclick='() => Navigate("/workday")' @onclick:preventDefault>
-        <span class="nav-icon">⏱</span>
-        <span>Workday</span>
-    </a>
-    <a class="nav-item @ActiveClass("/")" href="/" @onclick='() => Navigate("/")' @onclick:preventDefault>
-        <span class="nav-icon">🔀</span>
-        <span>Branch Creator</span>
-    </a>
-    <a class="nav-item @ActiveClass("/branch-delete")" href="/branch-delete" @onclick='() => Navigate("/branch-delete")' @onclick:preventDefault>
-        <span class="nav-icon">🗑</span>
-        <span>Branch Delete</span>
-    </a>
-    <a class="nav-item @ActiveClass("/planning")" href="/planning" @onclick='() => Navigate("/planning")' @onclick:preventDefault>
-        <span class="nav-icon">📐</span>
-        <span>Planning</span>
-    </a>
-    <a class="nav-item @ActiveClass("/merge")" href="/merge" @onclick='() => Navigate("/merge")' @onclick:preventDefault>
-        <span class="nav-icon">⛙</span>
-        <span>Merge Tool</span>
-    </a>
-    <a class="nav-item @ActiveClass("/settings")" href="/settings" @onclick='() => Navigate("/settings")' @onclick:preventDefault>
-        <span class="nav-icon">⚙</span>
-        <span>Settings</span>
-    </a>
+
+    <div class="sidebar-cap">Tools</div>
+    @foreach (var tool in ToolCatalog.Tools)
+    {
+        <a class="nav-item @ActiveClass(tool.Path)" href="@tool.Path"
+           @onclick="() => Go(tool.Path)" @onclick:preventDefault>
+            <Icon Inner="@tool.Icon" />
+            <span>@tool.Name</span>
+        </a>
+    }
 </nav>
 
+<div class="sidebar-foot">
+    <a class="nav-item @ActiveClass(ToolCatalog.Settings.Path)" href="@ToolCatalog.Settings.Path"
+       @onclick="() => Go(ToolCatalog.Settings.Path)" @onclick:preventDefault>
+        <Icon Inner="@ToolCatalog.Settings.Icon" />
+        <span>@ToolCatalog.Settings.Name</span>
+    </a>
+</div>
+
 @code {
-    protected override void OnInitialized()
-    {
-        Nav.LocationChanged += OnLocationChanged;
-    }
+    protected override void OnInitialized() => Nav.LocationChanged += OnLocationChanged;
 
     private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
-    {
-        StateHasChanged();
-    }
+        => StateHasChanged();
 
     private string ActiveClass(string path)
     {
-        var uri = new Uri(Nav.Uri);
-        var current = uri.AbsolutePath.TrimEnd('/');
+        var current = new Uri(Nav.Uri).AbsolutePath.TrimEnd('/');
         var target = path.TrimEnd('/');
         if (string.IsNullOrEmpty(target)) return string.IsNullOrEmpty(current) ? "active" : "";
         return current.Equals(target, StringComparison.OrdinalIgnoreCase) ? "active" : "";
     }
 
-    private void Navigate(string path)
-    {
-        Nav.NavigateTo(path);
-    }
+    private void Go(string path) => Nav.NavigateTo(path);
 
-    public void Dispose()
-    {
-        Nav.LocationChanged -= OnLocationChanged;
-    }
+    public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
 }

@@ -1,0 +1,435 @@
+@inject TfsApiService TfsApi
+@inject SettingsService Settings
+@inject ILogger<CapacityPlanningPanel> Logger
+@implements IDisposable
+
+@* Capacity Planning tab of the Insight Hub. TFS is read once per Load; every change of mode,
+   scope, view, tag or setting after that is recomputed in memory from what was loaded. *@
+
+<div class="cfg-bar">
+    @Selectors
+    <div class="cfg-divider"></div>
+    <div class="cfg-col" style="flex:0 0 auto;">
+        <div class="cfg-field">
+            <label class="cfg-label">🧮 Planning</label>
+            <div class="cm-seg">
+                <button type="button" class="cm-seg-btn @(settings.Mode == PlanningMode.Regular ? "on" : "")"
+                        title="Plan to capacity: 100% means every available hour is planned" @onclick="() => SetMode(PlanningMode.Regular)">Regular</button>
+                <button type="button" class="cm-seg-btn @(settings.Mode == PlanningMode.AiOverPlan ? "on" : "")"
+                        title="Plan @OverPlanLabel above capacity on the work AI speeds up" @onclick="() => SetMode(PlanningMode.AiOverPlan)">AI +@OverPlanLabel</button>
+            </div>
+        </div>
+    </div>
+    <div class="cfg-divider"></div>
+    <div class="cfg-col" style="flex:0 0 auto;">
+        <button type="button" class="btn-sm" style="height:32px;" title="Hours per day, sprint length, over-plan %, tags and teams" @onclick="() => settingsOpen = true">⚙ Settings</button>
+    </div>
+    <div class="cfg-divider"></div>
+    <div class="cfg-col" style="flex:0 0 auto;">
+        <button class="cfg-load-btn" @onclick="LoadPlanning" disabled="@(Area == null || string.IsNullOrEmpty(Sprint) || loading)">
+            @if (loading) { <span class="spin spin-sm" style="color:#fff;"></span> } else { <span>⬇</span> }
+            Load
+        </button>
+        @if (Rows.Count > 0) { <span class="chip chip-green" style="font-size:.56rem;">@Rows.Count member(s)</span> }
+    </div>
+</div>
+
+<div class="cp-body">
+    @if (!string.IsNullOrEmpty(loadError)) { <div class="notice warn">⚠ @loadError</div> }
+    @if (CapacityNotice is { } notice) { <div class="notice warn">⚠ @notice</div> }
+
+    @if (work.Tasks.Count == 0)
+    {
+        <div class="gpanel"><div class="pbody"><div class="tbl-empty">
+            @(loading ? "Loading tasks and team capacity…" : "Select an area and sprint, then Load to see each member's planned hours against capacity.")
+        </div></div></div>
+    }
+    else
+    {
+        <div class="cp-teams">
+            @foreach (var s in Scopes)
+            {
+                var sum = plan.SummaryFor(s);
+                <button type="button" class="cp-team @(scope == s ? "on" : "")" title="@ScopeTitle(s)" @onclick="() => scope = s">
+                    <div class="cp-team-head">
+                        <span class="cp-team-name">@ScopeName(s)</span>
+                        <span class="cp-team-count">@sum.MemberCount member(s)</span>
+                        <span class="pct-pill @PctClass(sum.PlanningPct) cp-team-pct" title="Planning %">@sum.PlanningPct.ToString("0.#")%</span>
+                    </div>
+                    <div class="cp-team-planned"><b>@H(sum.PlannedReviewDay)</b> planned of <b>@H(sum.TargetCapacity)</b> target</div>
+                    <div class="cp-meter"><div class="cp-meter-fill @PctClass(sum.PlanningPct)" style="width:@Css(Math.Min(100, sum.PlanningPct))%;"></div></div>
+                    <div class="cp-team-split">
+                        <span class="cp-del">● Deliverable @H(sum.Split.DeliverableHours) · @sum.Split.DeliverablePct.ToString("0.#")%</span>
+                        <span class="cp-non">● Non-Deliverable @H(sum.Split.NonDeliverableHours) · @sum.Split.NonDeliverablePct.ToString("0.#")%</span>
+                        @if (sum.Split.OtherHours > 0)
+                        {
+                            <span class="cp-unt">● Untagged @H(sum.Split.OtherHours) · @sum.Split.OtherPct.ToString("0.#")%</span>
+                        }
+                    </div>
+                    <div class="cp-team-progress">
+                        <span>Completed <b>@H(sum.CompletedHours)</b> · @sum.CompletedPct.ToString("0.#")%@ExpectedSuffix(sum.ExpectedPct)</span>
+                        <span class="cp-bug">Bugs <b>@H(sum.BugHours)</b> · @sum.BugPct.ToString("0.#")%</span>
+                    </div>
+                    <div class="cp-team-foot">
+                        Actual @H(sum.ActualCapacity)
+                        @if (IsAi) { <span title="Hours on carved-out tags, taken off before the over-plan % is applied"> · carved out @H(sum.ExcludedHours) · AI +@H(sum.AiHours)</span> }
+                        @if (sum.MembersAcrossTeams > 0 && s != PlanningScope.All)
+                        {
+                            <span class="cp-cross" title="These members also have work in the other team, and each team view counts their whole capacity">
+                                · @sum.MembersAcrossTeams shared
+                            </span>
+                        }
+                    </div>
+                </button>
+            }
+        </div>
+
+        <div class="gpanel" style="margin-bottom:14px;">
+            <div class="phead">
+                <span class="ptitle">📦 Deliverable vs Non-Deliverable · @ScopeName(scope)</span>
+                <span style="font-size:.62rem;color:var(--muted);">Tag rules first, then the parent's "@settings.DeliverableMarkerTag" / "@settings.NonDeliverableMarkerTag" tag</span>
+            </div>
+            <div class="pbody" style="display:flex;flex-direction:column;gap:12px;">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <span style="font-size:.66rem;font-weight:600;color:var(--muted2);">Count as Deliverable:</span>
+                    @foreach (var rule in settings.TagRules)
+                    {
+                        <button type="button" class="btn-sm @(rule.Deliverable ? "btn-sm-active" : "")" @onclick="() => ToggleTagDeliverable(rule.Tag)"
+                                title="Click to count @rule.Tag work as @(rule.Deliverable ? "Non-Deliverable" : "Deliverable")">
+                            @rule.Tag · @(rule.Deliverable ? "Deliverable" : "Non-Deliverable")
+                        </button>
+                    }
+                    @if (settings.TagRules.Count == 0)
+                    {
+                        <span style="font-size:.64rem;color:var(--muted);">No tag rules — add them under ⚙ Settings.</span>
+                    }
+                </div>
+                @if (Summary.Split.Total > 0)
+                {
+                    <div>
+                        <div style="display:flex;gap:18px;font-size:.72rem;margin-bottom:7px;flex-wrap:wrap;">
+                            <span class="cp-del" style="font-weight:700;">● Deliverable @H(Summary.Split.DeliverableHours) (@Summary.Split.DeliverablePct.ToString("0.#")%)</span>
+                            <span class="cp-non" style="font-weight:700;">● Non-Deliverable @H(Summary.Split.NonDeliverableHours) (@Summary.Split.NonDeliverablePct.ToString("0.#")%)</span>
+                            @if (Summary.Split.OtherHours > 0)
+                            {
+                                <span class="cp-unt">● Untagged @H(Summary.Split.OtherHours) (@Summary.Split.OtherPct.ToString("0.#")%)</span>
+                            }
+                        </div>
+                        <div class="deliv-bar">
+                            <div class="deliv-seg deliv-del" style="width:@(Css(Summary.Split.DeliverablePct))%;"></div>
+                            <div class="deliv-seg deliv-non" style="width:@(Css(Summary.Split.NonDeliverablePct))%;"></div>
+                            <div class="deliv-seg deliv-other" style="width:@(Css(Summary.Split.OtherPct))%;"></div>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <div style="font-size:.7rem;color:var(--muted);">No estimated hours to classify for this team.</div>
+                }
+            </div>
+        </div>
+
+        <div class="gpanel" style="margin-bottom:14px;">
+            <div class="phead">
+                <span class="ptitle">@(view == PanelView.Progress ? "📈 Sprint progress" : "📊 Planning by member") · @ScopeName(scope)</span>
+                <div style="display:flex;align-items:center;gap:12px;">
+                    <span style="font-size:.64rem;color:var(--muted);">@HeaderSummary</span>
+                    <div class="cm-seg">
+                        <button type="button" class="cm-seg-btn @(view == PanelView.Planning ? "on" : "")" @onclick="() => view = PanelView.Planning"
+                                title="Capacity, over-plan and planned hours per member">Planning</button>
+                        <button type="button" class="cm-seg-btn @(view == PanelView.Progress ? "on" : "")" @onclick="() => view = PanelView.Progress"
+                                title="Completed and remaining work against the plan, with bug hours kept apart">Progress</button>
+                    </div>
+                </div>
+            </div>
+            <div class="pbody" style="overflow-x:auto;padding:14px 16px;">
+                @if (Rows.Count == 0)
+                {
+                    <div class="tbl-empty">No tasks in this sprint belong to the @ScopeName(scope).</div>
+                }
+                else
+                {
+                    <CapacityPlanningTable Rows="@Rows" Summary="@Summary" Settings="@settings" ScopeName="@ScopeName(scope)"
+                                           ShowProgress="@(view == PanelView.Progress)" OnBreakdown="m => breakdown = m" />
+                }
+            </div>
+        </div>
+
+        <details class="gpanel cp-formula">
+            <summary>ƒ How the numbers are worked out</summary>
+            <div class="cp-formula-body">
+                <div><span>Sprint days</span><code>@SprintDaysExplanation</code></div>
+                <div><span>Leave</span><code>member days off + team days off, on working days inside the sprint</code></div>
+                <div><span>Actual</span><code>(sprint days − leave) × capacity per day — @CapacityPerDayExplanation</code></div>
+                @if (IsAi)
+                {
+                    <div><span>AI hours</span><code>max(0, Actual − carved-out hours) × @OverPlanLabel — carved out: @ExcludedTagsLabel</code></div>
+                    <div><span>Target</span><code>Actual + AI hours</code></div>
+                }
+                else
+                {
+                    <div><span>Target</span><code>Actual — Regular mode plans to capacity, so no over-plan is added</code></div>
+                }
+                <div><span>Planning %</span><code>Planned (revised estimate, else original) ÷ Target</code></div>
+                <div><span>Deliverable %</span><code>Deliverable hours ÷ planned hours — first matching tag rule, else the parent's "@settings.DeliverableMarkerTag" tag</code></div>
+                <div><span>Completed %</span><code>Completed Work on non-bug tasks ÷ planned hours — bug resolution is never counted as progress</code></div>
+                <div><span>Remaining %</span><code>Remaining Work on non-bug tasks ÷ planned hours</code></div>
+                <div><span>Bugs %</span><code>Completed Work on bug work ÷ all Completed Work — bug work is a Bug, a task under a Bug, or a task tagged "@BugWork.MaintenanceTag"</code></div>
+                <div><span>Expected</span><code>available days already elapsed ÷ available days — today counts once it is over; leave comes off both sides</code></div>
+                <div><span>Teams</span><code>Development = @string.Join(", ", settings.DevDisciplines) · QA = @string.Join(", ", settings.QaDisciplines) · Entire = every discipline</code></div>
+            </div>
+        </details>
+    }
+</div>
+
+@if (breakdown != null)
+{
+    <div class="modal-overlay" @onclick="() => breakdown = null">
+        <div class="modal" style="max-width:460px;" @onclick:stopPropagation>
+            <h3>Capacity breakdown — @breakdown.DisplayName</h3>
+            <div class="modal-body">
+                <div class="modal-row"><span class="label">Cap / day</span><span>@breakdown.CapacityPerDay.ToString("0.##") h @(breakdown.CapacityFromTfs ? "(TFS)" : "(default)")</span></div>
+                <div class="modal-row"><span class="label">Sprint days</span><span>@breakdown.SprintDays − @breakdown.LeaveDays.ToString("0.##") leave = @breakdown.AvailableDays.ToString("0.##")</span></div>
+                <div class="modal-row"><span class="label">Actual</span><span style="font-weight:700;">@breakdown.ActualCapacity.ToString("0.##") h</span></div>
+                @if (IsAi)
+                {
+                    <hr class="cp-rule" />
+                    @foreach (var ex in breakdown.ExcludedByTag)
+                    {
+                        <div class="modal-row"><span class="label">@ex.Tag</span><span>− @ex.Hours.ToString("0.##") h</span></div>
+                    }
+                    <div class="modal-row"><span class="label">AI @OverPlanLabel</span><span>(@breakdown.ActualCapacity.ToString("0.##") − @breakdown.ExcludedHours.ToString("0.##")) × @OverPlanLabel = + @breakdown.AiHours.ToString("0.##") h</span></div>
+                }
+                <div class="modal-row"><span class="label">Target</span><span style="font-weight:700;color:var(--purple);">@breakdown.TargetCapacity.ToString("0.##") h</span></div>
+                <hr class="cp-rule" />
+                <div class="modal-row"><span class="label">Planned · Plan</span><span>@breakdown.PlannedPlanningDay.ToString("0.##") h (@breakdown.PlanningPctPlanningDay.ToString("0.#")%)</span></div>
+                <div class="modal-row"><span class="label">Planned · Review</span><span style="font-weight:700;color:var(--accent2);">@breakdown.PlannedReviewDay.ToString("0.##") h (@breakdown.PlanningPctReviewDay.ToString("0.#")%)</span></div>
+                <hr class="cp-rule" />
+                <div class="modal-row"><span class="label">Deliverable</span><span class="cp-del" style="font-weight:700;">@breakdown.Split.DeliverableHours.ToString("0.##") h (@breakdown.Split.DeliverablePct.ToString("0.#")%)</span></div>
+                <div class="modal-row"><span class="label">Non-Deliverable</span><span class="cp-non">@breakdown.Split.NonDeliverableHours.ToString("0.##") h (@breakdown.Split.NonDeliverablePct.ToString("0.#")%)</span></div>
+                @if (breakdown.Split.OtherHours > 0)
+                {
+                    <div class="modal-row"><span class="label">Untagged</span><span class="cp-unt">@breakdown.Split.OtherHours.ToString("0.##") h (@breakdown.Split.OtherPct.ToString("0.#")%)</span></div>
+                }
+                <hr class="cp-rule" />
+                <div class="modal-row"><span class="label">Completed</span><span style="font-weight:700;">@breakdown.CompletedHours.ToString("0.##") h (@breakdown.CompletedPct.ToString("0.#")% of plan@(ExpectedSuffix(breakdown.ExpectedPct)))</span></div>
+                <div class="modal-row"><span class="label">Remaining</span><span>@breakdown.RemainingHours.ToString("0.##") h (@breakdown.RemainingPct.ToString("0.#")%)</span></div>
+                <div class="modal-row"><span class="label">Bugs</span><span class="cp-bug">@breakdown.BugHours.ToString("0.##") h (@breakdown.BugPct.ToString("0.#")% of logged time)</span></div>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn-ghost" @onclick="() => breakdown = null">Close</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (settingsOpen)
+{
+    <CapacityPlanningSettingsDialog Settings="@settings" ObservedTags="@plan.ObservedTags" ObservedDisciplines="@ObservedDisciplines"
+                                    OnSave="OnSettingsSaved" OnClose="() => settingsOpen = false" />
+}
+
+@code {
+    private static readonly PlanningScope[] Scopes = { PlanningScope.Development, PlanningScope.Qa, PlanningScope.All };
+
+    private enum PanelView { Planning, Progress }
+
+    [Parameter] public TfsArea? Area { get; set; }
+    [Parameter] public string? Sprint { get; set; }
+
+    /// <summary>The page's shared area and sprint pickers, rendered at the start of the bar.</summary>
+    [Parameter] public RenderFragment? Selectors { get; set; }
+
+    private CapacityPlanningSettings settings = new();
+    private SprintWorkData work = SprintWorkData.Empty;
+    private CapacityPlan plan = CapacityPlan.Empty;
+
+    // Development first: it is what the tab always opened on.
+    private PlanningScope scope = PlanningScope.Development;
+    private PanelView view = PanelView.Planning;
+    private bool loading, settingsOpen;
+    private string? loadError;
+    private MemberPlanning? breakdown;
+    private CancellationTokenSource? loadCts;
+
+    private bool IsAi => settings.Mode == PlanningMode.AiOverPlan;
+    private IReadOnlyList<MemberPlanning> Rows => plan.For(scope);
+    private TeamPlanningSummary Summary => plan.SummaryFor(scope);
+    private string OverPlanLabel => $"{settings.AiOverPlanPercent:0.##}%";
+
+    protected override void OnInitialized() => settings = Settings.CapacityPlanning;
+
+    // ─── Loading ───
+
+    private async Task LoadPlanning()
+    {
+        if (Area == null || string.IsNullOrEmpty(Sprint)) return;
+
+        CancellationSources.CancelAndDispose(ref loadCts);
+        loadCts = new CancellationTokenSource();
+        var ct = loadCts.Token;
+        var area = Area;
+        var sprint = Sprint;
+
+        loading = true; loadError = null; breakdown = null;
+        StateHasChanged();
+        try
+        {
+            var iterPath = TfsApiService.ToWiqlPath(sprint);
+            var areaPath = TfsApiService.ToWiqlPath(area.Path);
+
+            // Tasks and team capacity are independent, so they load side by side. WhenAll first, so
+            // a failure in one never leaves the other's exception unobserved.
+            var tasksTask = TfsApi.LoadTasksForCapacityAsync(area.Project, areaPath, iterPath, ct);
+            var capTask = TfsApi.GetSprintCapacityAsync(area.Project, iterPath, ct);
+            await Task.WhenAll(tasksTask, capTask);
+            var tasks = await tasksTask;
+            var cap = await capTask;
+
+            var parentIds = tasks.Select(t => t.ParentId).Where(p => !string.IsNullOrEmpty(p)).Distinct();
+            var parents = await TfsApi.GetParentsAsync(area.Project, parentIds, ct);
+
+            work = new SprintWorkData(tasks, cap, parents);
+            Recompute();
+            if (work.Tasks.Count == 0) loadError = "No tasks found for this area and sprint.";
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Superseded by a newer Load, or the tab was left — either way nothing to show.
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Capacity planning load failed for {Area} / {Sprint}", area.Path, sprint);
+            loadError = $"Load failed: {ex.Message}";
+        }
+        finally
+        {
+            if (!ct.IsCancellationRequested)
+            {
+                loading = false;
+                StateHasChanged();
+            }
+        }
+    }
+
+    private void Recompute() =>
+        plan = work.Tasks.Count == 0 ? CapacityPlan.Empty : PlanningCapacityCalculator.Build(work, settings, DateTime.Today);
+
+    // ─── Settings ───
+
+    /// <summary>Persists a settings change and re-reads it, so the page shows exactly what was stored.</summary>
+    private void ApplySettings(CapacityPlanningSettings next)
+    {
+        Settings.SaveCapacityPlanning(next);
+        settings = Settings.CapacityPlanning;
+        breakdown = null;
+        Recompute();
+    }
+
+    private void SetMode(PlanningMode mode)
+    {
+        if (settings.Mode == mode) return;
+        var next = settings.Clone();
+        next.Mode = mode;
+        ApplySettings(next);
+    }
+
+    private void ToggleTagDeliverable(string tag)
+    {
+        var next = settings.Clone();
+        var rule = next.TagRules.Find(r => string.Equals(r.Tag, tag, StringComparison.OrdinalIgnoreCase));
+        if (rule == null) return;
+        rule.Deliverable = !rule.Deliverable;
+        ApplySettings(next);
+    }
+
+    private void OnSettingsSaved(CapacityPlanningSettings next)
+    {
+        settingsOpen = false;
+        ApplySettings(next);
+    }
+
+    private IReadOnlyList<string> ObservedDisciplines => work.Tasks
+        .Select(t => t.Discipline)
+        .Where(d => !string.IsNullOrWhiteSpace(d))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(d => d, StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    // ─── Explanations ───
+
+    /// <summary>Explains a gap in what TFS returned, in terms of what the plan did instead.</summary>
+    private string? CapacityNotice
+    {
+        get
+        {
+            if (work.Tasks.Count == 0 || loading) return null;
+            if (work.Capacity.Members.Count == 0)
+                return $"No member capacity is configured in TFS for this sprint, so everyone uses the default {settings.HoursPerDay:0.##} h a day and personal leave can't be deducted.";
+            if (settings.SprintLength == SprintLengthSource.IterationDates && !plan.SprintDaysFromIteration)
+                return $"This iteration has no start/finish dates in TFS, so the sprint is taken as {settings.SprintWeeks} week(s) — {plan.SprintDays} working days, and progress can't be compared with elapsed time.";
+            return null;
+        }
+    }
+
+    private string HeaderSummary
+    {
+        get
+        {
+            if (view == PanelView.Planning)
+                return $"Sprint days: {plan.SprintDays} · Σ Planned: {H(Summary.PlannedReviewDay)} · Σ Target: {H(Summary.TargetCapacity)}";
+
+            return plan.ElapsedDays is { } elapsed
+                ? $"{elapsed} of {plan.SprintDays} working days elapsed ({plan.ElapsedPct:0.#}%) · Σ Completed: {H(Summary.CompletedHours)} · Σ Bugs: {H(Summary.BugHours)}"
+                : $"Sprint dates unknown · Σ Completed: {H(Summary.CompletedHours)} · Σ Bugs: {H(Summary.BugHours)}";
+        }
+    }
+
+    private string SprintDaysExplanation
+    {
+        get
+        {
+            var days = string.Join(", ", settings.WorkingDays.Select(d => d.ToString()[..3]));
+            if (plan.SprintDaysFromIteration && work.Capacity.Start is { } start && work.Capacity.Finish is { } finish)
+                return $"{plan.SprintDays} — working days ({days}) from {start:dd MMM yyyy} to {finish:dd MMM yyyy}, from the TFS iteration";
+            return $"{plan.SprintDays} — {settings.SprintWeeks} week(s) × {settings.DaysPerWeek} working days ({days})";
+        }
+    }
+
+    private string CapacityPerDayExplanation => settings.UseTfsMemberCapacity
+        ? $"the member's TFS capacity, else {settings.HoursPerDay:0.##} h"
+        : $"{settings.HoursPerDay:0.##} h for everyone";
+
+    private string ExcludedTagsLabel
+    {
+        get
+        {
+            var tags = settings.TagRules.Where(r => r.ExcludeFromOverPlan).Select(r => r.Tag).ToList();
+            return tags.Count == 0 ? "nothing" : string.Join(", ", tags);
+        }
+    }
+
+    private static string ScopeName(PlanningScope s) => s switch
+    {
+        PlanningScope.Development => "Development team",
+        PlanningScope.Qa => "QA team",
+        _ => "Entire team"
+    };
+
+    private string ScopeTitle(PlanningScope s) => s switch
+    {
+        PlanningScope.Development => $"Tasks with discipline {string.Join(" / ", settings.DevDisciplines)} — click to show this team",
+        PlanningScope.Qa => $"Tasks with discipline {string.Join(" / ", settings.QaDisciplines)} — click to show this team",
+        _ => "Every task in the sprint — click to show everyone"
+    };
+
+    private static string ExpectedSuffix(double? expected) => expected is { } e ? $" · expected {e:0.#}%" : "";
+
+    private static string H(double hours) => $"{hours:0.##} h";
+
+    private static string Css(double v) => v.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    private static string PctClass(double pct) => pct < 90 ? "pct-under" : pct > 110 ? "pct-over" : "pct-ok";
+
+    public void Dispose() => CancellationSources.CancelAndDispose(ref loadCts);
+}

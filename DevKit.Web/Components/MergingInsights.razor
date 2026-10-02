@@ -1,0 +1,305 @@
+@* The sheet at a glance, as one band under the filters: what the grid shows, how the work items split
+   by merge state (each chip filters the grid to its state), how far the code comparison has got, and
+   how the verdicts are reached. It replaces a row of cards and a paragraph, so the grid keeps the room. *@
+
+<div class="cm-ins">
+    <div class="cm-ins-seg" title="What the grid below is showing">
+        <span class="cm-ins-stat"><b>@VisibleRows.Count</b><span class="cm-ins-of">@OfScope</span> work items</span>
+        <span class="cm-ins-stat"><b class="cm-ins-acc">@prs</b> PRs</span>
+        <span class="cm-ins-stat"><b class="cm-ins-acc">@commits</b> commits</span>
+        <span class="cm-ins-stat"><b>@withPrs</b><span class="cm-ins-of">/@VisibleRows.Count</span> with PRs</span>
+    </div>
+
+    <span class="cm-ins-div" aria-hidden="true"></span>
+
+    @if (Bundle.TargetBranchName is not null)
+    {
+        <div class="cm-ins-seg">
+            @if (mergedShare is { } share)
+            {
+                <b class="cm-ins-pct" title="@share.Tooltip">@share.Percent%</b>
+            }
+            <div class="cm-ins-bar" role="img" aria-label="@barLabel" title="@barLabel">
+                @foreach (var chip in StateChips)
+                {
+                    var n = CountOf(chip.State);
+                    if (n > 0)
+                    {
+                        <span class="cm-ins-bar-seg cm-st-@chip.Css" style="flex-grow:@n"></span>
+                    }
+                }
+            </div>
+            @foreach (var chip in StateChips.Where(Shown))
+            {
+                var active = Filter.MergeState == chip.Filter;
+                <button type="button" class="cm-qf cm-st-@chip.Css @(active ? "on" : "")" aria-pressed="@(active ? "true" : "false")"
+                        title="@ChipTooltip(chip, active)" @onclick="() => Toggle(chip.Filter)">
+                    <span class="cm-qf-dot"></span><b>@CountOf(chip.State)</b> @chip.Label
+                    @if (active)
+                    {
+                        <span class="cm-qf-x" aria-hidden="true">✕</span>
+                    }
+                </button>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="cm-ins-seg cm-ins-muted">
+            Not checked yet — <b>Verify All</b> checks the commits, <b>Compare Code</b> the code itself.
+        </div>
+    }
+
+    <span class="cm-ins-div" aria-hidden="true"></span>
+
+    <div class="cm-ins-seg" role="@(Comparing ? "status" : null)" aria-live="@(Comparing ? "polite" : null)">
+        <span class="cm-ins-lbl"><Icon Inner="@Icons.Code" />Code</span>
+        @if (Comparing)
+        {
+            <span class="spin spin-sm"></span>
+            <span class="cm-ins-stat"><b>@Progress.PullRequestsDone</b><span class="cm-ins-of">/@Progress.PullRequestsTotal</span> PRs</span>
+            @if (Progress.FilesKnown > 0)
+            {
+                <span class="cm-ins-stat"><b>@Progress.FilesDone.ToString("N0")</b><span class="cm-ins-of">/@Progress.FilesKnown.ToString("N0")</span> files</span>
+            }
+            <span class="cm-ins-meter"><span style="width:@(Progress.Percent)%"></span></span>
+            <b class="cm-ins-pct cm-ins-acc">@Progress.Percent%</b>
+            @if (Progress.Remaining is { } left)
+            {
+                <span class="cm-ins-muted">about @Duration(left) left</span>
+            }
+            <span class="cm-ins-now" title="@NowText">@NowText</span>
+        }
+        else if (comparedPrs > 0)
+        {
+            <span class="cm-ins-stat"><b>@comparedPrs</b><span class="cm-ins-of">/@scopePrs</span> PRs compared</span>
+            @if (codeIssues > 0 || CodeIssuesActive)
+            {
+                <button type="button" class="cm-qf cm-st-warn @(CodeIssuesActive ? "on" : "")" aria-pressed="@(CodeIssuesActive ? "true" : "false")"
+                        title="@(CodeIssuesActive ? "Showing only these — click to show every work item again" : "Pull requests whose code is missing, partly merged, too large for the run or could not be compared — click to show only their work items")"
+                        @onclick="() => Toggle(MergingSheetFilter.CodeIssues)">
+                    <Icon Inner="@Icons.AlertTriangle" /><b>@codeIssues</b> need a look
+                    @if (CodeIssuesActive)
+                    {
+                        <span class="cm-qf-x" aria-hidden="true">✕</span>
+                    }
+                </button>
+            }
+            else
+            {
+                <span class="cm-qf cm-qf-static cm-st-ok" title="The code of every compared pull request is on the branch">
+                    <Icon Inner="@Icons.CheckCircle" />all present
+                </span>
+            }
+            @if (codeLost > 0)
+            {
+                <span class="cm-qf cm-qf-static cm-st-bad"
+                      title="Pull requests whose commits are all on the branch but whose code is not — the case a commit check alone reports as merged. Usually code dropped while resolving a conflict. Their rows carry the same mark.">
+                    <Icon Inner="@Icons.AlertTriangle" /><b>@codeLost</b> code lost
+                </span>
+            }
+            @* A finished run's summary lives in the How it's checked panel; only a stopped one is worth the room. *@
+            @if (Bundle.LastCodeCompare is { Stopped: true } run)
+            {
+                <span class="cm-ins-muted cm-ins-warn" title="@RunSummaryText(run)">stopped after @Duration(run.Elapsed)</span>
+            }
+        }
+        else
+        {
+            <span class="cm-ins-muted">not compared yet</span>
+        }
+    </div>
+
+    <Popover Open="@infoOpen" OpenChanged="@(open => infoOpen = open)" CssClass="cm-ins-help"
+             PanelClass="cm-ins-pop" Label="How the merge state is decided">
+        <Trigger>
+            <button type="button" class="cm-ins-info @(infoOpen ? "on" : "")" aria-expanded="@(infoOpen ? "true" : "false")"
+                    title="How the merge state is decided" @onclick="() => infoOpen = !infoOpen">
+                <Icon Inner="@Icons.HelpCircle" /><span>How it's checked</span>
+            </button>
+        </Trigger>
+        <ChildContent>
+            <h3 class="cm-pop-h">How the merge state is decided</h3>
+            <section class="cm-pop-sec">
+                <h4><Icon Inner="@Icons.GitCommit" />Commits <em>· Verify All</em></h4>
+                @if (Bundle.TargetBranchName is not null)
+                {
+                    @if (Bundle.ScannedCommitCount == 0)
+                    {
+                        <p>Commits are checked against <b>@Bundle.VerifiedBranchSummary</b> by <b>Verify All</b>.</p>
+                    }
+                    else if (Bundle.ScannedFrom.HasValue)
+                    {
+                        <p>
+                            Verified against <b>every</b> commit on <b>@Bundle.VerifiedBranchSummary</b> since
+                            <b>@Bundle.ScannedFrom.Value.ToString("dd MMM yy")</b> — the date of the oldest commit
+                            being checked, so nothing that could carry this work falls outside the scan.
+                            @Bundle.ScannedCommitCount.ToString("N0") commits were read in the busiest repository.
+                        </p>
+                    }
+                    else
+                    {
+                        <p>
+                            Verified against the most recent <b>@Bundle.ScannedCommitCount.ToString("N0")</b> commits of
+                            <b>@Bundle.VerifiedBranchSummary</b>, per repository.
+                        </p>
+                    }
+                }
+                <p>
+                    A commit counts as on the branch when it is there itself, as a cherry-pick naming it
+                    (<code>-x</code>), or as a copy with the same author and author time — so a cherry-pick whose
+                    message was changed while fixing a conflict still matches. A message alone counts only when it
+                    is long, unique on the branch and not shared by two commits here; a later <code>Revert</code>
+                    flips a commit to <i>rolled back</i>.
+                </p>
+                @if (Bundle.CommitWindowCapped)
+                {
+                    <p>
+                        The scan reached its <b>@MergeVerificationService.CommitWindow.ToString("N0")</b>-commit cap,
+                        so up to <b>@MergeVerificationService.BeyondWindowProbeLimit</b> of the commits still missing were then
+                        looked up on the branch one by one; any beyond that can still read as <i>not merged</i>.
+                    </p>
+                }
+            </section>
+            <section class="cm-pop-sec">
+                <h4><Icon Inner="@Icons.Code" />Code <em>· Compare Code</em></h4>
+                <p>
+                    <b>Commits being there does not prove the code is</b> — <b>Compare Code</b> checks the code itself:
+                    each pull request's own change on QA, file by file and line by line (whitespace and blank lines
+                    ignored), against the branch as it is now. Once a pull request's code is compared, that is what
+                    <i>Merged</i> counts.
+                </p>
+                <p>
+                    The sprint-wide run skips pull requests that change more than
+                    <b>@SprintLimits.MaxFilesPerPullRequest.ToString("N0")</b> files — check those with the
+                    <Icon Inner="@Icons.Code" CssClass="cc-inline-ic" /> button on the pull request, which allows far more.
+                    Binary files and files over @SprintLimits.MaxTextMegabytes MB are compared by content id only.
+                </p>
+                @if (Bundle.LastCodeCompare is { } lastRun)
+                {
+                    <p class="cm-pop-run"><b>Last run</b> · @RunSummaryText(lastRun)</p>
+                }
+            </section>
+        </ChildContent>
+    </Popover>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public CodeMergingBundle Bundle { get; set; } = new();
+    [Parameter, EditorRequired] public MergingSheetFilter Filter { get; set; } = new();
+
+    /// <summary>The rows the grid shows.</summary>
+    [Parameter, EditorRequired] public IReadOnlyList<RequirementMergingRow> VisibleRows { get; set; } = Array.Empty<RequirementMergingRow>();
+
+    /// <summary>
+    /// The rows every filter but the merge state lets through. The merge-state and code chips count these,
+    /// so choosing one state leaves the others' numbers in view to switch to.
+    /// </summary>
+    [Parameter, EditorRequired] public IReadOnlyList<RequirementMergingRow> ScopeRows { get; set; } = Array.Empty<RequirementMergingRow>();
+
+    [Parameter] public bool Comparing { get; set; }
+    [Parameter] public CodeCompareProgress Progress { get; set; }
+
+    /// <summary>Raised with the merge-state filter value a chip asks for; empty clears the filter.</summary>
+    [Parameter] public EventCallback<string> OnMergeStateChanged { get; set; }
+
+    private static readonly CodeCompareLimits SprintLimits = CodeCompareLimits.For(CodeCompareScope.Sprint);
+
+    /// <param name="Core">Shown even at zero, so the three outcomes everyone looks for never move about.</param>
+    private sealed record StateChip(MergeRollup State, string Filter, string Label, string Css, bool Core, string Meaning);
+
+    private static readonly StateChip[] StateChips =
+    {
+        new(MergeRollup.Merged, MergingSheetFilter.Merged, "Merged", "ok", true, "every checked pull request reached the branch"),
+        new(MergeRollup.Partial, MergingSheetFilter.Partial, "Partial", "warn", true, "some of their code reached the branch"),
+        new(MergeRollup.NotMerged, MergingSheetFilter.NotMerged, "Not merged", "bad", true, "nothing of theirs was found on the branch"),
+        new(MergeRollup.RolledBack, MergingSheetFilter.RolledBack, "Rolled back", "back", false,
+            "their code reached the branch and was reverted off it again — a regression to chase, not work still to merge"),
+        new(MergeRollup.NotChecked, MergingSheetFilter.Unchecked, "Not checked", "none", false, "no completed pull request of theirs has been checked yet"),
+        new(MergeRollup.NoPullRequests, MergingSheetFilter.NoPrs, "No PRs", "nopr", false, "no pull request was found for them")
+    };
+
+    private Dictionary<MergeRollup, int> byState = new();
+    private int prs, commits, withPrs, scopePrs, comparedPrs, codeIssues, codeLost, mergedPrs, notMergedPrs, rolledBackCommits;
+    private (int Percent, string Tooltip)? mergedShare;
+    private string barLabel = "";
+    private bool infoOpen;
+
+    /// <summary>"/43" once a merge-state filter hides some of the rows, so the count says what it is out of.</summary>
+    private string OfScope => VisibleRows.Count != ScopeRows.Count ? $"/{ScopeRows.Count}" : "";
+    private bool CodeIssuesActive => Filter.MergeState == MergingSheetFilter.CodeIssues;
+    private string NowText => Progress.Current.Length > 0 ? $"Now: {Progress.Current}" : "Reading the branches…";
+
+    protected override void OnParametersSet()
+    {
+        prs = Filter.CountPrs(VisibleRows);
+        commits = Filter.CountCommits(VisibleRows);
+        withPrs = Filter.CountWithPrs(VisibleRows);
+
+        byState = Filter.CountByRollup(ScopeRows);
+        scopePrs = Filter.CountPrs(ScopeRows);
+        comparedPrs = Filter.CountCodeCompared(ScopeRows);
+        codeIssues = Filter.CountCodeIssues(ScopeRows);
+        codeLost = Filter.CountCodeLost(ScopeRows);
+        mergedPrs = Filter.CountMergedPrs(ScopeRows);
+        notMergedPrs = Filter.CountNotMergedPrs(ScopeRows);
+        rolledBackCommits = Filter.CountRolledBackCommits(ScopeRows);
+
+        var merged = CountOf(MergeRollup.Merged);
+        var withPullRequests = ScopeRows.Count - CountOf(MergeRollup.NoPullRequests);
+        mergedShare = withPullRequests > 0
+            ? ((int)Math.Round(100.0 * merged / withPullRequests),
+               $"{merged} of the {withPullRequests} work items with pull requests are fully merged")
+            : null;
+
+        var parts = StateChips.Where(c => CountOf(c.State) > 0).Select(c => $"{CountOf(c.State)} {c.Label.ToLowerInvariant()}");
+        barLabel = $"{ScopeRows.Count} work items: {string.Join(" · ", parts)}";
+    }
+
+    private int CountOf(MergeRollup state) => byState.GetValueOrDefault(state);
+
+    private bool Shown(StateChip chip) => chip.Core || CountOf(chip.State) > 0 || Filter.MergeState == chip.Filter;
+
+    private Task Toggle(string state) => OnMergeStateChanged.InvokeAsync(Filter.MergeState == state ? "" : state);
+
+    private string ChipTooltip(StateChip chip, bool active)
+    {
+        var count = CountOf(chip.State);
+        var detail = chip.State switch
+        {
+            MergeRollup.Merged => $" ({mergedPrs} PRs)",
+            MergeRollup.NotMerged => $" ({notMergedPrs} PRs)",
+            MergeRollup.RolledBack => $" ({rolledBackCommits} commits reverted)",
+            _ => ""
+        };
+        var subject = count == 1 ? "1 work item" : $"{count} work items";
+        var action = active ? "Showing only these — click to show every work item again." : "Click to show only these.";
+        return $"{subject}: {chip.Meaning}{detail}. {action}";
+    }
+
+    private static string RunSummaryText(CodeCompareRunSummary run)
+    {
+        var parts = new[]
+            {
+                (run.Present, "present"), (run.Missing, "missing"), (run.Partial, "partly merged"),
+                (run.Unverified, "not fully compared"), (run.Skipped, "skipped"),
+                (run.TooLarge, "too large for this run — check those on their own"), (run.Failed, "failed")
+            }
+            .Where(p => p.Item1 > 0)
+            .Select(p => $"{p.Item1} {p.Item2}");
+        var subject = run.PullRequests == 1 ? "1 pull request" : $"{run.PullRequests} pull requests";
+        var text = $"Compared the code of {subject} ({run.Files:N0} files) in {Duration(run.Elapsed)}: {string.Join(" · ", parts)}.";
+        return run.Stopped ? text + " Stopped before the end — the rest keep their earlier result." : text;
+    }
+
+    private static string Duration(TimeSpan span)
+    {
+        if (span.TotalSeconds < 60)
+        {
+            return $"{Math.Max(1, (int)Math.Round(span.TotalSeconds))} s";
+        }
+        return span.TotalMinutes < 60
+            ? $"{(int)span.TotalMinutes} min {span.Seconds} s"
+            : $"{(int)span.TotalHours} h {span.Minutes} min";
+    }
+}

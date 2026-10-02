@@ -1,7 +1,8 @@
 @page "/settings"
 @inject SettingsService SettingsSvc
 @inject TfsApiService TfsApi
-@inject ILogger<SettingsService> Logger
+@inject BranchCacheService BranchCache
+@inject ILogger<Settings> Logger
 
 <div style="flex:1;display:flex;flex-direction:column;max-width:800px;margin:0 auto;overflow-y:auto;width:100%;padding-bottom:20px;">
     <div class="gpanel">
@@ -80,6 +81,64 @@
                                    OnChange="OnDefaultRepoChange" />
                 </div>
             </div>
+
+            <hr style="border:none;border-top:1px solid rgba(255,255,255,.05);margin:20px 0;" />
+
+            <!-- Most-used repositories -->
+            <h3 style="font-size:.82rem;font-weight:700;margin-bottom:6px;color:var(--text);">Most-Used Repositories</h3>
+            <p style="font-size:.66rem;color:var(--muted);margin-bottom:10px;">
+                Pin the repositories you work in most often. They appear in a
+                <b>@RepoSelect.MostUsedGroupLabel</b> group at the top of every repository picker in DevKit,
+                in the order you pin them.
+            </p>
+
+            <div style="display:grid;grid-template-columns:150px 1fr;gap:12px;align-items:start;">
+                <div class="f-row">
+                    <div class="f-label">How many</div>
+                    <GlassDropdown CssClass="fi-size"
+                                   Value="@mostUsedCount.ToString()"
+                                   ShowEmptyOption="false"
+                                   Placeholder="— Off —"
+                                   Options="@MostUsedCountOptions"
+                                   OnChange="OnMostUsedCountChange" />
+                </div>
+                <div class="f-row">
+                    <div class="f-label">
+                        Pinned repositories
+                        @if (mostUsedCount > 0)
+                        {
+                            <span style="font-size:.52rem;color:var(--muted);font-weight:400;">@mostUsedRepoIds.Count of @mostUsedCount used</span>
+                        }
+                    </div>
+                    <MultiSelectDropdown Options="@AllRepoOptions" Selected="@mostUsedSelection"
+                                         SelectedChanged="OnMostUsedReposChanged" ItemNoun="repository"
+                                         Disabled="@(mostUsedCount == 0 || repos.Count == 0)"
+                                         Placeholder="@(mostUsedCount == 0 ? "— Turned off —" : "— Select repositories —")"
+                                         SearchPlaceholder="Search repositories…" />
+                </div>
+            </div>
+
+            @* Repositories load after the first render, so the chips wait for names rather than
+               flashing "(unknown repository)" for every pin. *@
+            @if (mostUsedRepoIds.Count > 0 && repos.Count > 0)
+            {
+                <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;">
+                    @for (var i = 0; i < mostUsedRepoIds.Count; i++)
+                    {
+                        var repoId = mostUsedRepoIds[i];
+                        var position = i + 1;
+                        <span class="chip chip-cyan" style="display:inline-flex;align-items:center;gap:6px;font-size:.6rem;" @key="repoId">
+                            <span style="opacity:.6;">@position</span>
+                            @MostUsedRepoLabel(repoId)
+                            <button class="bpk-clear" title="Unpin" @onclick="() => UnpinMostUsedRepo(repoId)">✕</button>
+                        </span>
+                    }
+                </div>
+            }
+            @if (!string.IsNullOrEmpty(mostUsedMsg))
+            {
+                <div style="margin-top:8px;font-size:.64rem;color:var(--amber);">⚠ @mostUsedMsg</div>
+            }
 
             <hr style="border:none;border-top:1px solid rgba(255,255,255,.05);margin:20px 0;" />
 
@@ -165,222 +224,72 @@
                     Total: @localRepos.Count repo(s)
                 </div>
             }
+
+            <hr style="border:none;border-top:1px solid rgba(255,255,255,.05);margin:20px 0;" />
+
+            <!-- Code Merging branch defaults -->
+            <h3 style="font-size:.82rem;font-weight:700;margin-bottom:6px;color:var(--text);">Code Merging Branches</h3>
+            <p style="font-size:.66rem;color:var(--muted);margin-bottom:10px;">
+                Per-repository defaults for the Code Merging Sheet. <b>QA branch</b> is where developers merge their
+                pull requests — it decides which PRs the sheet shows. <b>Merging target</b> is the release branch those
+                commits have to reach, and is what verification checks against. Both can be overridden per session on
+                the sheet itself.
+            </p>
+
+            <div class="cfg-field" style="max-width:320px;margin-bottom:12px;">
+                <label class="cfg-label">🔍 Filter repositories</label>
+                <input class="cfg-fi" placeholder="Name or project…" value="@repoBranchFilter" @oninput="OnRepoBranchFilter" />
+            </div>
+
+            @if (repos.Count == 0)
+            {
+                <div class="tbl-empty">Connect to TFS above to configure repository branches.</div>
+            }
+            else if (BranchRepos.Count == 0)
+            {
+                <div class="tbl-empty">No repositories match “@repoBranchFilter”.</div>
+            }
+            else
+            {
+                <table class="repo-path-table">
+                    <thead>
+                        <tr>
+                            <th style="width:34%;">Repository</th>
+                            <th style="width:33%;">QA branch</th>
+                            <th style="width:33%;">Merging target</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var repo in BranchRepos)
+                        {
+                            var saved = SettingsSvc.GetRepoBranches(repo.Id);
+                            <tr @key="repo.Id">
+                                <td>
+                                    <div style="font-weight:700;">@repo.Name</div>
+                                    <div style="font-size:.6rem;color:var(--muted);">@repo.Project</div>
+                                </td>
+                                <td>
+                                    <BranchPicker Branches="@BranchesFor(repo.Id)" Value="@saved.QaBranch"
+                                                  ValueChanged="@(b => OnQaBranchChange(repo.Id, b))"
+                                                  OnOpened="@(() => LoadBranchesFor(repo))"
+                                                  Loading="@(loadingBranchRepoId == repo.Id)"
+                                                  Placeholder="— All branches —" />
+                                </td>
+                                <td>
+                                    <BranchPicker Branches="@BranchesFor(repo.Id)" Value="@saved.MergingBranch"
+                                                  ValueChanged="@(b => OnMergingBranchChange(repo.Id, b))"
+                                                  OnOpened="@(() => LoadBranchesFor(repo))"
+                                                  Loading="@(loadingBranchRepoId == repo.Id)"
+                                                  Placeholder="— None —" />
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                <div style="margin-top:6px;font-size:.6rem;color:var(--muted);">
+                    @ConfiguredBranchCount of @repos.Count repositories configured@(BranchRepos.Count < repos.Count ? $" · showing {BranchRepos.Count}" : "")
+                </div>
+            }
         </div>
     </div>
 </div>
-
-@code {
-    private string tfsUrl = "";
-    private string tfsPat = "";
-    private string defaultProjectPath = "";
-    private string defaultAreaPath = "";
-    private string defaultSprint = "";
-    private string defaultRepoId = "";
-    private string teamName = "";
-    private bool saving, testing;
-    private string statusMsg = "";
-    private bool statusOk;
-    private string scanMsg = "";
-    private bool scanOk;
-    private List<TfsRepo> repos = new();
-    private List<TfsArea> areas = new();
-    private List<TfsIteration> iterations = new();
-    private List<LocalRepoInfo> localRepos = new();
-
-    protected override async Task OnInitializedAsync()
-    {
-        tfsUrl = SettingsSvc.Tfs.Url;
-        tfsPat = SettingsSvc.Tfs.Pat;
-        defaultProjectPath = SettingsSvc.DefaultProjectPath;
-        defaultAreaPath = SettingsSvc.DefaultAreaPath;
-        defaultSprint = SettingsSvc.DefaultSprint;
-        defaultRepoId = SettingsSvc.DefaultRepoId;
-        teamName = SettingsSvc.TeamName;
-
-        if (SettingsSvc.IsConfigured)
-        {
-            try
-            {
-                var projects = await TfsApi.GetProjectsAsync();
-                repos = await TfsApi.GetRepositoriesAsync();
-                foreach (var p in projects)
-                {
-                    areas.AddRange(await TfsApi.GetAreasAsync(p.Name));
-                    iterations.AddRange(await TfsApi.GetIterationsAsync(p.Name));
-                }
-            }
-            catch { }
-        }
-
-        // Scan local repos (after TFS repos loaded for matching)
-        localRepos = SettingsSvc.ScanLocalRepos(repos.Count > 0 ? repos : null);
-    }
-
-    private async Task SaveAndConnect()
-    {
-        if (!TryValidateTfsUrl(tfsUrl, out var url, out var urlError))
-        { statusMsg = $"✕ {urlError}"; statusOk = false; return; }
-        if (string.IsNullOrWhiteSpace(tfsPat))
-        { statusMsg = "✕ Personal Access Token is required."; statusOk = false; return; }
-
-        saving = true;
-        statusMsg = "";
-        StateHasChanged();
-        try
-        {
-            SettingsSvc.SaveTfs(url, tfsPat.Trim());
-            await LoadRepos();
-            statusMsg = $"✓ Saved & connected — {repos.Count} repositories found.{InsecureUrlWarning(url)}";
-            statusOk = true;
-        }
-        catch (Exception ex)
-        {
-            statusMsg = $"✕ {ex.Message}";
-            statusOk = false;
-        }
-        saving = false;
-    }
-
-    private async Task TestConnection()
-    {
-        if (!TryValidateTfsUrl(tfsUrl, out var url, out var urlError))
-        { statusMsg = $"✕ {urlError}"; statusOk = false; return; }
-        if (string.IsNullOrWhiteSpace(tfsPat))
-        { statusMsg = "✕ Personal Access Token is required."; statusOk = false; return; }
-
-        testing = true;
-        statusMsg = "";
-        StateHasChanged();
-        try
-        {
-            // Temporarily apply settings for the test
-            SettingsSvc.SaveTfs(url, tfsPat.Trim());
-            var projects = await TfsApi.GetProjectsAsync();
-            repos = await TfsApi.GetRepositoriesAsync();
-            statusMsg = $"✓ Connected — {projects.Count} project(s), {repos.Count} repo(s).{InsecureUrlWarning(url)}";
-            statusOk = true;
-        }
-        catch (Exception ex)
-        {
-            statusMsg = $"✕ Connection failed: {ex.Message}";
-            statusOk = false;
-        }
-        testing = false;
-    }
-
-    private static bool TryValidateTfsUrl(string raw, out string normalized, out string error)
-    {
-        normalized = (raw ?? "").Trim();
-        error = "";
-        if (string.IsNullOrWhiteSpace(normalized))
-        {
-            error = "Server URL is required.";
-            return false;
-        }
-        if (!Uri.TryCreate(normalized, UriKind.Absolute, out var uri)
-            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
-        {
-            error = "Enter a valid http(s) URL, e.g. https://tfs.example.com/tfs/Collection.";
-            return false;
-        }
-        return true;
-    }
-
-    // PAT is sent as HTTP Basic auth; over plain http to a remote host it travels unencrypted.
-    private static string InsecureUrlWarning(string url)
-        => Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttp && !uri.IsLoopback
-            ? "  ⚠ http detected — your PAT is sent unencrypted; prefer https."
-            : "";
-
-    private async Task LoadRepos()
-    {
-        repos = await TfsApi.GetRepositoriesAsync();
-    }
-
-    private string GetRepoPath(string repoId) => SettingsSvc.GetRepoPath(repoId);
-
-    private void OnRepoPathChange(string repoId, ChangeEventArgs e)
-    {
-        SettingsSvc.SetRepoPath(repoId, e.Value?.ToString() ?? "");
-    }
-
-    private void ScanAndApply()
-    {
-        var basePath = defaultProjectPath.Trim().TrimEnd('\\');
-        SettingsSvc.DefaultProjectPath = basePath;
-
-        // Scan for .git folders and read remote URLs
-        localRepos = SettingsSvc.ScanLocalRepos(repos.Count > 0 ? repos : null);
-
-        if (localRepos.Count == 0)
-        {
-            scanMsg = $"⚠ No git repositories found in {basePath}";
-            scanOk = false;
-        }
-        else
-        {
-            var matched = localRepos.Count(r => r.IsMapped);
-            var unmatched = localRepos.Count - matched;
-            // Auto-save mapped paths
-            if (repos.Count > 0) SettingsSvc.AutoMapLocalRepos(repos);
-            scanMsg = $"✓ Found {localRepos.Count} local repo(s) — {matched} mapped to TFS" + (unmatched > 0 ? $", {unmatched} unmatched." : ".");
-            scanOk = true;
-        }
-        StateHasChanged();
-    }
-
-    // ─── Team Name ───
-    private void OnTeamNameChange(ChangeEventArgs e)
-    {
-        teamName = e.Value?.ToString()?.Trim() ?? "";
-        SettingsSvc.TeamName = teamName;
-    }
-
-    // ─── Default Selection Handlers ───
-    private void OnDefaultAreaChange(ChangeEventArgs e)
-    {
-        defaultAreaPath = e.Value?.ToString() ?? "";
-        SettingsSvc.DefaultAreaPath = defaultAreaPath;
-    }
-
-    private void OnDefaultSprintChange(ChangeEventArgs e)
-    {
-        defaultSprint = e.Value?.ToString() ?? "";
-        SettingsSvc.DefaultSprint = defaultSprint;
-    }
-
-    private void OnDefaultRepoChange(ChangeEventArgs e)
-    {
-        defaultRepoId = e.Value?.ToString() ?? "";
-        SettingsSvc.DefaultRepoId = defaultRepoId;
-    }
-
-    private string SerializeArea(TfsArea a) => $"{a.Name}|||{a.Path}|||{a.Project}";
-
-    // ─── Dropdown Data ───
-    private List<GlassDropdown.DropdownGroup> AreaGroups => areas.GroupBy(a => a.Project).Select(grp => new GlassDropdown.DropdownGroup
-    {
-        Label = "📁 " + grp.Key,
-        Options = grp.Select(a => new GlassDropdown.DropdownOption { Value = SerializeArea(a), Label = grp.Key + " — " + TfsApiService.AreaDisplayPath(a.Path) }).ToList()
-    }).ToList();
-
-    private List<GlassDropdown.DropdownGroup> SprintGroups => iterations.GroupBy(i => i.Project).Select(grp => new GlassDropdown.DropdownGroup
-    {
-        Label = "📁 " + grp.Key,
-        Options = grp.Select(it => new GlassDropdown.DropdownOption { Value = it.Path, Label = grp.Key + " — " + it.Name }).ToList()
-    }).ToList();
-
-    private List<GlassDropdown.DropdownGroup> RepoGroups => repos.GroupBy(r => r.Project).Select(grp => new GlassDropdown.DropdownGroup
-    {
-        Label = "📁 " + grp.Key,
-        Options = grp.Select(r => new GlassDropdown.DropdownOption { Value = r.Id, Label = grp.Key + " — " + r.Name }).ToList()
-    }).ToList();
-
-    private static string ExtractShortRemote(string url)
-    {
-        var idx = url.LastIndexOf("/_git/", StringComparison.OrdinalIgnoreCase);
-        if (idx >= 0) return "…/_git/" + url[(idx + 6)..];
-        var lastSlash = url.LastIndexOf('/');
-        return lastSlash >= 0 ? "…/" + url[(lastSlash + 1)..] : url;
-    }
-}

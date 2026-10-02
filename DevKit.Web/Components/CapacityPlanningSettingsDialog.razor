@@ -1,0 +1,272 @@
+@* Capacity Planning settings. Edits a private draft and hands it back through OnSave, so
+   nothing reaches the saved settings — or the table behind the dialog — until Save. *@
+
+<div class="modal-overlay" @onclick="Cancel">
+    <div class="modal cp-settings" @onclick:stopPropagation role="dialog" aria-label="Capacity planning settings">
+        <h3>⚙ Capacity planning settings</h3>
+        <div class="modal-body cp-settings-body">
+
+            <section class="cp-sec">
+                <div class="cp-sec-title">Planning mode</div>
+                <div class="cm-seg">
+                    <button type="button" class="cm-seg-btn @(draft.Mode == PlanningMode.Regular ? "on" : "")"
+                            @onclick="() => draft.Mode = PlanningMode.Regular">Regular · plan to capacity</button>
+                    <button type="button" class="cm-seg-btn @(draft.Mode == PlanningMode.AiOverPlan ? "on" : "")"
+                            @onclick="() => draft.Mode = PlanningMode.AiOverPlan">AI over-plan</button>
+                </div>
+                <div class="cp-grid2">
+                    <label class="f-row">
+                        <span class="f-label">AI over-plan % <em>0 – @MaxOverPlan</em></span>
+                        <input class="fi" type="number" min="0" max="@MaxOverPlan" step="1"
+                               disabled="@(draft.Mode != PlanningMode.AiOverPlan)" @bind="draft.AiOverPlanPercent" />
+                    </label>
+                </div>
+                <div class="cp-preview">@Preview</div>
+            </section>
+
+            <section class="cp-sec">
+                <div class="cp-sec-title">Working time</div>
+                <div class="cp-grid2">
+                    <label class="f-row">
+                        <span class="f-label">Hours per day <em>up to @MaxHours</em></span>
+                        <input class="fi" type="number" min="0.5" max="@MaxHours" step="0.5" @bind="draft.HoursPerDay" />
+                    </label>
+                    <label class="cp-check">
+                        <input type="checkbox" @bind="draft.UseTfsMemberCapacity" />
+                        <span>Use each member's capacity from TFS when it is set — the hours above then only fill in for members without one</span>
+                    </label>
+                </div>
+                <div class="f-row">
+                    <span class="f-label">Working days</span>
+                    <div class="cp-days">
+                        @foreach (var day in Week)
+                        {
+                            <button type="button" class="cp-day @(IsWorkingDay(day) ? "on" : "")" @onclick="() => ToggleDay(day)"
+                                    title="@(IsWorkingDay(day) ? "Working day" : "Day off") — click to change">@day.ToString()[..3]</button>
+                        }
+                    </div>
+                </div>
+            </section>
+
+            <section class="cp-sec">
+                <div class="cp-sec-title">Sprint length</div>
+                <div class="cm-seg">
+                    <button type="button" class="cm-seg-btn @(draft.SprintLength == SprintLengthSource.IterationDates ? "on" : "")"
+                            @onclick="() => draft.SprintLength = SprintLengthSource.IterationDates">From TFS iteration dates</button>
+                    <button type="button" class="cm-seg-btn @(draft.SprintLength == SprintLengthSource.Fixed ? "on" : "")"
+                            @onclick="() => draft.SprintLength = SprintLengthSource.Fixed">Fixed length</button>
+                </div>
+                <div class="cp-grid2">
+                    <label class="f-row">
+                        <span class="f-label">Weeks per sprint <em>1 – @MaxWeeks</em></span>
+                        <input class="fi" type="number" min="1" max="@MaxWeeks" step="1" @bind="draft.SprintWeeks" />
+                    </label>
+                    <div class="cp-hint">
+                        @draft.SprintWeeks week(s) × @draft.WorkingDays.Count day(s) = <b>@(draft.SprintWeeks * draft.WorkingDays.Count) working days</b>.
+                        @(draft.SprintLength == SprintLengthSource.Fixed
+                            ? "Used for every sprint."
+                            : "Used only when an iteration has no dates in TFS.")
+                    </div>
+                </div>
+            </section>
+
+            <section class="cp-sec">
+                <div class="cp-sec-title">Tags</div>
+                <div class="cp-hint">
+                    Order is precedence: when work carries more than one of these tags, the first one decides whether it is
+                    Deliverable. A tag counts when it is on the task or on its parent Requirement / Change Request.
+                </div>
+                <table class="req-table cp-rules">
+                    <thead>
+                        <tr>
+                            <th>Tag</th>
+                            <th class="cp-rule-flag" title="Hours on this tag count as Deliverable; otherwise Non-Deliverable">Deliverable</th>
+                            <th class="cp-rule-flag" title="Hours on this tag are taken out of the base the AI over-plan % is applied to">Carve out of AI base</th>
+                            <th class="cp-rule-act"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @for (var i = 0; i < draft.TagRules.Count; i++)
+                        {
+                            var index = i;
+                            var rule = draft.TagRules[index];
+                            <tr @key="rule">
+                                <td class="cp-rule-tag">@rule.Tag</td>
+                                <td class="cp-rule-flag"><input type="checkbox" @bind="rule.Deliverable" /></td>
+                                <td class="cp-rule-flag"><input type="checkbox" @bind="rule.ExcludeFromOverPlan" /></td>
+                                <td class="cp-rule-act">
+                                    <button type="button" class="bpk-clear" title="Move up" disabled="@(index == 0)" @onclick="() => MoveRule(index, -1)">▲</button>
+                                    <button type="button" class="bpk-clear" title="Move down" disabled="@(index == draft.TagRules.Count - 1)" @onclick="() => MoveRule(index, 1)">▼</button>
+                                    <button type="button" class="bpk-clear" title="Remove @rule.Tag" @onclick="() => RemoveRule(index)">✕</button>
+                                </td>
+                            </tr>
+                        }
+                        @if (draft.TagRules.Count == 0)
+                        {
+                            <tr><td colspan="4" class="tbl-empty">No tag rules — work is classified by its parent's marker tag only.</td></tr>
+                        }
+                    </tbody>
+                </table>
+                <div class="chiped-add">
+                    <input class="fi" list="cp-tag-suggest" placeholder="Add a TFS tag…" maxlength="@MaxName"
+                           value="@newTag" @oninput="e => { newTag = e.Value?.ToString() ?? string.Empty; tagError = null; }"
+                           @onkeydown="OnNewTagKey" />
+                    <datalist id="cp-tag-suggest">
+                        @foreach (var tag in TagSuggestions)
+                        {
+                            <option value="@tag"></option>
+                        }
+                    </datalist>
+                    <button type="button" class="btn-sm" disabled="@(newTag.Trim().Length == 0)" @onclick="AddRule">+ Add tag</button>
+                </div>
+                @if (tagError != null) { <div class="cp-error">@tagError</div> }
+
+                <div class="cp-grid2" style="margin-top:12px;">
+                    <label class="f-row">
+                        <span class="f-label">Parent "Deliverable" tag</span>
+                        <input class="fi" maxlength="@MaxName" @bind="draft.DeliverableMarkerTag" />
+                    </label>
+                    <label class="f-row">
+                        <span class="f-label">Parent "Non-Deliverable" tag</span>
+                        <input class="fi" maxlength="@MaxName" @bind="draft.NonDeliverableMarkerTag" />
+                    </label>
+                </div>
+            </section>
+
+            <section class="cp-sec">
+                <div class="cp-sec-title">Teams</div>
+                <div class="cp-hint">Which task disciplines make up each team view. Disciplines in neither list still count towards the entire team.</div>
+                <div class="cp-grid2">
+                    <div class="f-row">
+                        <span class="f-label">Development team</span>
+                        <ChipListEditor Items="@draft.DevDisciplines" ItemsChanged="v => draft.DevDisciplines = v"
+                                        Suggestions="@ObservedDisciplines" Placeholder="Add a discipline…" EmptyText="None — add one" />
+                    </div>
+                    <div class="f-row">
+                        <span class="f-label">QA team</span>
+                        <ChipListEditor Items="@draft.QaDisciplines" ItemsChanged="v => draft.QaDisciplines = v"
+                                        Suggestions="@ObservedDisciplines" Placeholder="Add a discipline…" EmptyText="None — add one" />
+                    </div>
+                </div>
+            </section>
+        </div>
+        <div class="modal-actions">
+            <button type="button" class="btn-ghost" style="margin-right:auto;" @onclick="ResetToDefaults"
+                    title="Restore the original formula: 40% AI over-plan, 8.5 h, Mon–Fri, the four standard tags. Not saved until you press Save.">
+                ↺ Reset to defaults
+            </button>
+            <button type="button" class="btn-ghost" @onclick="Cancel">Cancel</button>
+            <button type="button" class="btn-primary" style="width:auto;" @onclick="Save">Save settings</button>
+        </div>
+    </div>
+</div>
+
+@code {
+    private static readonly DayOfWeek[] Week =
+        Enum.GetValues<DayOfWeek>().OrderBy(CapacityPlanningSettings.MondayFirst).ToArray();
+
+    private const double MaxOverPlan = CapacityPlanningSettings.MaxOverPlanPercent;
+    private const double MaxHours = CapacityPlanningSettings.MaxHoursPerDay;
+    private const int MaxWeeks = CapacityPlanningSettings.MaxSprintWeeks;
+    private const int MaxName = CapacityPlanningSettings.MaxNameLength;
+
+    /// <summary>The saved settings the draft starts from.</summary>
+    [Parameter, EditorRequired] public CapacityPlanningSettings Settings { get; set; } = new();
+
+    /// <summary>Tags seen on the loaded sprint, offered when adding a rule.</summary>
+    [Parameter] public IReadOnlyList<string> ObservedTags { get; set; } = Array.Empty<string>();
+
+    /// <summary>Disciplines seen on the loaded sprint, offered when building a team.</summary>
+    [Parameter] public IReadOnlyList<string> ObservedDisciplines { get; set; } = Array.Empty<string>();
+
+    [Parameter] public EventCallback<CapacityPlanningSettings> OnSave { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private CapacityPlanningSettings draft = new();
+    private string newTag = string.Empty;
+    private string? tagError;
+
+    protected override void OnInitialized() => draft = Settings.Clone();
+
+    private IEnumerable<string> TagSuggestions =>
+        ObservedTags.Where(t => !draft.TagRules.Any(r => string.Equals(r.Tag, t, StringComparison.OrdinalIgnoreCase)));
+
+    /// <summary>What a full, leave-free sprint comes to under the draft — the formula made concrete.</summary>
+    private string Preview
+    {
+        get
+        {
+            var days = draft.SprintWeeks * draft.WorkingDays.Count;
+            var actual = PlanningMath.Round2(days * Math.Max(0, draft.HoursPerDay));
+            if (draft.Mode == PlanningMode.Regular)
+                return $"A full sprint with no leave: {days} days × {draft.HoursPerDay:0.##} h = {actual:0.##} h. Planning {actual:0.##} h is 100%.";
+
+            var target = PlanningMath.Round2(actual * (1 + Math.Max(0, draft.AiOverPlanPercent) / 100));
+            return $"A full sprint with no leave or carved-out work: {actual:0.##} h + {draft.AiOverPlanPercent:0.##}% = {target:0.##} h target. " +
+                   "Carved-out hours are taken off before the percentage is applied.";
+        }
+    }
+
+    private bool IsWorkingDay(DayOfWeek day) => draft.WorkingDays.Contains(day);
+
+    /// <summary>At least one working day must stay: a week of none would make every sprint zero days long.</summary>
+    private void ToggleDay(DayOfWeek day)
+    {
+        if (draft.WorkingDays.Contains(day))
+        {
+            if (draft.WorkingDays.Count > 1) draft.WorkingDays.Remove(day);
+            return;
+        }
+        draft.WorkingDays.Add(day);
+        draft.WorkingDays.Sort((a, b) => CapacityPlanningSettings.MondayFirst(a).CompareTo(CapacityPlanningSettings.MondayFirst(b)));
+    }
+
+    private void AddRule()
+    {
+        var tag = newTag.Trim();
+        tagError = ValidateNewTag(tag);
+        if (tagError != null) return;
+
+        draft.TagRules.Add(new PlanningTagRule { Tag = tag });
+        newTag = string.Empty;
+    }
+
+    private string? ValidateNewTag(string tag)
+    {
+        if (tag.Length == 0) return "Enter a tag.";
+        if (tag.Length > MaxName) return $"Tags are limited to {MaxName} characters.";
+        if (tag.Contains(';')) return "A tag cannot contain ';' — TFS uses it to separate tags.";
+        if (draft.TagRules.Count >= CapacityPlanningSettings.MaxTagRules) return $"At most {CapacityPlanningSettings.MaxTagRules} tag rules.";
+        return draft.TagRules.Any(r => string.Equals(r.Tag, tag, StringComparison.OrdinalIgnoreCase))
+            ? $"\"{tag}\" is already listed."
+            : null;
+    }
+
+    private void OnNewTagKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") AddRule();
+    }
+
+    private void MoveRule(int index, int offset)
+    {
+        var target = index + offset;
+        if (target < 0 || target >= draft.TagRules.Count) return;
+        (draft.TagRules[index], draft.TagRules[target]) = (draft.TagRules[target], draft.TagRules[index]);
+    }
+
+    private void RemoveRule(int index)
+    {
+        if (index >= 0 && index < draft.TagRules.Count) draft.TagRules.RemoveAt(index);
+    }
+
+    private void ResetToDefaults()
+    {
+        draft = new CapacityPlanningSettings();
+        newTag = string.Empty;
+        tagError = null;
+    }
+
+    private Task Save() => OnSave.InvokeAsync(draft.Normalized());
+
+    private Task Cancel() => OnClose.InvokeAsync();
+}

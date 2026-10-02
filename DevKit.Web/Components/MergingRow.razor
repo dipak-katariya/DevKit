@@ -1,0 +1,419 @@
+@* One requirement row plus, when expanded, its pull requests and their commits. *@
+
+<tr class="cm-row @(Row.IsExpanded ? "open" : "")" @onclick="ToggleRow">
+    <td class="cm-c-exp">
+        <button class="cm-expander @(Row.IsExpanded ? "open" : "")" disabled="@(VisiblePrCount == 0)"
+                title="@(VisiblePrCount == 0 ? "No pull requests" : "Show pull requests")"
+                @onclick="ToggleRow" @onclick:stopPropagation>
+            <Icon Inner="@Icons.ChevronRight" />
+        </button>
+    </td>
+    <td class="cm-c-id" title="@Row.WorkItemType @Row.WorkItemId — open in TFS">
+        <a class="id-link" href="@Row.WorkItemUrl" target="_blank" rel="noopener"
+           title="Open work item in a new tab" @onclick:stopPropagation>@Row.WorkItemId</a>
+    </td>
+    <td class="cm-c-title" title="@Row.Title">
+        <span class="cm-title-text">@Row.Title</span>
+    </td>
+    <td class="cm-c-type" title="Work item type: @Row.WorkItemType">
+        <span class="type-pill @TypeCls(Row.WorkItemType)">@Row.WorkItemType</span>
+    </td>
+    <td class="cm-c-state" title="Current state: @Row.State">
+        <span class="state-pill @StateCls(Row.State)">@Row.State</span>
+    </td>
+    <td class="cm-c-user" title="Assigned to @(string.IsNullOrWhiteSpace(Row.AssignedTo) ? "nobody" : Row.AssignedTo)">@Row.AssignedTo</td>
+    <td class="cm-c-num" title="@PrCountTooltip">
+        <span class="cm-num @(VisiblePrCount > 0 ? "has" : "")">@VisiblePrCount</span>
+        @* Once All PRs is on they are inside the count above, so showing "+n" too would
+           report the same pull requests twice. *@
+        @if (Row.PrsOffQaBranch > 0 && !ShowingAllPrs)
+        {
+            <span class="cm-num-off">+@Row.PrsOffQaBranch</span>
+        }
+    </td>
+    <td class="cm-c-num" title="@CommitCountTooltip">
+        @if (Row.IsLoadingCommits)
+        {
+            <span class="spin spin-sm"></span>
+        }
+        else if (!Row.CommitsLoaded)
+        {
+            <span class="cm-num cm-num-pending">…</span>
+        }
+        else
+        {
+            <span class="cm-num">@(VisibleCommitCount > 0 ? VisibleCommitCount.ToString() : "–")</span>
+        }
+    </td>
+    @if (ShowMergeColumns)
+    {
+        <td class="cm-c-merged">
+            <div class="cm-merged-cell">
+                @if (Row.IsVerifying || RowComparing)
+                {
+                    <span class="merge-pill merge-unknown"><span class="spin spin-sm"></span><span>@(RowComparing ? "Comparing…" : "Checking…")</span></span>
+                }
+                else
+                {
+                    <span class="merge-pill @RollupCls(rollup.State)" title="@RollupTooltip">
+                        <Icon Inner="@RollupIcon(rollup.State)" /><span>@rollup.Label</span>
+                    </span>
+                    @* One line keeps the grid dense: the counts behind the pill, the nouns in the tooltip. *@
+                    @if (rollup.HasCodeDetail)
+                    {
+                        <span class="cm-rollup-sub" title="@($"{rollup.CodeFilesPresent} of {rollup.CodeFiles} changed files are on {BranchLabel}")">
+                            <Icon Inner="@Icons.Code" />@($"{rollup.CodeFilesPresent}/{rollup.CodeFiles}")
+                        </span>
+                    }
+                    else if (rollup.HasCommitDetail)
+                    {
+                        <span class="cm-rollup-sub" title="@($"{rollup.CommitSummary} on {BranchLabel}")">
+                            <Icon Inner="@Icons.GitCommit" />@($"{rollup.MergedCommits}/{rollup.RequiredCommits}")
+                        </span>
+                    }
+                    @if (codeLostPrs > 0)
+                    {
+                        <span class="cm-code-lost" title="@CodeLostTooltip">
+                            <Icon Inner="@Icons.AlertTriangle" />
+                        </span>
+                    }
+                }
+            </div>
+        </td>
+        <td class="cm-c-act">
+            <div class="cm-act">
+                @if (Verified)
+                {
+                    <button class="cm-expander" title="Re-check this work item's commits against @BranchLabel"
+                            disabled="@Row.IsVerifying" @onclick="() => OnReverify.InvokeAsync(Row)" @onclick:stopPropagation>
+                        <Icon Inner="@Icons.Refresh" />
+                    </button>
+                }
+                @if (Row.PullRequests.Any(CanCompare))
+                {
+                    <button class="cm-expander cm-code-btn" title="Compare the code of this work item's pull requests with @BranchLabel"
+                            disabled="@(Code.Busy || Row.IsVerifying)" @onclick="() => OnCompareRow.InvokeAsync(Row)" @onclick:stopPropagation>
+                        <Icon Inner="@Icons.Code" />
+                    </button>
+                }
+            </div>
+        </td>
+    }
+</tr>
+
+@if (Row.IsExpanded && VisiblePrCount > 0)
+{
+    <tr class="cm-detail-row">
+        <td class="cm-detail-cell" colspan="@ColumnCount">
+            <div class="cm-detail">
+                <table class="cm-pr-table">
+                    <thead>
+                        <tr>
+                            <th class="cm-c-exp"></th>
+                            <th class="cm-p-id" title="Pull request number — click to open in TFS">PR</th>
+                            <th class="cm-p-repo" title="Repository the pull request belongs to">Repository</th>
+                            <th class="cm-p-branch" title="Branch the work was done on — click to copy">Source Branch</th>
+                            <th class="cm-p-branch" title="Branch the work was merged into — click to copy">Target Branch</th>
+                            <th class="cm-p-status" title="Pull request status in TFS">Status</th>
+                            <th class="cm-p-user" title="Who raised the pull request">Created By</th>
+                            <th class="cm-p-date" title="Earliest commit or the pull request's creation">First Activity</th>
+                            <th class="cm-c-num" title="Commits in this pull request">Commits</th>
+                            @if (Verified) { <th class="cm-p-merged" title="Whether these commits — or copies of them — reached @BranchLabel">On branch</th> }
+                            @if (ShowMergeColumns) { <th class="cm-p-code" title="Whether this pull request's code is on @BranchLabel, compared file by file">Code</th> }
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var pr in VisiblePrs)
+                        {
+                            var key = PrKey(pr);
+                            var isOpen = ExpandedPrKey == key;
+                            var offQa = IsOffQaBranch(pr);
+                            <tr @key="key" class="cm-pr-row @(isOpen ? "open" : "") @(offQa ? "cm-pr-offqa" : "")"
+                                title="@(offQa ? "This pull request did not target the repository's QA branch, so it is not counted towards the release check. Shown because All PRs is on." : null)"
+                                @onclick="() => OnTogglePr.InvokeAsync(key)">
+                                <td class="cm-c-exp">
+                                    <button class="cm-expander @(isOpen ? "open" : "")" disabled="@(!HasDetail(pr))"
+                                            title="@(HasDetail(pr) ? "Show commits and code" : "No commits")"
+                                            @onclick="() => OnTogglePr.InvokeAsync(key)" @onclick:stopPropagation>
+                                        <Icon Inner="@Icons.ChevronRight" />
+                                    </button>
+                                </td>
+                                <td class="cm-p-id" title="@pr.Title">
+                                    <a class="id-link" href="@pr.Url" target="_blank" rel="noopener"
+                                       title="Open pull request !@pr.PullRequestId in a new tab" @onclick:stopPropagation>!@pr.PullRequestId</a>
+                                </td>
+                                <td class="cm-p-repo" title="Repository: @pr.RepositoryName">@pr.RepositoryName</td>
+                                <td class="cm-p-branch">
+                                    <CopyableRef Text="@pr.SourceBranch" Url="@pr.SourceBranchUrl"
+                                                 Label="branch" CssClass="cref-src" />
+                                </td>
+                                <td class="cm-p-branch">
+                                    <CopyableRef Text="@pr.TargetBranch" Url="@pr.TargetBranchUrl"
+                                                 Label="branch" CssClass="cref-tgt" />
+                                </td>
+                                <td class="cm-p-status" title="Pull request status: @pr.Status">
+                                    <span class="pr-badge @PrStatusCls(pr.Status)">@pr.Status</span>
+                                </td>
+                                <td class="cm-p-user" title="Raised by @pr.CreatedBy">@pr.CreatedBy</td>
+                                <td class="cm-p-date"><TimeStamp Value="@pr.FirstActivityDate" Label="First activity" /></td>
+                                <td class="cm-c-num" title="@Plural(pr.Commits.Count, "commit") in this pull request">
+                                    <span class="cm-num">@pr.Commits.Count</span>
+                                </td>
+                                @if (Verified)
+                                {
+                                    <td class="cm-p-merged" title="@PrMergeLabel(pr) — @Plural(pr.Commits.Count, "commit") checked against @BranchLabel">
+                                        <span class="merge-pill @PrMergeCls(pr)">
+                                            <Icon Inner="@PrMergeIcon(pr)" />
+                                            <span>@PrMergeLabel(pr)</span>
+                                        </span>
+                                    </td>
+                                }
+                                @if (ShowMergeColumns)
+                                {
+                                    <td class="cm-p-code">
+                                        <div class="cm-code-cell">
+                                            @if (pr.CodeCheck is { } codeCheck)
+                                            {
+                                                <span class="merge-pill @CodeCompareDetails.PillClass(codeCheck)" title="@codeCheck.Summary">
+                                                    @if (codeCheck.Verdict == CodeVerdict.Checking)
+                                                    {
+                                                        <span class="spin spin-sm"></span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <Icon Inner="@CodeCompareDetails.PillIcon(codeCheck)" />
+                                                    }
+                                                    <span>@CodeCompareDetails.PillLabel(codeCheck)</span>
+                                                </span>
+                                                @if (pr.CodeContradictsCommits)
+                                                {
+                                                    <span class="cm-code-lost" title="Every commit is on @BranchLabel, but the code is not — lost in a conflict or undone by hand.">
+                                                        <Icon Inner="@Icons.AlertTriangle" />
+                                                    </span>
+                                                }
+                                            }
+                                            else
+                                            {
+                                                <span class="cm-code-none" title="Not compared yet">—</span>
+                                            }
+                                            @if (CanCompare(pr))
+                                            {
+                                                <button class="cm-expander cm-code-btn" title="Compare this pull request's code with @BranchLabel — allows far larger pull requests than the sprint-wide run"
+                                                        disabled="@Code.Busy" @onclick="() => OnComparePr.InvokeAsync(pr)" @onclick:stopPropagation>
+                                                    <Icon Inner="@Icons.Code" />
+                                                </button>
+                                            }
+                                        </div>
+                                    </td>
+                                }
+                            </tr>
+                            @if (isOpen)
+                            {
+                                <tr class="cm-detail-row">
+                                    <td class="cm-detail-cell" colspan="@PrColumnCount">
+                                        @if (pr.CodeCheck is not null)
+                                        {
+                                            <CodeCompareDetails Pr="pr" ExplainingPath="@ExplainingPathFor(pr)"
+                                                                OnExplain="@(file => OnExplainFile.InvokeAsync((pr, file)))" />
+                                        }
+                                        <MergingCommitTable Commits="@pr.Commits" Verified="@Verified" BranchLabel="@BranchLabel" />
+                                    </td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </td>
+    </tr>
+}
+
+@code {
+    [Parameter, EditorRequired] public RequirementMergingRow Row { get; set; } = new();
+
+    /// <summary>
+    /// The pull requests currently visible for this row. Supplied by the page from one
+    /// filtering helper so the table, the counts and the summary cards can never disagree.
+    /// </summary>
+    [Parameter, EditorRequired] public List<MergingPullRequest> VisiblePrs { get; set; } = new();
+
+    [Parameter] public string? TargetBranch { get; set; }
+
+    /// <summary>Whether the sheet is currently listing pull requests that missed the QA branch.</summary>
+    [Parameter] public bool ShowingAllPrs { get; set; }
+    [Parameter] public string? ExpandedPrKey { get; set; }
+    [Parameter] public EventCallback<RequirementMergingRow> OnToggleRow { get; set; }
+    [Parameter] public EventCallback<string> OnTogglePr { get; set; }
+    [Parameter] public EventCallback<RequirementMergingRow> OnReverify { get; set; }
+
+    /// <summary>Whether code can be compared, and what is running; see <see cref="CodeState"/>.</summary>
+    [Parameter] public CodeState Code { get; set; } = CodeState.Off;
+
+    [Parameter] public EventCallback<RequirementMergingRow> OnCompareRow { get; set; }
+    [Parameter] public EventCallback<MergingPullRequest> OnComparePr { get; set; }
+    [Parameter] public EventCallback<(MergingPullRequest Pr, FileCodeCheck File)> OnExplainFile { get; set; }
+
+    /// <summary>
+    /// The code-comparison state the page shares with every row.
+    /// </summary>
+    /// <param name="RepoIds">Repositories with a merging branch configured — only their pull requests can be compared.</param>
+    /// <param name="Explaining">The pull request (by <see cref="PrKey"/>) and file whose lines are being read.</param>
+    public sealed record CodeState(bool Busy, IReadOnlySet<string> RepoIds, (string PrKey, string Path)? Explaining)
+    {
+        public static readonly CodeState Off = new(false, new HashSet<string>(), null);
+
+        public bool Available => RepoIds.Count > 0;
+    }
+
+    private bool Verified => !string.IsNullOrEmpty(TargetBranch);
+
+    /// <summary>The Merged and action columns appear once anything can be checked, not only after a check ran.</summary>
+    private bool ShowMergeColumns => Verified || Code.Available;
+
+    private string BranchLabel => string.IsNullOrEmpty(TargetBranch) ? "the merging branch" : TargetBranch;
+    private int ColumnCount => ShowMergeColumns ? 10 : 8;
+    private int PrColumnCount => 9 + (Verified ? 1 : 0) + (ShowMergeColumns ? 1 : 0);
+    private int VisiblePrCount => VisiblePrs.Count;
+
+    private bool RowComparing => VisiblePrs.Any(p => p.CodeCheck?.Verdict == CodeVerdict.Checking);
+
+    private bool CanCompare(MergingPullRequest pr) =>
+        Code.Available && pr.IsCompleted && Code.RepoIds.Contains(pr.RepositoryId);
+
+    private static bool HasDetail(MergingPullRequest pr) => pr.Commits.Count > 0 || pr.CodeCheck is not null;
+
+    private string? ExplainingPathFor(MergingPullRequest pr) =>
+        Code.Explaining is { } e && e.PrKey == PrKey(pr) ? e.Path : null;
+    private int VisibleCommitCount => VisiblePrs.Sum(p => p.Commits.Count);
+
+    /// <summary>
+    /// Work-item level state, rolled up from the visible pull requests and their commits.
+    /// Recomputed per parameter change rather than per access so a render touches it once.
+    /// </summary>
+    private MergeRollupResult rollup;
+
+    /// <summary>Keys of the pull requests that did not target the QA branch, for the row marker.</summary>
+    private HashSet<string> offQaKeys = new();
+
+    /// <summary>Visible pull requests whose commits are all on the branch while their code is not.</summary>
+    private int codeLostPrs;
+
+    protected override void OnParametersSet()
+    {
+        rollup = MergeRollupCalculator.For(VisiblePrs);
+        offQaKeys = Row.OffQaBranchPullRequests.Select(PrKey).ToHashSet(StringComparer.Ordinal);
+        codeLostPrs = VisiblePrs.Count(p => p.CodeContradictsCommits);
+    }
+
+    private string CodeLostTooltip =>
+        $"{Plural(codeLostPrs, "pull request")} here {(codeLostPrs == 1 ? "has" : "have")} every commit on {BranchLabel} " +
+        "but not the code — lost in a conflict or undone by hand. Open the row to see which.";
+
+    private bool IsOffQaBranch(MergingPullRequest pr) => offQaKeys.Contains(PrKey(pr));
+
+    private string RollupTooltip => rollup.State switch
+    {
+        MergeRollup.NoPullRequests => "No pull requests were found for this work item.",
+        MergeRollup.NotChecked => "No completed pull request has been checked yet — Verify All checks the commits, Compare Code checks the code.",
+        MergeRollup.Merged => $"All {rollup.CheckedPrs} checked pull request(s) reached {BranchLabel}." + CodeNote,
+        MergeRollup.RolledBack =>
+            $"{rollup.RolledBackCommits} commit(s) reached {BranchLabel} and were reverted off it again. The code was there, so this is a regression rather than work still to merge.",
+        MergeRollup.Partial =>
+            $"{rollup.MergedPrs} of {rollup.CheckedPrs} pull requests reached {BranchLabel}."
+            + (rollup.HasCodeDetail
+                ? $" Their code: {rollup.CodeFilesPresent} of {rollup.CodeFiles} changed files are there."
+                : $" {rollup.MergedCommits} of {rollup.RequiredCommits} required commits are there.")
+            + (rollup.HasRollback ? $" {rollup.RolledBackCommits} of the missing commit(s) were reverted off the branch." : ""),
+        _ => $"Nothing from this work item was found on {BranchLabel}." + CodeNote
+    };
+
+    private string CodeNote => rollup.HasCodeDetail ? " Decided by comparing the code." : " Decided by the commits; Compare Code checks the code itself.";
+
+    private static string RollupCls(MergeRollup state) => state switch
+    {
+        MergeRollup.Merged => "merge-ok",
+        MergeRollup.Partial => "merge-part",
+        MergeRollup.RolledBack => "merge-back",
+        MergeRollup.NotMerged => "merge-no",
+        _ => "merge-unknown"
+    };
+
+    private static string RollupIcon(MergeRollup state) => state switch
+    {
+        MergeRollup.Merged => Icons.CheckCircle,
+        MergeRollup.Partial => Icons.MinusCircle,
+        MergeRollup.RolledBack => Icons.Refresh,
+        MergeRollup.NotMerged => Icons.XCircle,
+        _ => Icons.HelpCircle
+    };
+
+    public static string PrKey(MergingPullRequest pr) => $"{pr.RepositoryId}_{pr.PullRequestId}";
+
+    private Task ToggleRow() => VisiblePrCount == 0 ? Task.CompletedTask : OnToggleRow.InvokeAsync(Row);
+
+    private static string Plural(int n, string noun) => $"{n} {noun}{(n == 1 ? "" : "s")}";
+
+    private string PrCountTooltip
+    {
+        get
+        {
+            var shown = VisiblePrCount == 0
+                ? "No pull requests found for this work item"
+                : $"{Plural(VisiblePrCount, "pull request")} linked to this work item";
+
+            if (Row.PrsOffQaBranch == 0) return shown;
+
+            return ShowingAllPrs
+                ? $"{shown}, including {Plural(Row.PrsOffQaBranch, "that did not target the QA branch")}."
+                : $"{shown}. {Plural(Row.PrsOffQaBranch, "other pull request")} " +
+                  "did not target the repository's QA branch and is not counted here.";
+        }
+    }
+
+    private string CommitCountTooltip => !Row.CommitsLoaded
+        ? "Commits not read yet — open this row to load them"
+        : VisibleCommitCount == 0
+            ? "No commits found across this work item's pull requests"
+            : $"{Plural(VisibleCommitCount, "commit")} across {Plural(VisiblePrCount, "pull request")}";
+
+    private static string PrMergeLabel(MergingPullRequest pr)
+    {
+        if (pr.IsMergedToTargetBranch == true) return "Merged";
+        if (pr.IsMergedToTargetBranch is null) return pr.IsCompleted ? "Not checked" : "Not completed";
+        if (pr.IsRolledBack) return $"{pr.RolledBackCommitCount} rolled back";
+
+        var missing = pr.MissingCommitCount;
+        if (missing == 0) return "Not merged";
+
+        var rolledBack = pr.RolledBackCommitCount;
+        return rolledBack > 0 ? $"{missing} missing · {rolledBack} reverted" : $"{missing} missing";
+    }
+
+    private static string PrMergeCls(MergingPullRequest pr) =>
+        pr.IsRolledBack ? "merge-back" : MergingCommitTable.MergeCls(pr.IsMergedToTargetBranch);
+
+    private static string PrMergeIcon(MergingPullRequest pr) =>
+        pr.IsRolledBack ? Icons.Refresh : MergingCommitTable.MergeIcon(pr.IsMergedToTargetBranch);
+
+    private static string TypeCls(string? type) => (type ?? "").ToLowerInvariant() switch
+    {
+        "bug" => "bug",
+        "change request" => "cr",
+        _ => ""
+    };
+
+    private static string StateCls(string? state) => (state ?? "").ToLowerInvariant() switch
+    {
+        "active" => "state-active",
+        "resolved" => "state-resolved",
+        "closed" => "state-closed",
+        _ => "state-new"
+    };
+
+    private static string PrStatusCls(string? status) => (status ?? "").ToLowerInvariant() switch
+    {
+        "completed" => "pr-completed",
+        "abandoned" => "pr-abandoned",
+        _ => "pr-active"
+    };
+}

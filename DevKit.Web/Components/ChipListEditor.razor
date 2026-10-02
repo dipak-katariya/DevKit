@@ -1,0 +1,67 @@
+@* Edits a short list of names as removable chips plus an add box. Suggestions, when given,
+   feed a datalist so values seen in TFS can be picked instead of typed — and mistyped. *@
+
+<div class="chiped">
+    <div class="chiped-list">
+        @foreach (var item in Items)
+        {
+            <span class="chiped-chip" @key="item">
+                @item
+                <button type="button" class="bpk-clear" title="Remove @item" disabled="@Disabled"
+                        @onclick="() => Remove(item)">✕</button>
+            </span>
+        }
+        @if (Items.Count == 0)
+        {
+            <span class="chiped-empty">@EmptyText</span>
+        }
+    </div>
+    <div class="chiped-add">
+        <input class="fi" list="@listId" placeholder="@Placeholder" maxlength="@MaxLength" disabled="@Disabled"
+               value="@draft" @oninput="e => draft = e.Value?.ToString() ?? string.Empty" @onkeydown="OnKeyDown" />
+        @if (Suggestions is { Count: > 0 })
+        {
+            <datalist id="@listId">
+                @foreach (var s in Suggestions.Where(s => !Contains(s)))
+                {
+                    <option value="@s"></option>
+                }
+            </datalist>
+        }
+        <button type="button" class="btn-sm" disabled="@(Disabled || !CanAdd)" @onclick="Add">+ Add</button>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public List<string> Items { get; set; } = new();
+    [Parameter] public EventCallback<List<string>> ItemsChanged { get; set; }
+    [Parameter] public IReadOnlyList<string>? Suggestions { get; set; }
+    [Parameter] public string Placeholder { get; set; } = "Add…";
+    [Parameter] public string EmptyText { get; set; } = "None";
+    [Parameter] public int MaxItems { get; set; } = 20;
+    [Parameter] public int MaxLength { get; set; } = 100;
+    [Parameter] public bool Disabled { get; set; }
+
+    // A datalist is looked up by id page-wide, so each editor needs its own.
+    private readonly string listId = $"chiped-{Guid.NewGuid():N}";
+    private string draft = string.Empty;
+
+    private string Trimmed => draft.Trim();
+
+    private bool CanAdd => Trimmed.Length > 0 && Trimmed.Length <= MaxLength && Items.Count < MaxItems && !Contains(Trimmed);
+
+    private bool Contains(string value) => Items.Any(i => string.Equals(i, value, StringComparison.OrdinalIgnoreCase));
+
+    private Task Add()
+    {
+        if (!CanAdd) return Task.CompletedTask;
+        var next = new List<string>(Items) { Trimmed };
+        draft = string.Empty;
+        return ItemsChanged.InvokeAsync(next);
+    }
+
+    private Task Remove(string item) =>
+        ItemsChanged.InvokeAsync(Items.Where(i => !string.Equals(i, item, StringComparison.OrdinalIgnoreCase)).ToList());
+
+    private Task OnKeyDown(KeyboardEventArgs e) => e.Key == "Enter" ? Add() : Task.CompletedTask;
+}

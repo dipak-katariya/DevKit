@@ -1,0 +1,152 @@
+@inject IJSRuntime JS
+@implements IDisposable
+
+@* Searchable branch dropdown. Only a bounded slice is rendered, so a repository with
+   thousands of refs cannot flood the DOM. *@
+
+<div class="gdd bpk @(IsOpen ? "gdd-open" : "") @CssClass" @ref="rootEl" style="@Style">
+    <div class="gdd-trigger @(Disabled ? "bpk-disabled" : "")" @onclick="Toggle" @onclick:stopPropagation>
+        <span class="gdd-value @(string.IsNullOrEmpty(Value) ? "gdd-placeholder" : "bpk-branch")">
+            @(string.IsNullOrEmpty(Value) ? Placeholder : Value)
+        </span>
+        @if (!string.IsNullOrEmpty(Value) && !Disabled)
+        {
+            <button class="bpk-clear" title="Clear" @onclick="Clear" @onclick:stopPropagation>✕</button>
+        }
+        <span class="gdd-arrow">▾</span>
+    </div>
+
+    @if (IsOpen && !Disabled)
+    {
+        <div class="gdd-panel" @onclick:stopPropagation>
+            <div class="gdd-search-wrap">
+                <input class="gdd-search" type="text" placeholder="Search branches…"
+                       @oninput="OnSearchInput" @ref="searchInput" @onkeydown="OnKeyDown" />
+            </div>
+            <div class="gdd-list">
+                @foreach (var b in Visible)
+                {
+                    <div class="gdd-item bpk-item @(b == Value ? "gdd-item-active" : "")"
+                         title="@b" @onclick="() => Select(b)">@b</div>
+                }
+                @if (Visible.Count == 0)
+                {
+                    <div class="gdd-empty">
+                        @if (Loading)
+                        {
+                            <span class="spin spin-sm"></span><span>Loading branches…</span>
+                        }
+                        else
+                        {
+                            @(Branches.Count == 0 ? "No branches loaded for this repository." : "No branches match.")
+                        }
+                    </div>
+                }
+            </div>
+            @if (HiddenCount > 0)
+            {
+                <div class="bpk-more">@HiddenCount more — keep typing to narrow</div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private const int MaxRendered = 60;
+
+    /// <summary>Read-only so a caller can safely hand every empty picker one shared instance.</summary>
+    [Parameter] public IReadOnlyList<string> Branches { get; set; } = Array.Empty<string>();
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public string Placeholder { get; set; } = "— Select branch —";
+    [Parameter] public string? Style { get; set; }
+
+    /// <summary>Extra classes on the shell, e.g. "fi-size" to match the form inputs around it.</summary>
+    [Parameter] public string? CssClass { get; set; }
+
+    /// <summary>Shows a loading line in place of the empty message while branches are fetched.</summary>
+    [Parameter] public bool Loading { get; set; }
+
+    /// <summary>
+    /// Raised when the panel opens. Lets a caller holding many repositories fetch that one
+    /// repository's branches on demand instead of loading every repository up front.
+    /// </summary>
+    [Parameter] public EventCallback OnOpened { get; set; }
+
+    private bool IsOpen;
+    private string searchText = "";
+    private ElementReference rootEl;
+    private ElementReference searchInput;
+    private DotNetObjectReference<BranchPicker>? dotNetRef;
+
+    private List<string> Matches => Branches
+        .Where(b => string.IsNullOrEmpty(searchText) || b.Contains(searchText, StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    private List<string> Visible => Matches.Take(MaxRendered).ToList();
+
+    private int HiddenCount => Math.Max(0, Matches.Count - MaxRendered);
+
+    private async Task Toggle()
+    {
+        if (Disabled) return;
+        IsOpen = !IsOpen;
+        searchText = "";
+        if (IsOpen)
+        {
+            await OnOpened.InvokeAsync();
+            await Task.Yield();
+            try { await JS.InvokeVoidAsync("devKit.focusEl", searchInput); } catch (JSException) { }
+            dotNetRef ??= DotNetObjectReference.Create(this);
+            try { await JS.InvokeVoidAsync("devKit.registerClickOutside", rootEl, dotNetRef); } catch (JSException) { }
+        }
+        else
+        {
+            await Unregister();
+        }
+    }
+
+    [JSInvokable]
+    public void CloseDropdown()
+    {
+        IsOpen = false;
+        searchText = "";
+        StateHasChanged();
+    }
+
+    private async Task Select(string branch)
+    {
+        Value = branch;
+        IsOpen = false;
+        searchText = "";
+        await Unregister();
+        await ValueChanged.InvokeAsync(branch);
+    }
+
+    private async Task Clear()
+    {
+        Value = "";
+        IsOpen = false;
+        await Unregister();
+        await ValueChanged.InvokeAsync("");
+    }
+
+    private void OnSearchInput(ChangeEventArgs e) => searchText = e.Value?.ToString() ?? "";
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape") { await Toggle(); return; }
+        if (e.Key != "Enter") return;
+
+        var first = Visible.FirstOrDefault();
+        if (first != null) await Select(first);
+    }
+
+    private async Task Unregister()
+    {
+        try { await JS.InvokeVoidAsync("devKit.unregisterClickOutside", rootEl); } catch (JSException) { }
+    }
+
+    public void Dispose() => dotNetRef?.Dispose();
+}

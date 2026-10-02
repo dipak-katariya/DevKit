@@ -1,0 +1,159 @@
+@inject IJSRuntime JS
+@implements IDisposable
+
+@* Searchable multi-select built on the same .gdd-* shell as GlassDropdown. *@
+
+<div class="gdd msd @(IsOpen ? "gdd-open" : "") @CssClass" @ref="rootEl" style="@Style">
+    <div class="gdd-trigger @(Disabled ? "bpk-disabled" : "")" @onclick="Toggle" @onclick:stopPropagation>
+        <span class="gdd-value @(Selected.Count == 0 ? "gdd-placeholder" : "")">@TriggerLabel</span>
+        @if (Selected.Count > 1)
+        {
+            <span class="msd-count">@Selected.Count</span>
+        }
+        <span class="gdd-arrow">▾</span>
+    </div>
+
+    @if (IsOpen && !Disabled)
+    {
+        <div class="gdd-panel" @onclick:stopPropagation>
+            <div class="gdd-search-wrap">
+                <input class="gdd-search" type="text" placeholder="@SearchPlaceholder"
+                       @oninput="OnSearchInput" @ref="searchInput" @onkeydown="OnKeyDown" />
+            </div>
+
+            <div class="msd-bulk">
+                <button class="msd-bulk-btn" @onclick="SelectAllVisible" disabled="@(Visible.Count == 0)">
+                    Select all@(HasSearch ? " matching" : "")
+                </button>
+                <button class="msd-bulk-btn" @onclick="ClearAll" disabled="@(Selected.Count == 0)">Clear</button>
+            </div>
+
+            <div class="gdd-list">
+                @foreach (var opt in Visible)
+                {
+                    var isOn = Selected.Contains(opt.Value);
+                    <div class="gdd-item msd-item @(isOn ? "gdd-item-active" : "")"
+                         title="@(opt.Hint ?? opt.Label)" @onclick="() => ToggleValue(opt.Value)">
+                        <span class="msd-box @(isOn ? "on" : "")">@(isOn ? "✓" : "")</span>
+                        <span class="msd-label">@opt.Label</span>
+                    </div>
+                }
+                @if (Visible.Count == 0)
+                {
+                    <div class="gdd-empty">No matches</div>
+                }
+            </div>
+            @if (HiddenCount > 0)
+            {
+                <div class="bpk-more">@HiddenCount more — keep typing to narrow</div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private const int MaxRendered = 80;
+
+    public sealed class Option
+    {
+        public string Value { get; set; } = "";
+        public string Label { get; set; } = "";
+        /// <summary>Tooltip; falls back to the label.</summary>
+        public string? Hint { get; set; }
+    }
+
+    [Parameter] public List<Option> Options { get; set; } = new();
+    [Parameter] public HashSet<string> Selected { get; set; } = new();
+    [Parameter] public EventCallback<HashSet<string>> SelectedChanged { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public string Placeholder { get; set; } = "— Select —";
+    [Parameter] public string SearchPlaceholder { get; set; } = "Search…";
+    [Parameter] public string ItemNoun { get; set; } = "item";
+    [Parameter] public string? CssClass { get; set; }
+    [Parameter] public string? Style { get; set; }
+
+    private bool IsOpen;
+    private string searchText = "";
+    private ElementReference rootEl;
+    private ElementReference searchInput;
+    private DotNetObjectReference<MultiSelectDropdown>? dotNetRef;
+
+    private bool HasSearch => !string.IsNullOrWhiteSpace(searchText);
+
+    private List<Option> Matches => Options
+        .Where(o => !HasSearch || o.Label.Contains(searchText, StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    private List<Option> Visible => Matches.Take(MaxRendered).ToList();
+
+    private int HiddenCount => Math.Max(0, Matches.Count - MaxRendered);
+
+    private string TriggerLabel
+    {
+        get
+        {
+            if (Selected.Count == 0) return Placeholder;
+            var first = Options.FirstOrDefault(o => Selected.Contains(o.Value));
+            if (first is null) return $"{Selected.Count} {ItemNoun}(s) selected";
+            return Selected.Count == 1 ? first.Label : $"{first.Label}  +{Selected.Count - 1}";
+        }
+    }
+
+    private async Task Toggle()
+    {
+        if (Disabled) return;
+        IsOpen = !IsOpen;
+        searchText = "";
+        if (IsOpen)
+        {
+            await Task.Yield();
+            try { await JS.InvokeVoidAsync("devKit.focusEl", searchInput); } catch (JSException) { }
+            dotNetRef ??= DotNetObjectReference.Create(this);
+            try { await JS.InvokeVoidAsync("devKit.registerClickOutside", rootEl, dotNetRef); } catch (JSException) { }
+        }
+        else
+        {
+            await Unregister();
+        }
+    }
+
+    [JSInvokable]
+    public void CloseDropdown()
+    {
+        IsOpen = false;
+        searchText = "";
+        StateHasChanged();
+    }
+
+    private Task ToggleValue(string value)
+    {
+        if (!Selected.Add(value)) Selected.Remove(value);
+        return SelectedChanged.InvokeAsync(Selected);
+    }
+
+    private Task SelectAllVisible()
+    {
+        foreach (var opt in Visible) Selected.Add(opt.Value);
+        return SelectedChanged.InvokeAsync(Selected);
+    }
+
+    private Task ClearAll()
+    {
+        Selected.Clear();
+        return SelectedChanged.InvokeAsync(Selected);
+    }
+
+    private void OnSearchInput(ChangeEventArgs e) => searchText = e.Value?.ToString() ?? "";
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape") await Toggle();
+    }
+
+    private async Task Unregister()
+    {
+        try { await JS.InvokeVoidAsync("devKit.unregisterClickOutside", rootEl); } catch (JSException) { }
+    }
+
+    public void Dispose() => dotNetRef?.Dispose();
+}

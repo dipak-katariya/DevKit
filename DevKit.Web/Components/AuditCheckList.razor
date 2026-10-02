@@ -1,0 +1,93 @@
+@inject TfsApiService TfsApi
+
+@if (Checks.Count == 0)
+{
+    <div class="tbl-empty">Select an area and sprint, then Load to run the checks.</div>
+}
+else
+{
+    <div class="audit-summary">
+        <span class="chip" style="background:rgba(248,113,113,.12);color:#fca5a5;">@CountBy(AuditSeverity.Critical) critical</span>
+        <span class="chip" style="background:rgba(251,191,36,.1);color:var(--amber);">@CountBy(AuditSeverity.Warning) warning</span>
+        <span class="chip chip-cyan">@Checks.Sum(c => c.Count) flagged item(s)</span>
+    </div>
+    @foreach (var c in Checks)
+    {
+        <div class="audit-card">
+            <div class="audit-head @(c.Count > 0 ? "clickable" : "")" @onclick="() => Toggle(c)">
+                <span class="sev-dot @SevClass(c)"></span>
+                <span class="audit-title">@c.Title</span>
+                <span class="audit-count @CountClass(c)">@(c.Count == 0 ? "✓ 0" : c.Count.ToString())</span>
+                @if (c.Count > 0)
+                {
+                    <span class="audit-chev">@(c.Expanded ? "▾" : "▸")</span>
+                }
+            </div>
+            @if (c.Expanded && c.Count > 0)
+            {
+                <div class="audit-body">
+                    <table class="req-table">
+                        <thead>
+                            <tr>
+                                <th style="width:64px;">ID</th>
+                                <th>Title</th>
+                                <th style="width:120px;">Assigned</th>
+                                <th style="width:90px;">State</th>
+                                @if (c.ExtraColumn != null) { <th>@c.ExtraColumn</th> }
+                                @if (c.ExtraColumn2 != null) { <th style="width:160px;">@c.ExtraColumn2</th> }
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var r in c.Rows)
+                            {
+                                <tr>
+                                    <td><a class="id-link" href="@TfsApi.WorkItemUrl(r.Item.Project, r.Item.Id)" target="_blank" rel="noopener">#@r.Item.Id</a></td>
+                                    <td>
+                                        <div class="cell-title">@r.Item.Title</div>
+                                        @if (RowMeta(r.Item) is { Length: > 0 } meta) { <div class="cell-meta">@meta</div> }
+                                    </td>
+                                    <td style="font-size:.7rem;">@r.Item.Assigned</td>
+                                    <td><span class="state-pill @StateCls(r.Item.State)">@(string.IsNullOrEmpty(r.Item.State) ? "—" : r.Item.State)</span></td>
+                                    @if (c.ExtraColumn != null) { <td style="font-size:.66rem;color:var(--muted2);">@r.Expected</td> }
+                                    @if (c.ExtraColumn2 != null) { <td style="font-size:.66rem;font-family:var(--mono);">@(r.Expected2 ?? "—")</td> }
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    }
+}
+
+@code {
+    [Parameter] public List<AuditCheck> Checks { get; set; } = new();
+
+    private int CountBy(AuditSeverity sev) => Checks.Where(c => c.Severity == sev).Sum(c => c.Count);
+    private void Toggle(AuditCheck c) { if (c.Count > 0) c.Expanded = !c.Expanded; }
+
+    private static string SevClass(AuditCheck c) => c.Count == 0 ? "sev-ok"
+        : c.Severity switch { AuditSeverity.Critical => "sev-crit", AuditSeverity.Warning => "sev-warn", _ => "sev-info" };
+
+    private static string CountClass(AuditCheck c) => c.Count == 0 ? "cnt-ok"
+        : c.Severity switch { AuditSeverity.Critical => "cnt-crit", AuditSeverity.Warning => "cnt-warn", _ => "cnt-info" };
+
+    private static string StateCls(string? s) => (s ?? "").ToLowerInvariant() switch
+    {
+        "active" => "state-active",
+        "resolved" => "state-resolved",
+        "closed" => "state-closed",
+        _ => "state-new"
+    };
+
+    private static string RowMeta(WorkItem w)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrEmpty(w.Discipline)) parts.Add(w.Discipline);
+        if (string.Equals(w.TaskExecutionType, "Manual", StringComparison.OrdinalIgnoreCase)) parts.Add("Manual");
+        if (!string.IsNullOrEmpty(w.Severity)) parts.Add(w.Severity);
+        if (!string.IsNullOrEmpty(w.RootCause)) parts.Add(w.RootCause);
+        if ((w.OriginalEstimate ?? 0) > 0) parts.Add($"OE {w.OriginalEstimate:0.##}h");
+        return string.Join(" · ", parts);
+    }
+}
