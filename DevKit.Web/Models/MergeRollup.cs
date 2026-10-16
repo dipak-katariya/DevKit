@@ -3,7 +3,7 @@ namespace DevKit.Web.Models;
 /// <summary>Merge outcome for a work item, rolled up from its pull requests and their commits.</summary>
 public enum MergeRollup
 {
-    /// <summary>Nothing to verify — no pull requests were discovered for this work item.</summary>
+    /// <summary>Nothing to verify: no pull requests were discovered for this work item.</summary>
     NoPullRequests,
 
     /// <summary>No pull request has been checked against a target branch yet.</summary>
@@ -22,7 +22,15 @@ public enum MergeRollup
     /// Everything that is missing reached the branch once and was reverted off it. Worth its
     /// own state because it is a regression to chase, not work still to be merged.
     /// </summary>
-    RolledBack
+    RolledBack,
+
+    /// <summary>
+    /// A read that could have found more of the work item's pull requests failed, or the commits of one
+    /// it shows could not be read, so what was checked cannot vouch for the rest. It takes the place of
+    /// the two states that would claim too much, Merged and No PRs; the others already say something is
+    /// missing or unchecked.
+    /// </summary>
+    Incomplete
 }
 
 /// <summary>
@@ -52,11 +60,12 @@ public readonly record struct MergeRollupResult(
         MergeRollup.NotChecked => "Not checked",
         MergeRollup.Merged => "Merged",
         MergeRollup.RolledBack => "Rolled back",
+        MergeRollup.Incomplete => "Not fully checked",
         MergeRollup.Partial => $"Partial {MergedPrs}/{CheckedPrs} PRs",
         _ => "Not merged"
     };
 
-    /// <summary>Commit coverage, e.g. "7 / 10 commits" — blank when no commits were loaded.</summary>
+    /// <summary>Commit coverage, e.g. "7 / 10 commits". Blank when no commits were loaded.</summary>
     public string CommitSummary
     {
         get
@@ -115,6 +124,21 @@ public static class MergeRollupCalculator
         return new MergeRollupResult(ResolveState(counts), counts.MergedPrs, counts.CheckedPrs,
             required.Count(c => c.IsMergedToTargetBranch == true), required.Count, counts.RolledBackCommits,
             compared.Sum(c => c.FilesPresent), compared.Sum(c => c.Files.Count));
+    }
+
+    /// <summary>
+    /// A row's roll-up from the pull requests shown for it. While a read that could have found more of its
+    /// pull requests had failed, or the commits of one shown could not be read, Merged and No PRs give way to
+    /// <see cref="MergeRollup.Incomplete"/>: what was never read cannot be counted as landed. The counts are
+    /// kept, so the row still says how much of what was found landed.
+    /// </summary>
+    public static MergeRollupResult For(RequirementMergingRow row, IReadOnlyCollection<MergingPullRequest> visiblePrs)
+    {
+        var result = For(visiblePrs);
+        var unread = row.DiscoveryIncomplete || visiblePrs.Any(pr => pr.CommitsError is not null);
+        return unread && result.State is MergeRollup.Merged or MergeRollup.NoPullRequests
+            ? result with { State = MergeRollup.Incomplete }
+            : result;
     }
 
     private readonly record struct Counts(

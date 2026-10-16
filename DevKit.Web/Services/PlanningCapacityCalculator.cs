@@ -80,8 +80,8 @@ public static partial class PlanningCapacityCalculator
     }
 
     /// <summary>
-    /// Builds the whole sprint's plan — every scope, every member, every team total, and progress
-    /// to date. <paramref name="today"/> is a parameter rather than the clock so the result is
+    /// Builds the whole sprint's plan: every scope, every member, every team total, and progress
+    /// to date.<paramref name="today"/> is a parameter rather than the clock so the result is
     /// reproducible, and so tests can stand on any day of a sprint.
     /// </summary>
     public static CapacityPlan Build(SprintWorkData data, CapacityPlanningSettings settings, DateTime today)
@@ -129,7 +129,7 @@ public static partial class PlanningCapacityCalculator
 
     /// <summary>
     /// Iteration dates when configured and present; otherwise the fixed length. An iteration with
-    /// no dates used to yield zero working days — and so zero capacity for everyone.
+    /// no dates used to yield zero working days, and so zero capacity for everyone.
     ///
     /// Elapsed days count only days fully behind us: Completed Work is usually logged at the end
     /// of a day, so counting today would mark everyone behind every morning.

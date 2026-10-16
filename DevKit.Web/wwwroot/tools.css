@@ -1,9 +1,9 @@
 /* ═══════════════════════════════════════════════════════
-   TOOL PAGES — the Insight Hub's tabs, the Markdown Viewer,
+   TOOL PAGES: the Sprint Insights tabs, the Markdown Viewer,
    the Workday Calculator, and the responsive rules over them.
    ═══════════════════════════════════════════════════════ */
 
-/* ─── TABBED TOOL (Insight Hub) ─── */
+/* ─── TABBED TOOL (Sprint Insights) ─── */
 .hub{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden;}
 .tabbar{display:flex;gap:2px;border-bottom:1px solid var(--border);flex-shrink:0;overflow-x:auto;}
 .tab{
@@ -247,7 +247,7 @@
   font-size:1rem;border:1px solid;flex-shrink:0;
 }
 
-/* ─── BRANCH DELETE (bdel-: bd- belongs to the burndown) ─── */
+/* ─── BRANCH CLEANUP (bdel-: bd- belongs to the burndown) ─── */
 .bdel-delete-btn{background:rgba(248,113,113,.12);border-color:rgba(248,113,113,.3);color:#fca5a5;}
 .bdel-delete-btn:disabled{opacity:.45;}
 .bdel-stale{display:block;margin-top:4px;color:var(--amber);opacity:1;}
@@ -260,7 +260,7 @@
 .bdel-chip-lock{background:var(--surface2);color:var(--muted2);}
 .bdel-grid{overflow:auto;height:100%;}
 /* Fixed layout keeps virtualised rows a steady height; the minimum width guarantees the Branch column
-   — the only one without a set width — keeps room, and a narrow window scrolls instead of hiding it. */
+   (the only one without a set width) keeps room, and a narrow window scrolls instead of hiding it. */
 table.bdel-table{table-layout:fixed;width:100%;min-width:1080px;}
 table.bdel-table thead th{position:sticky;top:0;z-index:1;background:var(--surface);}
 .bdel-check{width:36px;text-align:center;}

@@ -1,127 +1,134 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using DevKit.Web.Models;
 
 namespace DevKit.Web.Services;
 
 /// <summary>
-/// Reads and writes usersettings.json, with the PAT encrypted at rest. Repository settings and the
-/// local-clone scan live in SettingsService.Repos.cs; the stored shape is <see cref="UserSettings"/>.
+/// The user's settings, held in memory and kept with the PAT encrypted at rest for the server it belongs to: in a
+/// per-user usersettings.json (see <see cref="SettingsFile"/>) in local mode, or in shared mode in the signed-in
+/// person's own file on the DevKit server (see <see cref="ServerSettingsStore"/>). Every change is saved as it is
+/// made, and a save that fails is reported through <see cref="LastSaveError"/> rather than lost. Repository branch
+/// settings live in SettingsService.Repos.cs; the stored shape is <see cref="UserSettings"/>.
 /// </summary>
 public partial class SettingsService
 {
-    private const string SettingsFileName = "usersettings.json";
-    private const string TargetFolderPrefix = "net";
+    private const string PatContextPrefix = "devkit-pat|";
 
-    private readonly string _settingsPath;
+    private const string SaveFailedMessage =
+        "Settings could not be saved. Check that the settings file is not read-only or open in another program, then try again.";
+
+    private const string WindowsSignInRefusedMessage =
+        "Windows sign-in to TFS is only for the Windows account DevKit runs as. Use a personal access token.";
+
+    private static readonly JsonSerializerOptions FileFormat = new() { WriteIndented = true };
+
+    private readonly ISettingsStore _store;
     private readonly ILogger<SettingsService> _logger;
+    private readonly object _sync = new();
     private UserSettings _settings = new();
 
+    // Set when the file could not be read: saving over it would replace what it holds with defaults.
+    private string? _saveBlockedReason;
+
+    // A stored PAT this account cannot decrypt, written back unchanged so a save never erases it.
+    private string? _undecryptablePat;
+
     public SettingsService(ILogger<SettingsService> logger)
+        : this(logger, SettingsFile.ResolvePath(), LegacySettingsPathToMove())
+    {
+    }
+
+    /// <param name="logger">Receives every load and save failure.</param>
+    /// <param name="settingsPath">The settings file to use.</param>
+    /// <param name="legacySettingsPath">
+    /// Where builds before the per-user file kept it, to move from on first start; null to move nothing.
+    /// </param>
+    internal SettingsService(ILogger<SettingsService> logger, string settingsPath, string? legacySettingsPath)
     {
         _logger = logger;
-        _settingsPath = Path.Combine(AppContext.BaseDirectory, SettingsFileName);
-        AdoptFromPreviousTarget(_settingsPath, _logger);
-        Load();
+        var file = new SettingsFile(settingsPath);
+        _store = file;
+        Load(() => MoveLegacySettings(file, legacySettingsPath) ?? file.ReadText());
+        RestrictFileAccess(file);
     }
 
     /// <summary>
-    /// A source build keeps its files in bin/&lt;Configuration&gt;/&lt;target framework&gt;/, so moving to a
-    /// newer target framework moves the binary away from the settings it wrote. When the settings file
-    /// is missing from such a folder, it is copied from the newest older target framework folder beside
-    /// it — bin/Debug/net9.0 for bin/Debug/net10.0 — instead of the app opening unconfigured. The old
-    /// file is left in place. Returns the file adopted from, or null when nothing was.
+    /// Shared mode: one person's settings, kept in their own file on the server. Nothing is in use until
+    /// <see cref="LoadFromStore"/> runs, once the store knows who is signed in.
     /// </summary>
-    public static string? AdoptFromPreviousTarget(string settingsPath, ILogger logger)
+    /// <param name="fixedTfsUrl">The one TFS server everyone works against; people cannot point DevKit elsewhere.</param>
+    internal SettingsService(ILogger<SettingsService> logger, ISettingsStore store, string fixedTfsUrl)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(settingsPath);
-        ArgumentNullException.ThrowIfNull(logger);
-        if (File.Exists(settingsPath))
-        {
-            return null;
-        }
+        _logger = logger;
+        _store = store;
+        FixedTfsUrl = fixedTfsUrl;
+        AllowsWindowsSignIn = false;
+        _settings.Tfs.Url = fixedTfsUrl;
+    }
 
-        try
-        {
-            var previous = FindPreviousTargetSettings(Path.GetFullPath(settingsPath));
-            if (previous is null)
-            {
-                return null;
-            }
+    /// <summary>Where the settings are kept: the settings file, or (shared mode) this person's file on the server.</summary>
+    public string SettingsFilePath => _store.Location;
 
-            File.Copy(previous, settingsPath, overwrite: false);
-            logger.LogInformation("Settings carried over from {Folder} after a target framework upgrade",
-                Path.GetFileName(Path.GetDirectoryName(previous)));
-            return previous;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+    /// <summary>The TFS server everyone in shared mode works against; null in local mode, where the user picks it.</summary>
+    public string? FixedTfsUrl { get; }
+
+    /// <summary>
+    /// Whether TFS may be signed in to as the Windows account DevKit runs as. Always in local mode; in shared mode only
+    /// for the person signed in as that same account, since for anyone else it would act as someone they are not.
+    /// </summary>
+    public bool AllowsWindowsSignIn { get; private set; } = true;
+
+    /// <summary>
+    /// Shared mode: reads this person's settings from the store, through the same checks as a settings file. The
+    /// server is always <see cref="FixedTfsUrl"/>; a PAT saved for another server is dropped rather than sent to this one.
+    /// </summary>
+    /// <param name="allowsWindowsSignIn">Whether this person is the account DevKit runs as.</param>
+    internal void LoadFromStore(bool allowsWindowsSignIn)
+    {
+        lock (_sync)
         {
-            logger.LogError(ex, "Settings from an earlier target framework could not be carried over; starting unconfigured");
-            return null;
+            AllowsWindowsSignIn = allowsWindowsSignIn;
+            Load(_store.ReadText);
         }
     }
 
-    private static string? FindPreviousTargetSettings(string settingsPath)
-    {
-        var outputDir = Path.GetDirectoryName(settingsPath);
-        var configurationDir = Path.GetDirectoryName(outputDir);
-        if (outputDir is null || configurationDir is null || TargetVersion(Path.GetFileName(outputDir)) is not { } current)
-        {
-            return null;
-        }
+    /// <summary>Why the most recent save failed, or null when it succeeded.</summary>
+    public string? LastSaveError { get; private set; }
 
-        return Directory.EnumerateDirectories(configurationDir)
-            .Select(dir => (Dir: dir, Version: TargetVersion(Path.GetFileName(dir))))
-            .Where(candidate => candidate.Version is not null && candidate.Version < current)
-            .OrderByDescending(candidate => candidate.Version)
-            .Select(candidate => Path.Combine(candidate.Dir, Path.GetFileName(settingsPath)))
-            .FirstOrDefault(file => IsConfinedRegularFile(file, configurationDir));
-    }
-
-    /// <summary>The version a build output folder is named for — net10.0 is 10.0 — or null for any other folder.</summary>
-    private static Version? TargetVersion(string folderName) =>
-        folderName.StartsWith(TargetFolderPrefix, StringComparison.OrdinalIgnoreCase)
-        && Version.TryParse(folderName[TargetFolderPrefix.Length..], out var version)
-            ? version
-            : null;
-
-    /// <summary>Exists inside <paramref name="root"/>, and neither the file nor its folder is a link.</summary>
-    private static bool IsConfinedRegularFile(string path, string root)
-    {
-        var full = Path.GetFullPath(path);
-        var rootWithSeparator = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)) + Path.DirectorySeparatorChar;
-        if (!full.StartsWith(rootWithSeparator, StringComparison.Ordinal) || !File.Exists(full))
-        {
-            return false;
-        }
-
-        var file = new FileInfo(full);
-        return !file.Attributes.HasFlag(FileAttributes.ReparsePoint)
-               && file.Directory is { } folder
-               && !folder.Attributes.HasFlag(FileAttributes.ReparsePoint);
-    }
+    /// <summary>What went wrong reading the settings at startup, or null when nothing did.</summary>
+    public string? LoadProblem { get; private set; }
 
     public TfsSettings Tfs => _settings.Tfs;
-    public Dictionary<string, string> RepoPaths => _settings.RepoPaths;
-    public Dictionary<string, string> BaseBranches => _settings.BaseBranches;
-    public string DefaultProjectPath
-    {
-        get => _settings.DefaultProjectPath;
-        set { _settings.DefaultProjectPath = value; Save(); }
-    }
     public string DefaultAreaPath
     {
         get => _settings.DefaultAreaPath;
-        set { _settings.DefaultAreaPath = value; Save(); }
+        set => Update(() => _settings.DefaultAreaPath = value);
     }
     public string DefaultSprint
     {
         get => _settings.DefaultSprint;
-        set { _settings.DefaultSprint = value; Save(); }
+        set => Update(() => _settings.DefaultSprint = value);
+    }
+
+    /// <summary>
+    /// Whether pages start on the sprint running today rather than on <see cref="DefaultSprint"/>. Settings saved before
+    /// the choice existed count as "current" unless they name a sprint, so a sprint picked earlier is kept.
+    /// </summary>
+    public bool DefaultSprintIsCurrent
+    {
+        get => _settings.DefaultSprintMode switch
+        {
+            DefaultSprintMode.Current => true,
+            DefaultSprintMode.Chosen => false,
+            _ => string.IsNullOrEmpty(_settings.DefaultSprint)
+        };
+        set => Update(() => _settings.DefaultSprintMode = value ? DefaultSprintMode.Current : DefaultSprintMode.Chosen);
     }
     public string DefaultRepoId
     {
         get => _settings.DefaultRepoId;
-        set { _settings.DefaultRepoId = value; Save(); }
+        set => Update(() => _settings.DefaultRepoId = value);
     }
 
     // ═══ MOST-USED REPOSITORIES ═══
@@ -136,38 +143,39 @@ public partial class SettingsService
     public int MostUsedRepoCount
     {
         get => Math.Clamp(_settings.MostUsedRepoCount, 0, MaxMostUsedRepoCount);
-        set
+        set => Update(() =>
         {
             var clamped = Math.Clamp(value, 0, MaxMostUsedRepoCount);
             _settings.MostUsedRepoCount = clamped;
             TrimMostUsedRepos(clamped);
-            Save();
-        }
+        });
     }
 
     /// <summary>
-    /// Pinned repository ids, in the order the user picked them — that order is the display order.
+    /// Pinned repository ids, in the order the user picked them. That order is the display order.
     /// Ids, not names: names are not unique across projects.
     /// </summary>
     public IReadOnlyList<string> MostUsedRepoIds => _settings.MostUsedRepoIds;
 
-    public void SetMostUsedRepoIds(IEnumerable<string>? repoIds)
+    public void SetMostUsedRepoIds(IEnumerable<string>? repoIds) =>
+        Update(() => _settings.MostUsedRepoIds = DistinctIds(repoIds, MostUsedRepoCount));
+
+    /// <summary>Repository ids trimmed, without blanks or repeats, in their order, and at most <paramref name="cap"/> of them.</summary>
+    private static List<string> DistinctIds(IEnumerable<string>? ids, int cap)
     {
-        var deduped = new List<string>();
+        var distinct = new List<string>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var cap = MostUsedRepoCount;
-        foreach (var id in repoIds ?? Enumerable.Empty<string>())
+        foreach (var id in ids ?? Enumerable.Empty<string>())
         {
             // Checked before adding, not after: the other way round a cap of zero still kept one.
-            if (deduped.Count >= cap) break;
+            if (distinct.Count >= cap) break;
             if (string.IsNullOrWhiteSpace(id)) continue;
 
             var trimmed = id.Trim();
-            if (seen.Add(trimmed)) deduped.Add(trimmed);
+            if (seen.Add(trimmed)) distinct.Add(trimmed);
         }
 
-        _settings.MostUsedRepoIds = deduped;
-        Save();
+        return distinct;
     }
 
     private void TrimMostUsedRepos(int count)
@@ -178,22 +186,20 @@ public partial class SettingsService
     public string TeamName
     {
         get => _settings.TeamName;
-        set { _settings.TeamName = value; Save(); }
+        set => Update(() => _settings.TeamName = value);
     }
-    public bool IsConfigured => Tfs.IsConfigured;
+    public bool IsConfigured => Tfs.IsConfigured && (Tfs.Auth != TfsAuthMode.Windows || AllowsWindowsSignIn);
 
-    public string GetRepoPath(string repoId) =>
-        _settings.RepoPaths.TryGetValue(repoId, out var p) ? p : "";
+    /// <summary>True when a PAT is stored, without handing it out.</summary>
+    public bool HasStoredPat => !string.IsNullOrEmpty(_settings.Tfs.Pat);
 
-    public void SetRepoPath(string repoId, string path)
-    {
-        _settings.RepoPaths[repoId] = path;
-        Save();
-    }
+    /// <summary>
+    /// True when <paramref name="url"/> is the server the stored PAT belongs to, however it was typed: the
+    /// same comparison that decides whether the stored PAT decrypts.
+    /// </summary>
+    public bool IsStoredServer(string url) => SameServer(url, _settings.Tfs.Url);
 
     // ═══ CAPACITY PLANNING ═══
-
-    private readonly object _capacityPlanningSync = new();
 
     /// <summary>
     /// The Capacity Planning formula settings, sanitised. The first read on a machine that
@@ -206,7 +212,7 @@ public partial class SettingsService
     {
         get
         {
-            lock (_capacityPlanningSync)
+            lock (_sync)
             {
                 if (_settings.CapacityPlanning is null)
                 {
@@ -222,68 +228,174 @@ public partial class SettingsService
     public void SaveCapacityPlanning(CapacityPlanningSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        lock (_capacityPlanningSync)
+        Update(() => _settings.CapacityPlanning = settings.Normalized());
+    }
+
+    /// <summary>
+    /// Sets the server, how DevKit signs in to it, and the PAT together, since the PAT is encrypted for that
+    /// server. Windows sign-in keeps no PAT: one passed with it is ignored, and one stored before is dropped,
+    /// from the backup too. In shared mode the server is always <see cref="FixedTfsUrl"/>, and Windows sign-in is
+    /// refused unless <see cref="AllowsWindowsSignIn"/>. Returns false when the save failed or was refused;
+    /// <see cref="LastSaveError"/> says why.
+    /// </summary>
+    public bool SaveTfs(string url, string pat, TfsAuthMode auth = TfsAuthMode.Pat)
+    {
+        lock (_sync)
         {
-            _settings.CapacityPlanning = settings.Normalized();
-            Save();
+            if (auth == TfsAuthMode.Windows && !AllowsWindowsSignIn)
+            {
+                LastSaveError = WindowsSignInRefusedMessage;
+                Changed?.Invoke();
+                return false;
+            }
+
+            var dropsStoredPat = auth == TfsAuthMode.Windows && (HasStoredPat || _undecryptablePat is not null);
+            _settings.Tfs.Url = FixedTfsUrl ?? url;
+            _settings.Tfs.Auth = auth;
+            _settings.Tfs.Pat = auth == TfsAuthMode.Windows ? "" : pat;
+            _undecryptablePat = null;
+            return dropsStoredPat ? SaveDroppingOldPat() : Save();
         }
     }
 
-    public void SaveTfs(string url, string pat)
+    /// <summary>
+    /// Writes the settings to disk. Returns false, with the reason in <see cref="LastSaveError"/>, when
+    /// they could not be written; the settings in memory stay in use either way.
+    /// </summary>
+    public bool Save()
     {
-        _settings.Tfs.Url = url;
-        _settings.Tfs.Pat = pat;
-        Save();
+        lock (_sync)
+        {
+            try
+            {
+                return WriteSettings();
+            }
+            finally
+            {
+                Changed?.Invoke();
+            }
+        }
     }
 
-    public void Save()
+    /// <summary>
+    /// Raised after every save, whether it worked or not, and after a change that was refused, so whatever shows the
+    /// settings (the top bar's connection state, a save problem) can show them again. Handlers must not save.
+    /// </summary>
+    public event Action? Changed;
+
+    private bool WriteSettings()
+    {
+        if (_saveBlockedReason is not null)
+        {
+            LastSaveError = _saveBlockedReason;
+            return false;
+        }
+
+        try
+        {
+            _store.Write(JsonSerializer.Serialize(BuildPersistableCopy(), FileFormat));
+            LastSaveError = null;
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or CryptographicException)
+        {
+            _logger.LogError(ex, "Settings could not be saved");
+            LastSaveError = SaveFailedMessage;
+            return false;
+        }
+    }
+
+    /// <summary>Applies one change and saves it, one caller at a time.</summary>
+    private bool Update(Action change)
+    {
+        lock (_sync)
+        {
+            change();
+            return Save();
+        }
+    }
+
+    /// <summary>Puts loaded settings in use. True when they need saving again: the PAT was stored in an older form.</summary>
+    private bool Apply(UserSettings loaded)
+    {
+        _settings = loaded;
+        var stored = loaded.Tfs.Pat ?? "";
+        loaded.Tfs.Pat = DecryptPat(stored, loaded.Tfs.Url);
+        if (FixedTfsUrl is not null && !SameServer(loaded.Tfs.Url, FixedTfsUrl))
+        {
+            // The token belongs to another server, so it must never be sent to this one.
+            loaded.Tfs.Url = FixedTfsUrl;
+            loaded.Tfs.Pat = "";
+            _undecryptablePat = null;
+        }
+
+        return !string.IsNullOrEmpty(loaded.Tfs.Pat) && !SecretProtector.IsCurrent(stored);
+    }
+
+    /// <summary>
+    /// Saves a change that replaces the stored PAT: one read in an older form (plaintext, or encrypted without its
+    /// server) saved in the current one, or one Windows sign-in no longer keeps. The backup that save keeps is the
+    /// old file, PAT and all, so it is deleted rather than left behind. Returns false when the save failed.
+    /// </summary>
+    private bool SaveDroppingOldPat()
+    {
+        if (!Save())
+        {
+            return false;
+        }
+
+        try
+        {
+            _store.DeleteBackup();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogError(ex, "The settings backup still holding the replaced PAT could not be deleted");
+        }
+
+        return true;
+    }
+
+    private void RestrictFileAccess(SettingsFile file)
     {
         try
         {
-            var json = JsonSerializer.Serialize(BuildPersistableCopy(), new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(_settingsPath, json);
+            file.RestrictExistingFiles();
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or InvalidOperationException)
         {
-            _logger.LogError(ex, "Failed to save settings");
-        }
-    }
-
-    private void Load()
-    {
-        try
-        {
-            if (!File.Exists(_settingsPath)) return;
-
-            var json = File.ReadAllText(_settingsPath);
-            _settings = JsonSerializer.Deserialize<UserSettings>(json) ?? new UserSettings();
-
-            var storedPat = _settings.Tfs.Pat;
-            _settings.Tfs.Pat = DecryptPat(storedPat);
-
-            // Migrate a legacy plaintext PAT to encrypted-at-rest on first load after upgrade.
-            if (!string.IsNullOrEmpty(_settings.Tfs.Pat) && !SecretProtector.IsProtected(storedPat))
-                Save();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to load settings, using defaults");
-            _settings = new UserSettings();
+            _logger.LogError(ex, "The settings file could not be limited to the current Windows account");
         }
     }
 
-    private string DecryptPat(string stored)
+    private string DecryptPat(string stored, string? url)
     {
+        _undecryptablePat = null;
         try
         {
-            return SecretProtector.Unprotect(stored);
+            return SecretProtector.Unprotect(stored, PatContext(url));
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is CryptographicException or FormatException)
         {
-            _logger.LogWarning(ex, "Stored PAT could not be decrypted (copied from another user or machine?). Re-enter it in Settings.");
+            _logger.LogError(ex,
+                "The stored PAT could not be decrypted: it was saved by another Windows account or machine, or for another server. " +
+                "It is kept unchanged; enter the PAT again in Settings to replace it.");
+            _undecryptablePat = stored;
             return "";
         }
     }
+
+    /// <summary>What the PAT is encrypted for: the server, written the same way however it was typed.</summary>
+    private static string PatContext(string? url) =>
+        PatContextPrefix + (url ?? "").Trim().TrimEnd('/').ToUpperInvariant();
+
+    private static bool SameServer(string? url, string? other) =>
+        string.Equals(PatContext(url), PatContext(other), StringComparison.Ordinal);
+
+    private string PersistedPat() =>
+        string.IsNullOrEmpty(_settings.Tfs.Pat) && _undecryptablePat is not null
+            ? _undecryptablePat
+            : SecretProtector.Protect(_settings.Tfs.Pat, PatContext(_settings.Tfs.Url));
 
     // The PAT is held in memory as plaintext (the API client needs it) but persisted
     // encrypted. Build a copy with the protected PAT so the in-memory value is untouched.
@@ -292,18 +404,17 @@ public partial class SettingsService
         Tfs = new TfsSettings
         {
             Url = _settings.Tfs.Url,
-            Pat = SecretProtector.Protect(_settings.Tfs.Pat),
+            Auth = _settings.Tfs.Auth,
+            Pat = PersistedPat(),
             ApiVersion = _settings.Tfs.ApiVersion
         },
-        DefaultProjectPath = _settings.DefaultProjectPath,
         DefaultAreaPath = _settings.DefaultAreaPath,
         DefaultSprint = _settings.DefaultSprint,
+        DefaultSprintMode = _settings.DefaultSprintMode,
         DefaultRepoId = _settings.DefaultRepoId,
         MostUsedRepoCount = _settings.MostUsedRepoCount,
         MostUsedRepoIds = _settings.MostUsedRepoIds,
         TeamName = _settings.TeamName,
-        RepoPaths = _settings.RepoPaths,
-        BaseBranches = _settings.BaseBranches,
         DeliverableTags = _settings.DeliverableTags,
         CapacityPlanning = _settings.CapacityPlanning,
         CodeMergingTargetBranch = _settings.CodeMergingTargetBranch,

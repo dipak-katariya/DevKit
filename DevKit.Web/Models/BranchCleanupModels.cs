@@ -2,7 +2,7 @@ using DevKit.Web.Services;
 
 namespace DevKit.Web.Models;
 
-/// <summary>What Branch Delete loads: the repositories always; the area and sprints when the cleanup is sprint-driven.</summary>
+/// <summary>What Branch Cleanup loads: the repositories always; the area and sprints when the cleanup is sprint-driven.</summary>
 public sealed class BranchCleanupQuery
 {
     public IReadOnlyList<TfsRepo> Repos { get; init; } = Array.Empty<TfsRepo>();
@@ -16,7 +16,7 @@ public sealed class BranchCleanupQuery
     public string TeamName { get; init; } = "";
 
     /// <summary>
-    /// Branches Settings configures per repository id — the QA and merging branches — which are
+    /// Branches Settings configures per repository id (the QA and merging branches), which are
     /// never offered for deletion whatever they are called.
     /// </summary>
     public IReadOnlyDictionary<string, IReadOnlyList<string>> ConfiguredBranchesByRepoId { get; init; } =
@@ -81,7 +81,7 @@ public sealed class BranchCleanupResult
 {
     public List<BranchCleanupRow> Rows { get; } = new();
 
-    /// <summary>Per-repository problems — a listing that failed or was cut short — shown above the grid.</summary>
+    /// <summary>Per-repository problems (a listing that failed or was cut short), shown above the grid.</summary>
     public List<string> Warnings { get; } = new();
 
     public int SprintWorkItemCount { get; set; }

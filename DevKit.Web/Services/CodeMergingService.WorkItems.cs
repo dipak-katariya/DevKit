@@ -20,7 +20,7 @@ public partial class CodeMergingService
     }
 
     /// <summary>
-    /// Bugs and Change Requests are always included without needing the Deliverable tag —
+    /// Bugs and Change Requests are always included without needing the Deliverable tag:
     /// nobody tags a production bug as a deliverable, but its fix still has to reach the
     /// release branch. Paths are escaped because they end up inside WIQL string literals.
     /// </summary>
@@ -46,31 +46,49 @@ public partial class CodeMergingService
 
     private static string Quote(IEnumerable<string> values) => string.Join(",", values.Select(v => "'" + v + "'"));
 
-    private async Task<List<RequirementMergingRow>> FetchRequirementsAsync(string project, List<int> ids, CancellationToken ct)
+    /// <summary>
+    /// Builds a row for each matched work item, in batches. One TFS cannot return (deleted or moved since the
+    /// query ran, or not readable with this token) is left out of its batch (errorPolicy=omit) rather than
+    /// failing the whole sheet, and is named on the bundle so the page can say which are missing.
+    /// </summary>
+    private async Task LoadRequirementsAsync(CodeMergingBundle bundle, string project, List<int> ids, CancellationToken ct)
     {
         var rows = new List<RequirementMergingRow>(ids.Count);
         foreach (var chunk in ids.Chunk(WorkItemBatchSize))
         {
             var url = _req.ProjectApi(project,
-                $"wit/workitems?ids={string.Join(",", chunk)}&fields={WorkItemFields}&api-version={_req.Ver}");
-            var data = await TfsThrottle.RunAsync(() => _req.GetJsonAsync(url, ct), ct);
-
-            foreach (var wi in TfsJson.Values(data))
-            {
-                var id = TfsJson.Int(wi, "id");
-                var f = wi.TryGetProperty("fields", out var fields) ? fields : default;
-                rows.Add(new RequirementMergingRow
-                {
-                    WorkItemId = id,
-                    Title = TfsJson.Str(f, "System.Title", "(no title)"),
-                    State = TfsJson.Str(f, "System.State"),
-                    AssignedTo = TfsJson.Person(f, "System.AssignedTo"),
-                    WorkItemType = TfsJson.Str(f, "System.WorkItemType"),
-                    WorkItemUrl = $"{_req.Url}/{Uri.EscapeDataString(project)}/_workitems/edit/{id}"
-                });
-            }
+                $"wit/workitems?ids={string.Join(",", chunk)}&fields={WorkItemFields}&errorPolicy=omit&api-version={_req.Ver}");
+            var data = await _req.GetJsonAsync(url, ct);
+            rows.AddRange(TfsJson.ObjectValues(data).Select(wi => ParseRequirement(wi, project)));
         }
-        return rows;
+
+        bundle.Requirements = rows;
+        bundle.UnreadWorkItemIds = TfsJson.MissingIds(ids, rows.Select(r => r.WorkItemId));
+        if (bundle.UnreadWorkItemIds.Count > 0)
+        {
+            _logger.LogWarning(
+                "{Count} of {Matched} work items matched in {Project} could not be read and were left off the sheet (deleted, moved, or not readable with this PAT): {Ids}",
+                bundle.UnreadWorkItemIds.Count, ids.Count, project, string.Join(", ", bundle.UnreadWorkItemIds));
+        }
     }
+
+    private RequirementMergingRow ParseRequirement(JsonElement wi, string project)
+    {
+        var id = TfsJson.Int(wi, "id");
+        var f = wi.TryGetProperty("fields", out var fields) ? fields : default;
+        return new RequirementMergingRow
+        {
+            WorkItemId = id,
+            Title = TfsJson.Str(f, "System.Title", "(no title)"),
+            State = TfsJson.Str(f, "System.State"),
+            AssignedTo = TfsJson.Person(f, "System.AssignedTo"),
+            WorkItemType = TfsJson.Str(f, "System.WorkItemType"),
+            WorkItemUrl = $"{_req.Url}/{Uri.EscapeDataString(project)}/_workitems/edit/{id}"
+        };
+    }
+
+    /// <summary>One warning per work item TFS did not return, for the sheet's list of failed reads.</summary>
+    private static IEnumerable<DiscoveryWarning> UnreadWorkItemWarnings(IEnumerable<int> ids) =>
+        ids.Select(id => new DiscoveryWarning($"Work item #{id}", UnreadWorkItemReason));
 
 }

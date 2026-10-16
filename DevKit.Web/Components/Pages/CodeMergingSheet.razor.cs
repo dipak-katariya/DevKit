@@ -5,7 +5,7 @@ using DevKit.Web.Services;
 namespace DevKit.Web.Components.Pages;
 
 /// <summary>
-/// State, the restored defaults and everything that shapes the rows already loaded — filtering,
+/// State, the restored defaults and everything that shapes the rows already loaded: filtering,
 /// expansion and the deferred commit reads. Choosing and loading a sprint lives in
 /// CodeMergingSheet.Loading.cs.
 /// </summary>
@@ -13,9 +13,9 @@ public partial class CodeMergingSheet
 {
     private const int SearchDebounceMs = 220;
 
-    private List<TfsArea> areas => PageState.TfsData.Areas;
-    private List<TfsIteration> iterations => PageState.TfsData.Iterations;
-    private List<TfsRepo> repos => PageState.TfsData.Repos;
+    private IReadOnlyList<TfsArea> areas => PageState.TfsData.Areas;
+    private IReadOnlyList<TfsIteration> iterations => PageState.TfsData.Iterations;
+    private IReadOnlyList<TfsRepo> repos => PageState.TfsData.Repos;
 
     /// <summary>
     /// Every selected repository costs two pull-request pages plus a branch listing, and a
@@ -61,14 +61,25 @@ public partial class CodeMergingSheet
     private string? expandedPrKey;
     private CancellationTokenSource? searchDebounce;
 
+    // The sheet's reads stop when it closes. Closing only ends its wait for the shared metadata: that load goes
+    // on for the next page.
+    private readonly PageLifetime page = new();
+
+    // Kept apart from the bundle's message, which the next sheet load replaces.
+    private string? metadataError;
+
+    private const string BusyReason = "Wait for the load or check that is running to finish.";
+
+    private MergingSheetActivity Activity => new(loading, verifying, loadingRest, ComparingCode);
+
     private bool CanLoad => selectedArea != null && selectedSprints.Count > 0
-                            && selectedRepoIds.Count > 0 && !loading;
+                            && selectedRepoIds.Count > 0 && Activity.IsIdle;
 
     private bool CanVerify =>
-        bundle.Requirements.Count > 0 && MergingBranchByRepoId.Count > 0 && !verifying && !ComparingCode && !loadingRest;
+        bundle.Requirements.Count > 0 && MergingBranchByRepoId.Count > 0 && !Activity.IsChecking;
 
     private const string VerifyAllTooltip =
-        "Quick check: look for every commit — or a copy of it — on each repository's merging branch. " +
+        "Quick check: look for every commit (or a copy of it) on each repository's merging branch. " +
         "Reads the commits of rows not loaded yet first.";
 
     /// <summary>Which stage Verify All is at, since reading a large sprint's commits takes a moment of its own.</summary>
@@ -94,11 +105,11 @@ public partial class CodeMergingSheet
             }
             return MergingBranchByRepoId.Count == 0
                 ? "Set a merging target branch for at least one repository under Branch setup."
-                : "Wait for the load or check that is running to finish.";
+                : BusyReason;
         }
     }
 
-    private List<TfsRepo> AvailableRepos => selectedArea == null
+    private IReadOnlyList<TfsRepo> AvailableRepos => selectedArea == null
         ? repos
         : repos.Where(r => string.Equals(r.Project, selectedArea.Project, StringComparison.OrdinalIgnoreCase)).ToList();
 
@@ -137,31 +148,19 @@ public partial class CodeMergingSheet
     {
         if (!Settings.IsConfigured) return;
 
-        if (!PageState.TfsData.IsLoaded)
+        var load = await PageState.TfsData.EnsureLoadedAsync(page.Token);
+        if (load.Cancelled)
         {
-            try
-            {
-                PageState.TfsData.Projects = await TfsApi.GetProjectsAsync();
-                PageState.TfsData.Repos = await TfsApi.GetRepositoriesAsync();
-                foreach (var p in PageState.TfsData.Projects)
-                {
-                    PageState.TfsData.Areas.AddRange(await TfsApi.GetAreasAsync(p.Name));
-                    PageState.TfsData.Iterations.AddRange(await TfsApi.GetIterationsAsync(p.Name));
-                }
-                PageState.TfsData.IsLoaded = true;
-            }
-            catch (Exception ex)
-            {
-                bundle.ErrorMessage = $"Failed to load TFS metadata: {ex.Message}";
-            }
+            return;
         }
+        metadataError = load.ErrorMessage;
 
         RestoreDefaults();
     }
 
     /// <summary>
     /// Applies the defaults from Settings. Each value is checked against the metadata that
-    /// actually loaded — a renamed or deleted area would otherwise leave the dropdown showing
+    /// actually loaded. A renamed or deleted area would otherwise leave the dropdown showing
     /// a raw "name|||path|||project" string for something that no longer exists.
     /// </summary>
     private void RestoreDefaults()
@@ -180,13 +179,13 @@ public partial class CodeMergingSheet
         pendingBranchLoad = selectedRepoIds.Count > 0;
     }
 
-    /// <summary>The configured sprint is pre-selected; more can be added from the dropdown.</summary>
+    /// <summary>The default sprint from Settings is pre-selected; more can be added from the dropdown.</summary>
     private void RestoreSprints()
     {
-        var saved = Settings.DefaultSprint;
-        if (string.IsNullOrEmpty(saved)) return;
-        if (iterations.Any(i => string.Equals(i.Path, saved, StringComparison.OrdinalIgnoreCase)))
-            selectedSprints.Add(saved);
+        if (AreaSprintSelect.DefaultSprint(Settings, iterations, selectedArea, DateTime.Today) is { } sprint)
+        {
+            selectedSprints.Add(sprint);
+        }
     }
 
     /// <summary>
@@ -319,9 +318,13 @@ public partial class CodeMergingSheet
 
     private int LoadedRowCount => bundle.Requirements.Count - PendingRowCount;
 
+    /// <summary>Pending rows whose commit read failed rather than was put off; Load all reads them again.</summary>
+    private int FailedRowCount => bundle.Requirements.Count(r => r.CommitsError is not null);
+
     private string PendingTooltip =>
-        $"Commits are loaded for the first {LoadedRowCount} work item(s). The other {PendingRowCount} load when " +
-        "you open them — or load them all now.";
+        $"Commits are loaded for {LoadedRowCount} work item(s). The other {PendingRowCount} load when " +
+        "you open them, or load them all now." +
+        (FailedRowCount > 0 ? $" {FailedRowCount} of them could not be read and are tried again." : "");
 
     /// <summary>
     /// Fills in every deferred row. Bounded concurrency rather than one big WhenAll: the rest
@@ -340,9 +343,13 @@ public partial class CodeMergingSheet
         {
             foreach (var chunk in bundle.Requirements.Where(r => !r.CommitsLoaded).Chunk(5))
             {
-                await Task.WhenAll(chunk.Select(r => Merging.LoadRowCommitsAsync(r)));
+                await Task.WhenAll(chunk.Select(r => Merging.LoadRowCommitsAsync(r, page.Token)));
                 StateHasChanged();
             }
+        }
+        catch (OperationCanceledException ex) when (page.Token.IsCancellationRequested)
+        {
+            Log.LogDebug(ex, "The remaining commits stopped loading because the page was left");
         }
         finally
         {
@@ -385,7 +392,11 @@ public partial class CodeMergingSheet
         StateHasChanged();
         try
         {
-            await Merging.LoadRowCommitsAsync(row);
+            await Merging.LoadRowCommitsAsync(row, page.Token);
+        }
+        catch (OperationCanceledException ex) when (page.Token.IsCancellationRequested)
+        {
+            Log.LogDebug(ex, "Commits of work item {WorkItemId} stopped loading because the page was left", row.WorkItemId);
         }
         finally
         {
@@ -394,7 +405,7 @@ public partial class CodeMergingSheet
         Refilter();
     }
 
-    // Only one pull request's commits are on screen at a time — a single nullable key is
+    // Only one pull request's commits are on screen at a time. A single nullable key is
     // simpler state than a dictionary of booleans, and keeps the rendered tree small.
     private void TogglePr(string key) => expandedPrKey = expandedPrKey == key ? null : key;
 
@@ -420,6 +431,7 @@ public partial class CodeMergingSheet
         new() { Value = MergingSheetFilter.Partial, Label = "Partially merged" },
         new() { Value = MergingSheetFilter.NotMerged, Label = "Not merged" },
         new() { Value = MergingSheetFilter.RolledBack, Label = "Rolled back" },
+        new() { Value = MergingSheetFilter.Incomplete, Label = "Not fully checked" },
         new() { Value = MergingSheetFilter.CodeIssues, Label = "Code differs or not compared" },
         new() { Value = MergingSheetFilter.Unchecked, Label = "Not checked" },
         new() { Value = MergingSheetFilter.NoPrs, Label = "No pull requests" }
@@ -432,5 +444,6 @@ public partial class CodeMergingSheet
 
         // Leaving the page ends its comparison: nothing would be left to show the result.
         CancellationSources.CancelAndDispose(ref codeRun);
+        page.Dispose();
     }
 }

@@ -14,7 +14,7 @@
                 <th class="cp-num" title="Planned hours (revised else original) and Planning % against the target">Planning</th>
                 <th class="cp-num" title="Completed Work on non-bug tasks, as a share of planned hours">Completed</th>
                 <th class="cp-num" title="Remaining Work on non-bug tasks, as a share of planned hours">Remaining</th>
-                <th class="cp-num" title="Completed Work on bug work, as a share of all hours logged — not counted as Completed">Bugs</th>
+                <th class="cp-num" title="Completed Work on bug work, as a share of all hours logged. Not counted as Completed.">Bugs</th>
                 <th style="width:44px;"></th>
             </tr>
         </thead>
@@ -64,7 +64,7 @@ else
                 @if (IsAi) { <th class="cp-num" title="(Actual − carved-out hours) × @OverPlanLabel">AI h</th> }
                 <th class="cp-num" title="@(IsAi ? "Actual + AI hours" : "Regular mode: the target is the actual capacity")">Target (@TargetLabel)</th>
                 <th class="cp-num" title="Sum of Original Estimate">Planned · Plan</th>
-                <th class="cp-num" title="Sum of Revised-else-Original — what Planning % uses">Planned · Review</th>
+                <th class="cp-num" title="Sum of Revised, else Original. Planning % uses this.">Planned · Review</th>
                 <th class="cp-num" title="Deliverable hours and their share of planned hours">Deliverable</th>
                 <th class="cp-num" title="Non-Deliverable hours and their share of planned hours">Non-Deliv</th>
                 <th style="width:90px;text-align:center;" title="Planned · Review ÷ Target">Planning %</th>
@@ -164,7 +164,7 @@ else
     private static string ProgressTitle(double completedPct, double? expectedPct, double remaining, double completed)
     {
         if (IsFinished(remaining, completed))
-            return $"{completedPct:0.#}% of planned hours used and nothing remaining — finished under estimate";
+            return $"{completedPct:0.#}% of planned hours used and nothing remaining, so it finished under estimate";
         return expectedPct is { } expected
             ? $"{completedPct:0.#}% of planned hours done; {expected:0.#}% of the available days have passed"
             : $"{completedPct:0.#}% of planned hours done";

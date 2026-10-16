@@ -1,10 +1,9 @@
-@inject IJSRuntime JS
-@implements IDisposable
+@inherits ClickOutsideComponent
 
 @* Searchable single-select. Only a bounded slice is rendered, so a list with thousands of
-   options cannot flood the DOM — the same cap BranchPicker and MultiSelectDropdown use. *@
+   options cannot flood the DOM. BranchPicker and MultiSelectDropdown use the same cap. *@
 
-<div class="gdd @(IsOpen ? "gdd-open" : "") @CssClass" @ref="rootEl" style="@Style">
+<div class="gdd @(IsOpen ? "gdd-open" : "") @CssClass" @ref="Root" style="@Style">
     <div class="gdd-trigger" @onclick="Toggle" @onclick:stopPropagation>
         <span class="gdd-value @(string.IsNullOrEmpty(Value) ? "gdd-placeholder" : "")">
             @(string.IsNullOrEmpty(Value) ? Placeholder : GetDisplayText(Value))
@@ -40,7 +39,7 @@
                     {
                         var idx = flatIdx++;
                         <div class="gdd-item @(opt.Value == Value ? "gdd-item-active" : "") @(highlightIdx == idx ? "gdd-item-hl" : "")"
-                             title="@opt.Label" @onclick="() => Select(opt.Value, opt.Label)">
+                             title="@opt.Label" @onclick="() => Select(opt.Value)">
                             @opt.Label
                         </div>
                     }
@@ -53,7 +52,7 @@
             </div>
             @if (render.Hidden > 0)
             {
-                <div class="bpk-more">@render.Hidden more — keep typing to narrow</div>
+                <div class="bpk-more">@render.Hidden more. Type to narrow the list.</div>
             }
         </div>
     }
@@ -69,7 +68,7 @@
     [Parameter] public string? Value { get; set; }
     [Parameter] public EventCallback<string> ValueChanged { get; set; }
     [Parameter] public EventCallback<ChangeEventArgs> OnChange { get; set; }
-    [Parameter] public string Placeholder { get; set; } = "— Select —";
+    [Parameter] public string Placeholder { get; set; } = "Select";
     [Parameter] public string? EmptyLabel { get; set; }
     [Parameter] public string? EmptyValue { get; set; }
     [Parameter] public bool ShowEmptyOption { get; set; } = true;
@@ -82,13 +81,13 @@
     private bool IsOpen;
     private string searchText = "";
     private int highlightIdx = -1;
-    private ElementReference rootEl;
     private ElementReference searchInput;
-    private DotNetObjectReference<GlassDropdown>? dotNetRef;
+
+    protected override bool IsPanelOpen => IsOpen;
 
     private bool HasGroups => Groups is { Count: > 0 };
 
-    // Matches the pre-cap behaviour: an empty Options list still offers the "— All —" row, which
+    // Matches the pre-cap behaviour: an empty Options list still offers the "All" row, which
     // is what the type and assignee filters show before any work items have loaded.
     private bool HasSource => HasGroups || Options != null;
 
@@ -98,7 +97,7 @@
     /// <summary>
     /// Filters and caps in a single pass, and is built once per render. The previous version
     /// resolved each row's highlight position by rebuilding and rescanning the filtered list,
-    /// which made rendering O(n²) — the reason a large list froze the page on every keystroke.
+    /// which made rendering O(n²). That is why a large list froze the page on every keystroke.
     /// </summary>
     private RenderModel BuildRender()
     {
@@ -159,40 +158,36 @@
 
     private async Task Toggle()
     {
-        if (Disabled) return;
+        if (Disabled)
+        {
+            return;
+        }
         IsOpen = !IsOpen;
         searchText = "";
         highlightIdx = -1;
         if (IsOpen)
         {
             await Task.Yield();
-            try { await JS.InvokeVoidAsync("devKit.focusEl", searchInput); } catch (JSException) { }
-            dotNetRef ??= DotNetObjectReference.Create(this);
-            try { await JS.InvokeVoidAsync("devKit.registerClickOutside", rootEl, dotNetRef); } catch (JSException) { }
-        }
-        else
-        {
-            await Unregister();
+            await FocusAsync(searchInput);
         }
     }
 
-    [JSInvokable]
-    public void CloseDropdown()
+    protected override Task CloseFromOutsideAsync()
     {
         IsOpen = false;
         searchText = "";
         StateHasChanged();
+        return Task.CompletedTask;
     }
 
-    private Task SelectEmpty() => Select(EmptyValue ?? "", EmptyLabel ?? Placeholder);
+    private Task SelectEmpty() => Select(EmptyValue ?? "");
 
-    private async Task Select(string value, string label)
+    private async Task Select(string value)
     {
         Value = value;
         IsOpen = false;
         searchText = "";
         highlightIdx = -1;
-        await Unregister();
         await ValueChanged.InvokeAsync(value);
         await OnChange.InvokeAsync(new ChangeEventArgs { Value = value });
     }
@@ -213,19 +208,9 @@
         else if (e.Key == "ArrowUp") highlightIdx = Math.Max(highlightIdx - 1, 0);
         else if (e.Key == "Enter" && highlightIdx >= 0 && highlightIdx < visible.Count)
         {
-            var opt = visible[highlightIdx];
-            await Select(opt.Value, opt.Label);
+            await Select(visible[highlightIdx].Value);
         }
     }
-
-    private async Task Unregister()
-    {
-        try { await JS.InvokeVoidAsync("devKit.unregisterClickOutside", rootEl); } catch (JSException) { }
-    }
-
-    // Previously declared without @implements IDisposable, so Blazor never called it and every
-    // dropdown leaked its DotNetObjectReference for the life of the circuit.
-    public void Dispose() => dotNetRef?.Dispose();
 
     public class DropdownOption
     {

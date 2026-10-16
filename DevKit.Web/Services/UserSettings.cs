@@ -1,6 +1,18 @@
+using System.Text.Json.Serialization;
 using DevKit.Web.Models;
 
 namespace DevKit.Web.Services;
+
+/// <summary>How the default sprint is chosen. Stored by name, so the settings file reads as what was chosen.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<DefaultSprintMode>))]
+public enum DefaultSprintMode
+{
+    /// <summary>The sprint running today, by the sprint dates in TFS.</summary>
+    Current,
+
+    /// <summary>The one sprint picked in Settings.</summary>
+    Chosen
+}
 
 // The shape of usersettings.json. Written and read only through SettingsService, which
 // sanitises every value on the way in and out.
@@ -23,22 +35,24 @@ public class RepoBranchDefaults
 public class UserSettings
 {
     public TfsSettings Tfs { get; set; } = new();
-    public string DefaultProjectPath { get; set; } = "";
     public string DefaultAreaPath { get; set; } = "";
     public string DefaultSprint { get; set; } = "";
+
+    /// <summary>Null in a settings file from before the choice existed; see <see cref="SettingsService.DefaultSprintIsCurrent"/>.</summary>
+    public DefaultSprintMode? DefaultSprintMode { get; set; }
+
     public string DefaultRepoId { get; set; } = "";
     public int MostUsedRepoCount { get; set; }
     public List<string> MostUsedRepoIds { get; set; } = new();
     public string TeamName { get; set; } = "";
-    public Dictionary<string, string> RepoPaths { get; set; } = new();
-    public Dictionary<string, string> BaseBranches { get; set; } = new();
+
     /// <summary>
     /// Superseded by <see cref="CapacityPlanning"/>'s tag rules. Still persisted so a build from
     /// before them reads its own toggles, and read once as the migration source.
     /// </summary>
     public Dictionary<string, bool> DeliverableTags { get; set; } = new();
 
-    /// <summary>Null on a settings file written before these existed — that is what triggers migration.</summary>
+    /// <summary>Null on a settings file written before these existed. That is what triggers migration.</summary>
     public CapacityPlanningSettings? CapacityPlanning { get; set; }
     public string CodeMergingTargetBranch { get; set; } = "";
     public List<string> CodeMergingRepoIds { get; set; } = new();

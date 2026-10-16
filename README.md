@@ -1,6 +1,6 @@
 # DevKit
 
-> A developer workflow suite for **TFS / Azure DevOps** — branch automation, sprint planning verification, cross‑repo cherry‑picking, and handy day‑to‑day utilities, all in one local web app.
+> Developer workflow tools for **TFS / Azure DevOps**: branch automation, sprint planning verification, code merging checks, and day‑to‑day utilities, all in one local web app.
 
 ![.NET](https://img.shields.io/badge/.NET-10.0-512BD4)
 ![Blazor](https://img.shields.io/badge/Blazor-Server-512BD4)
@@ -8,7 +8,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows-0078D6)
 ![Version](https://img.shields.io/badge/version-1.0.0-informational)
 
-DevKit is a self‑hosted **Blazor Server** application that runs on your machine, connects to an on‑premises **TFS / Azure DevOps Server** via its REST API, and streamlines the repetitive parts of a sprint: creating well‑named branches, validating estimates, merging fixes across repositories, and more. Launch it and it opens automatically in your browser at **http://localhost:5850**.
+DevKit is a self‑hosted **Blazor Server** application that runs on your machine, connects to an on‑premises **TFS / Azure DevOps Server** via its REST API, and handles the repetitive parts of a sprint: creating well‑named branches, validating estimates, checking that merged work reached the release branch, and more. Launch it and it opens automatically in your browser at **http://localhost:5850**.
 
 ---
 
@@ -17,6 +17,7 @@ DevKit is a self‑hosted **Blazor Server** application that runs on your machin
 - [Features](#features)
 - [Tech Stack](#tech-stack)
 - [Getting Started](#getting-started)
+- [Shared on a server](#shared-on-a-server)
 - [Configuration](#configuration)
 - [Project Structure](#project-structure)
 - [Security](#security)
@@ -38,38 +39,32 @@ Browse work items (Requirements / Change Requests / Bugs) for a selected **Area 
 - Creates the branch off a chosen base branch and **links it back to the work item** in TFS.
 - Per‑repository base‑branch defaults (e.g. `main`, with repo‑specific overrides).
 
-### 🗑 Branch Delete
+### 🗑 Branch Cleanup
 Bulk cleanup of old sprint branches across up to 10 repositories at once.
-- **Sprint‑driven** — pick an area and old sprints to see the branches their work items link, plus any branch named after one of those sprints (`{team}/{sprint}/{id}_{title}`).
-- **Unattached team branches** — branches carrying the team prefix (e.g. `FXCPMGR`) that no work item links: checked against the selected sprints' work items and the work item named in the branch.
+- **Sprint‑driven**: pick an area and old sprints to see the branches their work items link, plus any branch named after one of those sprints (`{team}/{sprint}/{id}_{title}`).
+- **Unattached team branches**: branches carrying the team prefix (e.g. `FXCPMGR`) that no work item links: checked against the selected sprints' work items and the work item named in the branch.
 - Filters for work‑item link (All / Linked / Unattached), sprint, **Created by**, and search by branch, work item id or title.
-- **Kept out of reach** — `main`, `master`, `develop`, `release`, `hotfix`, any `release/*` branch, every repository's QA and merging branch from Settings, and any branch with an active pull request. If pull requests can't be read, the whole repository is locked.
+- **Kept out of reach**: `main`, `master`, `develop`, `release`, `hotfix`, any `release/*` branch, every repository's QA and merging branch from Settings, and any branch an active pull request merges from or into. Pull requests and Settings are checked again just before deleting. If pull requests can't all be read, the whole repository is locked.
 - Batched deletes with a progress bar; each branch's result is read back from TFS, and a branch pushed to since it was loaded is refused rather than deleted.
 
 ### 📐 Size Check
-Validate that requirement sizes line up with the work actually planned. Lives in the **TFS Insight Hub** as its *Size Check* tab; the old `/planning` link redirects there.
+Validate that requirement sizes line up with the work actually planned. Lives in **Sprint Insights** as its *Size Check* tab; the old `/planning` link redirects there.
 - Loads a sprint's requirements with their **child tasks**.
-- **Type** filter starts on Requirement + Change Request — tick **Bug** to pull bugs into the grid.
+- **Type** filter starts on Requirement + Change Request; tick **Bug** to pull bugs into the grid.
 - Compares the requirement **Size** against summed task **Original / Remaining / Completed / Revised** hours.
 - Computes a suggested **Calculated Size** = past‑sprint completed work + current‑sprint original estimate.
 - Inline size editing, "Verify Size" mismatch filter, and **bulk‑apply** of calculated sizes.
-- Writes back across process templates — CMMI `Size`, Scrum `Effort`, Agile `StoryPoints`.
-
-### ⛙ Merge Tool (Cherry‑Pick)
-Find and forward‑port changes tied to a work item.
-- Searches **Pull Requests and commits** referencing a work item ID across all repositories.
-- **Cherry‑picks** commits into a chosen base branch of a **locally cloned** repo using the local `git` CLI (fetch → checkout → pull → cherry‑pick → push).
-- Detects "already applied" commits and **merge conflicts**; on conflict it can open the solution in **Visual Studio** for manual resolution and tracks cherry‑pick status/history.
+- Writes back across process templates: CMMI `Size`, Scrum `Effort`, Agile `StoryPoints`.
 
 ### 🧾 Code Merging Sheet
 Answers "did every work item's code reach the release branch?" for one or more sprints across up to 10 repositories. Each repository has a **QA branch** (where pull requests land) and a **merging branch** (where the code must end up), set under *Branch setup*.
-- **Verify All** — the quick commit check. A commit counts as on the branch when it is there itself, as a `git cherry-pick -x` copy naming it, or as a copy with the same **author and author time** (git keeps both through a cherry-pick, so a message changed while fixing a conflict still matches). A message alone counts only when it is long, unique on the branch and not shared by two commits on the sheet. Reverts flip a commit to *rolled back*; commits older than the scan window are looked up one by one.
-- **Compare Code** — the authoritative check. Each completed pull request's own change (its merge commit against the QA commit it merged onto) is compared with the merging branch **file by file and block by block**, ignoring whitespace and blank lines. Files identical to a known version are settled by git object id without downloading anything; the rest are compared line by line. Code that arrived under another message, a squash or a hand-fixed conflict reads as present; code **lost while resolving a conflict** reads as missing even when every commit is on the branch — flagged as *Code lost*. Lines QA changed again later are checked against QA's current version.
-- **Three scopes** — the whole sheet (toolbar), one work item, or one pull request (the `</>` buttons). A pull request too big for the sheet-wide run (over 500 files) is marked *Too large here* and can be checked on its own, which allows up to 20,000 files.
-- Per file: *Present*, *Matches QA*, *Missing*, *Partly merged* (with **Show lines** — the expected lines, each marked on branch / missing), or *Not compared* for binary and oversized files. A progress bar shows pull requests, files, percent and time left; **Stop** keeps finished results and restores the rest.
+- **Verify All**: the quick commit check. A commit counts as on the branch when it is there itself, as a `git cherry-pick -x` copy naming it, or as a copy with the same **author and author time** (git keeps both through a cherry-pick, so a message changed while fixing a conflict still matches). A message alone counts only when it is long, unique on the branch and not shared by two commits on the sheet. Reverts flip a commit to *rolled back*; commits older than the scan window are looked up one by one.
+- **Compare Code**: the authoritative check. Each completed pull request's own change (its merge commit against the QA commit it merged onto) is compared with the merging branch **file by file and block by block**, ignoring whitespace and blank lines. Files identical to a known version are settled by git object id without downloading anything; the rest are compared line by line. Code that arrived under another message, a squash or a hand-fixed conflict reads as present; code **lost while resolving a conflict** reads as missing even when every commit is on the branch, and is flagged as *Code lost*. Lines QA changed again later are checked against QA's current version.
+- **Three scopes**: the whole sheet (toolbar), one work item, or one pull request (the `</>` buttons). A pull request too big for the sheet-wide run (over 500 files) is marked *Too large here* and can be checked on its own, which allows up to 20,000 files.
+- Per file: *Present*, *Matches QA*, *Missing*, *Partly merged* (with **Show lines**, which lists the expected lines, each marked on branch / missing), or *Not compared* for binary and oversized files. A progress bar shows pull requests, files, percent and time left; **Stop** keeps finished results and restores the rest.
 
 ### 📝 Markdown Viewer
-A live, GitHub‑style Markdown editor — no external dependencies.
+A live, GitHub‑style Markdown editor with no external dependencies.
 - Editor / Split / Preview modes with live rendering.
 - Import and export `.md`, copy as text, and live line / word / character counts.
 
@@ -80,9 +75,11 @@ Track your day from clock in/out entries.
 - Full day (8h 30m), Half day (4h 30m), and Movement (7h 30m) targets; flexible time formats (`9:22`, `09:30:00 AM`, `13:05`, …).
 
 ### ⚙ Settings
-- TFS / Azure DevOps **Server URL** + **Personal Access Token**, with a **Test Connection** button.
-- **Team name** and default **Area / Sprint / Repository** that auto‑fill the other tools.
-- **Default project path** scanning — finds locally cloned repos by their `.git` folder and **auto‑maps** them to TFS repos via the git remote URL.
+- TFS / Azure DevOps **Server URL**, signed in with your **Windows account** (no token) or a **Personal Access Token**, with a **Test Connection** button that shows the account TFS signed you in as.
+- **Team name** and default **Area / Sprint / Repository** that auto‑fill the other tools. The default sprint is either the **current sprint**, worked out from today's date and the sprint dates in TFS, or a sprint you choose.
+- **Most-used repositories**, listed first in every repository picker and in the branch defaults.
+- **Default branches for code merging**, per repository. Left empty, they are automatic: the newest release branch by version (such as `release/cp-26.5.2`) as the merging target, and `main` as the QA branch, falling back to the repository's default branch.
+- **Export / Import** of all preferences as a file, to move them to another PC or share them. The TFS connection and token are never included, and an import never changes them.
 
 ---
 
@@ -90,13 +87,12 @@ Track your day from clock in/out entries.
 
 | Layer | Technology |
 |-------|------------|
-| Runtime | .NET 10.0 LTS (SDK floor `10.0.100`, rolling forward to the newest installed major — see [`global.json`](DevKit.Web/global.json)) |
-| UI | Blazor Server — Interactive Server Components |
+| Runtime | .NET 10.0 LTS (SDK floor `10.0.100`, rolling forward to the newest installed major; see [`global.json`](global.json)) |
+| UI | Blazor Server (Interactive Server Components) |
 | Language | C# (nullable + implicit usings enabled) |
-| Integration | TFS / Azure DevOps Server REST API (default `api-version 5.0`), Basic auth with a PAT |
-| Local Git | Shells out to the `git` CLI for cherry‑pick / merge operations |
-| Front‑end | Hand‑written CSS ([`app.css`](DevKit.Web/wwwroot/app.css) plus `components.css`, `tools.css`, `merging.css`, `code-compare.css`) and vanilla JS ([`app.js`](DevKit.Web/wwwroot/app.js), `markdown.js`, `markdown-viewer.js`) — no SPA framework |
-| Persistence | Local JSON file (`usersettings.json`) — no database |
+| Integration | TFS / Azure DevOps Server REST API (default `api-version 5.0`), Windows sign-in (Negotiate/NTLM) or Basic auth with a PAT |
+| Front‑end | Hand‑written CSS ([`app.css`](DevKit.Web/wwwroot/app.css) plus `components.css`, `tools.css`, `merging.css`, `code-compare.css`) and vanilla JS ([`app.js`](DevKit.Web/wwwroot/app.js), `markdown.js`, `markdown-viewer.js`), no SPA framework |
+| Persistence | Per-user JSON file (`%LOCALAPPDATA%\DevKit\usersettings.json`), no database |
 
 ---
 
@@ -104,10 +100,9 @@ Track your day from clock in/out entries.
 
 ### Prerequisites
 
-- **.NET 10 SDK** (`10.0.100` or newer — `global.json` rolls forward to the latest installed major). A published build is self-contained and needs no .NET install.
-- **Git CLI** available on your `PATH` (required by the Merge Tool's cherry‑pick).
-- **Windows** is recommended — the Merge Tool's "Open in Visual Studio" and the browser auto‑launch rely on Windows shell integration.
-- Access to a **TFS / Azure DevOps Server** instance and a **Personal Access Token**.
+- **.NET 10 SDK** (`10.0.100` or newer; `global.json` rolls forward to the latest installed major). A published build is self-contained and needs no .NET install.
+- **Windows** is recommended: the PAT is protected with Windows DPAPI and the browser auto‑launch relies on Windows shell integration.
+- Access to a **TFS / Azure DevOps Server** instance, with your **Windows account** (an on-premises server on your domain) or a **Personal Access Token**.
 
 ### Run
 
@@ -119,21 +114,130 @@ dotnet run
 
 > Or from the repository root: `dotnet run --project DevKit.Web`
 
-The app starts on **http://localhost:5850** and opens your default browser automatically. On first launch, go to **⚙ Settings**, enter your TFS URL and PAT, and click **Save & Connect**.
+The app starts on **http://localhost:5850**, prints a sign-in link (`DevKit is ready: http://localhost:5850/?k=…`) and opens it in your default browser. On first launch, go to **⚙ Settings**, enter your TFS URL, keep **Windows account** (or choose **Personal Access Token** and enter one), and click **Save & Connect**. To share DevKit with the team instead, see [Shared on a server](#shared-on-a-server).
+
+---
+
+## Shared on a server
+
+DevKit can run once on a shared machine for the whole team. What makes it shared is a file on that machine, never anything in this repository: `devkit.json` in DevKit's folder of the account it runs as, `%LOCALAPPDATA%\DevKit\devkit.json`.
+
+1. **Create the file** on the shared machine, signed in as the account DevKit will run as:
+
+   ```json
+   {
+     "DevKit": {
+       "Mode": "Hosted",
+       "TfsUrl": "https://tfs.example.com/tfs/Collection",
+       "SessionDays": 5
+     }
+   }
+   ```
+
+   The folder is already private to that account. To make sure only it, SYSTEM and Administrators can change the file, run the following, one command after the other:
+
+   ```bash
+   icacls "%LOCALAPPDATA%\DevKit\devkit.json" /inheritance:r
+   ```
+
+   ```bash
+   icacls "%LOCALAPPDATA%\DevKit\devkit.json" /grant:r "%USERNAME%:F" "SYSTEM:F" "Administrators:F"
+   ```
+
+2. **Start DevKit** there with `scripts\devkit-host.bat` (or `devkit host`). It cleans, restores and builds the Release build, then starts DevKit shared on port 5850, on every name of the machine, in Production. It stops before building when devkit.json is missing or port 5850 is already in use. `devkit run` starts the last build again without rebuilding.
+
+3. **Everyone opens** `http://<machine name>:5850` (for example `http://devbox:5850`) from their own PC. There is no link to pass around.
+
+Without the file DevKit runs in local mode, which only lets in the machine it runs on. `devkit local` forces local mode even when the file says otherwise.
+
+- **Sign-in page.** *Sign in with your Windows account* signs a browser on the domain in with nothing to type. *Sign in as someone else* takes a Windows username and password, which Windows itself checks against the domain; DevKit keeps neither. It is offered only over https or on the server itself: over plain http from another PC the password would cross the network unencrypted, so the form is turned off and a posted password is refused before Windows sees it. A refusal never says whether the account exists, is locked or is disabled; the audit log does.
+- **Session.** A sign-in lasts **5 days** (`SessionDays`) and then asks again. **Sign out** in the top bar ends it in every tab of that browser, so the next person can sign in. A session works only from the address it signed in from, so a copied session cookie is useless on any other machine; a PC whose address changes signs in again, and the audit log records it.
+- **Several people, one machine.** Everyone has their own session and their own settings, wherever they sit. People signed in to the server itself (for example over Remote Desktop) each use their own Windows account and their own browser profile, so each signs in as themselves and sees only their own token and settings.
+- **Each person's own TFS token and settings.** After signing in, each person enters their PAT once in **⚙ Settings**. It and their settings are kept in **a file of their own on the server**, `%LOCALAPPDATA%\DevKit\users\`, encrypted for their Windows account and loaded only when that account signs in. They come back on every later visit, from any PC or browser, after DevKit restarts or is updated, and when DevKit moves to another address. Files are named by a hash of the account, so no names appear on disk, and nobody else's sign-in reads them. The account DevKit runs as and the server's administrators hold the keys, so they could in principle decrypt them. A copy an earlier DevKit kept in a person's browser moves to the server on their first visit, if their browser still has it for the address in use.
+- **Windows sign-in to TFS** acts as the account DevKit runs as, so in shared mode only that account may use it; everyone else uses their PAT.
+- **The TFS server is fixed** for everyone by `TfsUrl`, so nobody can point DevKit, and their token, at another server.
+- **Audit log.** Sign-ins, sign-outs and failed attempts are recorded as `user@machine`, with the reason, in `%LOCALAPPDATA%\DevKit\audit\signin-<yyyy-MM>.log` on the server. Passwords and tokens never appear in it.
+- **Guessing protection.** After 3 wrong passwords an account waits 15 minutes before it may try again, which stays under common domain lockout limits. Each address may send 10 password sign-ins and 30 Windows sign-in requests a minute.
+- **No error details leave the server.** Unhandled errors show a plain page and go to the log, even when DevKit runs in Development.
+- **Nothing from IT.** Single sign-on uses NTLM, so it works by machine name, full name or IP address without an SPN or delegation.
+
+| `DevKit` setting in devkit.json | Default | Meaning |
+|---|---|---|
+| `Mode` | `Local` | `Hosted`: shared, with the sign-in page. `Local`: only for the person who started it, with the printed link. |
+| `TfsUrl` | none; needed in hosted mode | The one TFS collection everyone works against. |
+| `SessionDays` | `5` | How long a sign-in lasts, from 1 to 30 days. |
+| `HostNames` | this machine's names and addresses | The host names browsers may use; any other name is refused. |
+| `Domain` | this machine's domain | The domain of a username typed without one. |
+| `AuditFolder` | `%LOCALAPPDATA%\DevKit\audit` | Where the audit log is written. Everyone's settings are kept in `%LOCALAPPDATA%\DevKit\users`, and the keys that encrypt them and the sessions in `%LOCALAPPDATA%\DevKit\keys`. Back up both together: one without the other cannot be read. |
+
+> Over plain `http`, the session cookie, the PAT someone types in Settings and every page cross the network unencrypted. *Sign in with your Windows account* sends no password, and the typed-password form is turned off. To serve https instead, give the same devkit.json a Kestrel endpoint with a certificate: it replaces the script's http address, the session cookie becomes `Secure`, and *Sign in as someone else* comes back.
+>
+> At start, DevKit opens one test connection to its https endpoint. It prints the link to share with the short machine name when the certificate covers it, since browsers sign in with Windows automatically only for names without dots. When the test fails, which a certificate whose private key Windows cannot use does, it logs an Error that says so.
+
+### DevKit's own certificate (no IT needed)
+
+Signed in as the account DevKit runs as, create a certificate for this machine's two names only. Its key stays in that account's store and cannot be exported; it is no certificate authority, so it can vouch for nothing but these names:
+
+```powershell
+New-SelfSignedCertificate -Subject "CN=DevKit $env:COMPUTERNAME" -DnsName $env:COMPUTERNAME, ([System.Net.Dns]::GetHostEntry('').HostName) `
+    -FriendlyName 'DevKit https' -CertStoreLocation Cert:\CurrentUser\My -Provider 'Microsoft Software Key Storage Provider' `
+    -KeyAlgorithm ECDSA_nistP256 -HashAlgorithm SHA256 -KeyExportPolicy NonExportable -Type Custom -KeyUsage DigitalSignature `
+    -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.1', '2.5.29.19={critical}{text}ca=0') -NotAfter (Get-Date).AddYears(2)
+```
+
+The key is ECDSA, not RSA, on purpose. Windows serves the cipher suites in the order its policy lists them, and policies often put the RSA ones with AES-CBC first. Browsers refuse HTTP/2 over CBC (`ERR_HTTP2_INADEQUATE_TRANSPORT_SECURITY`), while an ECDSA certificate gets ECDHE-ECDSA with AES-GCM. To see the order on a server, run `Get-TlsCipherSuite`.
+
+Save its public part to share, with the thumbprint the command printed:
+
+```powershell
+Export-Certificate -Cert Cert:\CurrentUser\My\<thumbprint> -FilePath "$env:LOCALAPPDATA\DevKit\DevKit-$env:COMPUTERNAME.cer"
+```
+
+Then point devkit.json at it (`DEVBOX` stands for the machine's name). `AllowInvalid` is there because the server need not trust its own certificate; browsers are the ones that check it:
+
+```json
+"Kestrel": { "Endpoints": { "Https": { "Url": "https://*:5850",
+  "Certificate": { "Subject": "DevKit DEVBOX", "Store": "My", "Location": "CurrentUser", "AllowInvalid": true } } } }
+```
+
+Every PC trusts it once, the server included, since each Windows account trusts for itself: double-click the `.cer` file, choose **Install Certificate**, then **Current User**, put it in **Trusted Root Certification Authorities**, and confirm. Windows shows the thumbprint to compare with the one you announce. Until then that PC's browser warns that the connection is not private. IT can instead push the file to every PC through Group Policy. Two years on, make a new one the same way, and everyone installs the new file.
+
+### A company certificate
+
+A certificate from a CA every company PC already trusts needs no install anywhere. With its .pfx (certificate and private key), the account DevKit runs as imports it into its own store, with no administrator rights and the key not exportable. The password is typed into the prompt:
+
+```powershell
+Import-PfxCertificate -FilePath "<path to the .pfx>" -CertStoreLocation Cert:\CurrentUser\My -Password (Read-Host -AsSecureString "pfx password")
+```
+
+Then delete the .pfx, and point devkit.json at the certificate:
+
+```json
+"Kestrel": { "Endpoints": { "Https": { "Url": "https://*:5850", "Protocols": "Http1",
+  "Certificate": { "Subject": "<its subject>", "Store": "My", "Location": "CurrentUser" } } } }
+```
+
+- `Subject` is matched against the certificate's subject (*Issued To*), not its alternative names, so a wildcard certificate is found by what its subject says.
+- `"Protocols": "Http1"` is for an RSA key on a server whose cipher policy lists the RSA AES-CBC suites first: over CBC, browsers refuse HTTP/2. DevKit's pages work the same over HTTP/1.1. Leave it out for an ECDSA key.
+- People open the name the certificate covers, which DevKit prints. A wildcard for the domain does not cover the short machine name.
+- Imported into the machine's store instead (`Cert:\LocalMachine\My`, by an administrator), the key must be a machine key that the DevKit account may read (`certlm.msc`, *All Tasks*, then *Manage Private Keys*). A certificate whose key went into someone else's profile still loads, but every connection fails; DevKit's test connection at start logs that.
 
 ---
 
 ## Configuration
 
-All configuration is done in‑app on the **Settings** page and stored locally — nothing needs to be edited by hand.
+All configuration is done in‑app on the **Settings** page and stored locally; nothing needs to be edited by hand.
 
 | Setting | Description |
 |---------|-------------|
 | **Server URL** | Your TFS / Azure DevOps collection, e.g. `https://tfs.example.com/tfs/YourCollection`. |
-| **Personal Access Token** | A PAT for the same server. Scope it to **Code (read & write)** and **Work Items (read & write)** so branch creation, linking, and size updates work. |
+| **Sign in with** | **Windows account**: DevKit signs in to TFS as the Windows account it runs as, and no token is stored. **Personal Access Token**: for a server that does not accept your Windows account. |
+| **Personal Access Token** | Only for PAT sign-in: a PAT for the same server. Scope it to **Code (read & write)** and **Work Items (read & write)** so branch creation, linking, and size updates work. |
 | **Team Name** | Used as the prefix in generated branch names. |
-| **Default Area / Sprint / Repository** | Pre‑selected across Branch Creator, Merge Tool, and Planning. |
-| **Default Project Path** | Root folder containing your cloned repos. DevKit scans it for `.git` folders and maps each to a TFS repo by its remote URL. |
+| **Default Area / Sprint / Repository** | Pre‑selected across Branch Creator, the Code Merging Sheet, and Sprint Insights. The sprint is either the **current sprint** (today's date against the sprint dates in TFS, in the default area's project) or one you choose. Changing the sprint on one page leaves the other pages on the default. |
+| **Most-Used Repositories** | Pinned repositories, shown first in every repository picker and in the branch defaults table. |
+| **Default Branches for Code Merging** | The QA branch and merging target the Code Merging Sheet starts with, per repository. Empty means automatic: the newest `release/...-x.y.z` branch, else `main`, else the repository's default branch, for the merging target; `main`, else the repository's default branch, for the QA branch. |
+| **Export / Import** | Buttons in the Settings header. The file holds every preference above, never the TFS connection or token. |
 
 The TFS API version is configurable in [`appsettings.json`](DevKit.Web/appsettings.json) under `Tfs:ApiVersion` (default `5.0`).
 
@@ -145,24 +249,29 @@ The TFS API version is configurable in [`appsettings.json`](DevKit.Web/appsettin
 DevKit/
 ├─ README.md
 ├─ .gitignore
-├─ devkit.bat                       # CLI entry point: run / publish / autostart / status
+├─ DevKit.sln                       # The app and its tests
+├─ global.json                      # Pinned .NET SDK
+├─ Directory.Build.props            # Shared build settings (opt-in SonarAnalyzer)
+├─ .github/workflows/ci.yml         # Windows CI: build, tests, coverage, Sonar report
+├─ devkit.bat                       # CLI entry point: host / run / local / publish / autostart / status
 ├─ scripts/
-│  ├─ _set-sdk.bat                  # Resolves the SDK the CLI selects for global.json
-│  └─ build|clean|restore|run.bat   # Wrappers; each calls _set-sdk.bat first
+│  └─ devkit-host.bat               # Clean, restore, build, then start DevKit shared on this machine
+├─ tools/
+│  └─ set-sdk.bat                   # Resolves the SDK the CLI selects for global.json
+├─ DevKit.Tests/                    # xUnit tests, end-to-end tests that run the built app
 └─ DevKit.Web/                      # Blazor Server application
-   ├─ Program.cs                    # DI registration, render mode, browser auto-launch
+   ├─ Program.cs                    # DI registration, render mode, sign-in link and browser launch
    ├─ DevKit.Web.csproj             # net10.0, nullable + implicit usings
    ├─ Directory.Build.props         # Product / Version metadata
-   ├─ global.json                   # Pinned .NET SDK
    ├─ appsettings.json              # Logging + Tfs:ApiVersion
    ├─ Components/
    │  ├─ App.razor, Routes.razor    # Root document & router
    │  ├─ GlassDropdown.razor        # Shared dropdown component
    │  ├─ Layout/                    # MainLayout, NavMenu
-   │  ├─ SizeCheckPanel.razor       # Size Check grid (hosted by the Insight Hub)
-   │  ├─ CapacityPlanningPanel.razor # Capacity Planning tab (Insight Hub)
-   │  ├─ TaskCreationPanel.razor    # Task Creation tab (Insight Hub)
-   │  └─ Pages/                     # BranchCreator, BranchDelete, MergeTool,
+   │  ├─ SizeCheckPanel.razor       # Size Check grid (hosted by Sprint Insights)
+   │  ├─ CapacityPlanningPanel.razor # Capacity Planning tab (Sprint Insights)
+   │  ├─ TaskCreationPanel.razor    # Task Creation tab (Sprint Insights)
+   │  └─ Pages/                     # BranchCreator, BranchDelete, CodeMergingSheet,
    │                                #   Insights, MarkdownViewer,
    │                                #   WorkdayCalculator, Settings
    ├─ Services/
@@ -173,11 +282,12 @@ DevKit/
    │  ├─ GitObjectReader.cs         # Diffs, trees, blobs from TFS, cached per run
    │  ├─ CodePresenceAnalyzer.cs    # Is a change's block on the branch?
    │  ├─ LineDiff.cs, TextLines.cs  # Line diff (Myers) and line normalisation
-   │  ├─ GitCommandService.cs       # Local git CLI (cherry-pick, branches)
-   │  ├─ SettingsService.cs         # usersettings.json + local repo scan/mapping
+   │  ├─ SettingsService*.cs        # Settings in memory, PAT encryption, repository branch defaults
+   │  ├─ SettingsFile.cs            # Per-user settings file: location, atomic save, backup, permissions
+   │  ├─ LocalAccessGate.cs         # Sign-in key and cookie; refuses other machines, hosts and origins
    │  ├─ PageStateService.cs        # Cached TFS data, per-tool state
    │  └─ ThemeService.cs            # Theme handling
-   ├─ Models/                       # WorkItem, Tfs*, MergeModels, *Settings
+   ├─ Models/                       # WorkItem, Tfs*, TfsGitModels, *Settings
    └─ wwwroot/                      # app|components|tools|merging|code-compare.css,
                                     #   app.js, markdown.js, markdown-viewer.js
 ```
@@ -186,20 +296,30 @@ DevKit/
 
 ## Security
 
-- **The Personal Access Token is encrypted at rest** in `usersettings.json` using Windows DPAPI (current‑user scope), written next to the running binary (`AppContext.BaseDirectory`). Only your Windows account can decrypt it; a token from a previous version is migrated to the encrypted form automatically on first run. A source build keeps it in `bin/<Configuration>/<target framework>/`, so after a target‑framework upgrade the first run copies it over from the previous framework's folder (`net9.0` → `net10.0`) instead of starting unconfigured. The file is **git‑ignored** and never leaves your machine — but still treat it like a credential: don't copy it into source control, screenshots, or shared folders.
+- **Settings live in a per-user file**, `%LOCALAPPDATA%\DevKit\usersettings.json`, which Settings shows. On Windows only your account, SYSTEM and Administrators can open it, and a rebuild, `dotnet clean` or `git clean` never touches it. Builds before this one kept the file beside the program (`bin/<Configuration>/<target framework>/`); the first start moves it, checks the copy, and deletes the old one. Set `DEVKIT_SETTINGS_PATH` to a full path to use a different file; that file is used as it is and nothing is moved into it.
+- **Saves cannot tear or vanish silently.** Each save writes a private temporary file, flushes it, and swaps it in, keeping the previous version as `usersettings.json.bak`. A damaged file is set aside as `usersettings.json.corrupt-<time>` and the backup restored; a file DevKit could not read at startup is never saved over. A save that fails is shown in Settings and in the top bar instead of being reported as done.
+- **The Personal Access Token is encrypted at rest** with Windows DPAPI (current‑user scope) and bound to the server URL, so it only decrypts for the server it was saved for: pointing the file at another server cannot hand the token over. A token in an older format (plaintext, or encrypted without the server) is re-encrypted automatically on first run. A token that cannot be decrypted is kept unchanged until you enter a new one. The file is **git‑ignored** and never leaves your machine, but still treat it like a credential: don't copy it into source control, screenshots, or shared folders.
+- **Windows sign-in stores no token.** DevKit answers TFS's Negotiate/NTLM challenge as the Windows account it runs as, through an HTTP client of its own, so a PAT that TFS refuses fails instead of quietly going through as that account. The sign-in only goes to the server you entered, never on a redirect. Switching to Windows sign-in deletes a stored PAT, and the settings backup that still held it. With Windows sign-in DevKit acts with your full TFS rights, as your browser does, since there are no PAT scopes.
 - Use a **least‑privilege PAT** (Code + Work Items only) and set a reasonable expiry.
-- Prefer an **`https`** server URL — the PAT is sent as HTTP Basic auth, so over plain `http` to a remote host it travels unencrypted. Settings warns when a non‑local `http` URL is used.
-- The app binds to **`localhost`**, sends hardening response headers (including a CSP), and is intended to run on a developer's own machine, not as a shared/hosted service. The browser is auto‑launched only for a local loopback URL.
-- The Merge Tool runs real `git` commands (including `push`) against your local clones — branch names and commit SHAs are validated before use, and arguments are passed without shell parsing. Review the target branch before cherry‑picking.
-- The app ships with **zero NuGet packages** — PAT encryption uses the OS DPAPI directly via P/Invoke, with no third‑party dependency.
+- Prefer an **`https`** server URL: the PAT is sent as HTTP Basic auth, so over plain `http` to a remote host it travels unencrypted; a Windows sign-in sends no password, but its exchange can be relayed and the data is readable. Settings warns when a non‑local `http` URL is used.
+- **Only the person who started DevKit can use it.** Everyone signed in to the same machine can reach a localhost port, and so can any web page open in your browser; without a lock they would all act with your PAT. Each start creates a random 256-bit key, prints the sign-in link and opens it; the link swaps the key for an `HttpOnly`, `SameSite=Strict` cookie and every other request gets a locked page. Requests from another machine, addressed to another host name (DNS rebinding), or sent from another origin (including the Blazor WebSocket) are refused. A restart creates a new key, so open the new link it prints; tabs from before it are signed out. Set `DEVKIT_NO_BROWSER=1` to only print the link.
+- In local mode the app answers on **`localhost`** only; shared mode answers on this machine's own names (see above). Both send hardening response headers (including a CSP).
+- **Shared mode** replaces the link with the sign-in page; see [Shared on a server](#shared-on-a-server). Requests for another host name, or sent from another site (forms, the WebSocket), are still refused; every sign-in form carries an anti-forgery token; and the session cookie is `HttpOnly`. The keys that encrypt sessions and everyone's settings files stay on the server, encrypted for the account DevKit runs as. If they are lost, everyone signs in again and enters their PAT again; the unreadable files are set aside, never deleted. A settings file or folder replaced by a link is refused.
+- The app ships with **zero NuGet packages**: PAT encryption uses the OS DPAPI directly via P/Invoke, and shared mode's Windows sign-in uses .NET's own NTLM support, with no third‑party dependency.
 
 ---
 
 ## Building & Publishing
 
 ```bash
-# Build
-dotnet build DevKit.Web/DevKit.Web.sln -c Release
+# Build the app and the tests (CI builds with -warnaserror)
+dotnet build DevKit.sln -c Release
+
+# Run the tests; the end-to-end ones start the built app on a free port, with a test settings file
+dotnet test DevKit.sln -c Release
+
+# SonarAnalyzer report, without failing the build
+dotnet build DevKit.sln -c Release -p:DevKitSonarAnalyzer=true
 
 # Framework-dependent publish to ./publish
 dotnet publish DevKit.Web/DevKit.Web.csproj -c Release -o ./publish
@@ -207,17 +327,18 @@ dotnet publish DevKit.Web/DevKit.Web.csproj -c Release -o ./publish
 
 ### .NET SDK selection
 
-The wrapper scripts in [`scripts/`](scripts/) and `devkit.bat` do **not** hardcode an SDK
-version or install path. Each one calls [`scripts/_set-sdk.bat`](scripts/_set-sdk.bat)
-first, which runs `dotnet --version` from `DevKit.Web/` (the folder that owns
+[`scripts/devkit-host.bat`](scripts/devkit-host.bat) and `devkit.bat` do **not** hardcode an SDK
+version or install path. Each one calls [`tools/set-sdk.bat`](tools/set-sdk.bat)
+first, which runs `dotnet --version` from the repository root (the folder that owns
 `global.json`), lets the CLI apply the `rollForward` rule, then points
 `MSBuildSDKsPath` at exactly the SDK the CLI resolved. MSBuild and the CLI therefore
 always agree.
 
 `global.json` is the only place a version number belongs. Installing a newer SDK needs
 no change here; if no installed SDK satisfies `global.json`, the scripts fail with the
-list of installed SDKs and exit 1. Never reintroduce a literal
-`set MSBuildSDKsPath=C:\Program Files\dotnet\sdk\<version>\Sdks` — it breaks on the
+list of installed SDKs and exit 1. `scripts\devkit-host.bat` exits with the failing step's
+exit code; pass `--no-pause` to run it unattended. Never reintroduce a literal
+`set MSBuildSDKsPath=C:\Program Files\dotnet\sdk\<version>\Sdks`. It breaks on the
 next patch install.
 
 ---
@@ -226,13 +347,20 @@ next patch install.
 
 | Symptom | Likely cause / fix |
 |---------|--------------------|
-| "Test Connection" fails | Check the Server URL and that the PAT is valid and unexpired with the right scopes. |
-| No repos/areas/sprints load | The configured account may lack access, or the API version differs — adjust `Tfs:ApiVersion`. |
-| Merge Tool can't cherry‑pick | Ensure `git` is on `PATH`, the repo is cloned under your Default Project Path, and it mapped to the right TFS repo on the Settings page. |
-| Browser doesn't open | Navigate to http://localhost:5850 manually (auto‑launch is best‑effort). |
+| "Test Connection" fails | Check the Server URL. With Windows sign-in, check that your Windows account can open TFS in a browser, or use a PAT. With a PAT, check that it is valid and unexpired with the right scopes. |
+| No repos/areas/sprints load | The configured account may lack access, or the API version differs; adjust `Tfs:ApiVersion`. |
+| DevKit stops at start: "DevKit:TfsUrl is needed in hosted mode" | devkit.json says `"Mode": "Hosted"` but has no valid `TfsUrl`. The message names the file to fix. |
+| Shared mode: the Windows button shows the sign-in page again | The browser did not sign in with Windows (for example, the address is not in its intranet zone). Open DevKit by machine name, or use the username and password form, which is there over https or on the server itself. |
+| Shared mode over https: the browser says the connection was closed, and DevKit logged "a test connection to it failed" at start | Windows cannot use the certificate's private key for the account DevKit runs as, or the certificate covers neither of the machine's names. Use [DevKit's own certificate](#devkits-own-certificate-no-it-needed), or re-import the company .pfx and grant the key as [described](#a-company-certificate). |
+| Shared mode over https: Edge or Chrome shows `ERR_HTTP2_INADEQUATE_TRANSPORT_SECURITY` | The server's cipher policy chose an AES-CBC suite for an RSA certificate. Make [DevKit's own certificate](#devkits-own-certificate-no-it-needed) with an ECDSA key, as shown there. |
+| Shared mode over https: the browser warns the connection is not private | That PC has not installed DevKit's certificate yet. Install the `.cer` file as described under [DevKit's own certificate](#devkits-own-certificate-no-it-needed). |
+| Shared mode: signed out before the 5 days were up | The PC's address changed (another network, Wi-Fi, VPN), and a session works only from the address it signed in from. Sign in again. |
+| `devkit-host.bat`: "Port 5850 is already in use" | A DevKit is already running. Close its window, then run the script again. |
+| Shared mode: Settings says the settings file was damaged | The server's keys changed (for example, DevKit now runs under another account, or `keys` was not restored with `users`), so that person's file can no longer be decrypted. It was set aside beside the others; enter your PAT again. |
+| Browser doesn't open, or the page says DevKit is locked | Open the `DevKit is ready: …` link from the DevKit window. A bookmark to http://localhost:5850 works once the browser has signed in during this run. |
 
 ---
 
 ## License
 
-No license file is currently included. Treat this repository as **proprietary / internal** unless a `LICENSE` is added.
+DevKit is released under the [MIT License](LICENSE).

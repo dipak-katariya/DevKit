@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════
-   SHARED COMPONENTS — panels, tables, inputs, buttons,
+   SHARED COMPONENTS: panels, tables, inputs, buttons,
    modals and the dropdown every tool is built from.
    Loaded after app.css; see the note at the end of it.
    ═══════════════════════════════════════════════════════ */
@@ -155,8 +155,6 @@ table.req-table tbody td{padding:10px 14px;vertical-align:middle;}
 .chip{display:inline-flex;align-items:center;gap:3px;font-size:.6rem;padding:3px 9px;border-radius:10px;font-weight:600;}
 .chip-green{background:rgba(52,211,153,.1);color:var(--green);}
 .chip-cyan{background:rgba(56,189,248,.1);color:var(--cyan);}
-.th-sort{user-select:none;}
-.sort-ico{margin-left:3px;font-size:.58rem;opacity:.3;}
 
 /* ─── PR/COMMIT VIEW ─── */
 .pr-placeholder{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:48px 24px;text-align:center;color:var(--muted);gap:12px;}
@@ -170,10 +168,6 @@ table.req-table tbody td{padding:10px 14px;vertical-align:middle;}
 .proj-branch-badge{font-size:.62rem;padding:2px 8px;border-radius:6px;background:var(--accent-soft);color:var(--accent2);font-family:var(--mono);}
 .proj-chevron{margin-left:auto;color:var(--muted);font-size:.7rem;transition:transform .2s;}
 
-.branch-selector{display:flex;align-items:center;gap:8px;padding:6px 14px;border-bottom:1px solid var(--border);background:var(--surface2);}
-.branch-selector label{font-size:.62rem;font-weight:600;color:var(--muted);white-space:nowrap;}
-.branch-selector select{max-width:300px;}
-
 .mr-row{border-bottom:1px solid var(--border);}
 .mr-hdr{padding:7px 14px;display:flex;align-items:center;gap:7px;cursor:pointer;transition:background .15s;flex-wrap:wrap;}
 .mr-hdr:hover{background:var(--surface2);}
@@ -185,35 +179,6 @@ table.req-table tbody td{padding:10px 14px;vertical-align:middle;}
 .pr-completed{background:rgba(52,211,153,.15);color:#6ee7b7;}
 .pr-active{background:rgba(251,191,36,.15);color:#fde68a;}
 .pr-abandoned{background:rgba(120,120,140,.15);color:var(--muted2);}
-
-.commit-row{display:flex;align-items:center;gap:6px;padding:5px 14px 5px 24px;border-top:1px solid var(--border);transition:background .15s;}
-.commit-row:hover{background:var(--surface2);}
-.commit-sha{font-family:var(--mono);font-size:.64rem;color:var(--cyan);text-decoration:none;flex-shrink:0;}
-.commit-sha:hover{text-decoration:underline;}
-.commit-msg{font-size:.7rem;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.commit-author{font-size:.6rem;color:var(--muted);flex-shrink:0;max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.commit-date{font-size:.6rem;color:var(--muted);flex-shrink:0;font-family:var(--mono);white-space:nowrap;}
-.commit-status{flex-shrink:0;}
-
-.cp-badge{display:inline-flex;align-items:center;padding:2px 7px;border-radius:5px;font-size:.55rem;font-weight:700;}
-.cp-done{background:rgba(52,211,153,.15);color:#6ee7b7;}
-.cp-exists{background:rgba(251,191,36,.15);color:#fde68a;}
-.cp-conflict{background:rgba(248,113,113,.15);color:#fca5a5;}
-.cp-resolving{background:rgba(251,146,60,.15);color:#fdba74;}
-
-.cp-btn{
-  padding:4px 10px;font-size:.62rem;border:1px solid var(--border2);border-radius:8px;
-  background:var(--surface);color:var(--text);cursor:pointer;font-weight:600;font-family:inherit;
-  transition:var(--t);display:flex;align-items:center;gap:4px;white-space:nowrap;
-}
-.cp-btn:hover{background:var(--surface2);transform:translateY(-1px);}
-.cp-btn:disabled{opacity:.35;cursor:not-allowed;transform:none;}
-
-.sel-bar{padding:7px 14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-bottom:1px solid var(--border);background:var(--accent-soft);font-size:.66rem;color:#cdd9ff;}
-.sel-chip{display:inline-flex;align-items:center;padding:2px 8px;border-radius:10px;font-size:.58rem;font-weight:600;}
-.sel-chip-req{background:rgba(96,165,250,.14);color:#93bbfd;}
-.sel-chip-chr{background:rgba(251,191,36,.12);color:#fcd34d;}
-.sel-chip-bug{background:rgba(248,113,113,.12);color:#fca5a5;}
 
 /* ─── MODAL ─── */
 .modal-overlay{position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.72);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;animation:modalFade .2s ease;}

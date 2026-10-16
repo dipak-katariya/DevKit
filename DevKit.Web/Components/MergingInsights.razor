@@ -8,6 +8,10 @@
         <span class="cm-ins-stat"><b class="cm-ins-acc">@prs</b> PRs</span>
         <span class="cm-ins-stat"><b class="cm-ins-acc">@commits</b> commits</span>
         <span class="cm-ins-stat"><b>@withPrs</b><span class="cm-ins-of">/@VisibleRows.Count</span> with PRs</span>
+        @if (Bundle.DiscoveryWarnings.Count > 0)
+        {
+            <DiscoveryGapsChip Bundle="@Bundle" />
+        }
     </div>
 
     <span class="cm-ins-div" aria-hidden="true"></span>
@@ -46,7 +50,7 @@
     else
     {
         <div class="cm-ins-seg cm-ins-muted">
-            Not checked yet — <b>Verify All</b> checks the commits, <b>Compare Code</b> the code itself.
+            Not checked yet. <b>Verify All</b> checks the commits and <b>Compare Code</b> checks the code.
         </div>
     }
 
@@ -76,7 +80,7 @@
             @if (codeIssues > 0 || CodeIssuesActive)
             {
                 <button type="button" class="cm-qf cm-st-warn @(CodeIssuesActive ? "on" : "")" aria-pressed="@(CodeIssuesActive ? "true" : "false")"
-                        title="@(CodeIssuesActive ? "Showing only these — click to show every work item again" : "Pull requests whose code is missing, partly merged, too large for the run or could not be compared — click to show only their work items")"
+                        title="@(CodeIssuesActive ? "Showing only these. Click to show every work item again." : "Pull requests whose code is missing, partly merged, too large for the run or could not be compared. Click to show only their work items.")"
                         @onclick="() => Toggle(MergingSheetFilter.CodeIssues)">
                     <Icon Inner="@Icons.AlertTriangle" /><b>@codeIssues</b> need a look
                     @if (CodeIssuesActive)
@@ -94,7 +98,7 @@
             @if (codeLost > 0)
             {
                 <span class="cm-qf cm-qf-static cm-st-bad"
-                      title="Pull requests whose commits are all on the branch but whose code is not — the case a commit check alone reports as merged. Usually code dropped while resolving a conflict. Their rows carry the same mark.">
+                      title="Pull requests whose commits are all on the branch but whose code is not, usually dropped while resolving a conflict. A commit check alone reports these as merged. Their rows carry the same mark.">
                     <Icon Inner="@Icons.AlertTriangle" /><b>@codeLost</b> code lost
                 </span>
             }
@@ -132,7 +136,7 @@
                     {
                         <p>
                             Verified against <b>every</b> commit on <b>@Bundle.VerifiedBranchSummary</b> since
-                            <b>@Bundle.ScannedFrom.Value.ToString("dd MMM yy")</b> — the date of the oldest commit
+                            <b>@Bundle.ScannedFrom.Value.ToString("dd MMM yy")</b>, the date of the oldest commit
                             being checked, so nothing that could carry this work falls outside the scan.
                             @Bundle.ScannedCommitCount.ToString("N0") commits were read in the busiest repository.
                         </p>
@@ -147,7 +151,7 @@
                 }
                 <p>
                     A commit counts as on the branch when it is there itself, as a cherry-pick naming it
-                    (<code>-x</code>), or as a copy with the same author and author time — so a cherry-pick whose
+                    (<code>-x</code>), or as a copy with the same author and author time. That way a cherry-pick whose
                     message was changed while fixing a conflict still matches. A message alone counts only when it
                     is long, unique on the branch and not shared by two commits here; a later <code>Revert</code>
                     flips a commit to <i>rolled back</i>.
@@ -164,14 +168,14 @@
             <section class="cm-pop-sec">
                 <h4><Icon Inner="@Icons.Code" />Code <em>· Compare Code</em></h4>
                 <p>
-                    <b>Commits being there does not prove the code is</b> — <b>Compare Code</b> checks the code itself:
+                    <b>Commits being there does not prove the code is.</b> <b>Compare Code</b> checks the code itself:
                     each pull request's own change on QA, file by file and line by line (whitespace and blank lines
                     ignored), against the branch as it is now. Once a pull request's code is compared, that is what
                     <i>Merged</i> counts.
                 </p>
                 <p>
                     The sprint-wide run skips pull requests that change more than
-                    <b>@SprintLimits.MaxFilesPerPullRequest.ToString("N0")</b> files — check those with the
+                    <b>@SprintLimits.MaxFilesPerPullRequest.ToString("N0")</b> files. Check those with the
                     <Icon Inner="@Icons.Code" CssClass="cc-inline-ic" /> button on the pull request, which allows far more.
                     Binary files and files over @SprintLimits.MaxTextMegabytes MB are compared by content id only.
                 </p>
@@ -214,7 +218,9 @@
         new(MergeRollup.Partial, MergingSheetFilter.Partial, "Partial", "warn", true, "some of their code reached the branch"),
         new(MergeRollup.NotMerged, MergingSheetFilter.NotMerged, "Not merged", "bad", true, "nothing of theirs was found on the branch"),
         new(MergeRollup.RolledBack, MergingSheetFilter.RolledBack, "Rolled back", "back", false,
-            "their code reached the branch and was reverted off it again — a regression to chase, not work still to merge"),
+            "their code reached the branch and was reverted off it again, so it is a regression to chase rather than work still to merge"),
+        new(MergeRollup.Incomplete, MergingSheetFilter.Incomplete, "Not fully checked", "gap", false,
+            "some of their pull requests could not be read, so they cannot count as merged"),
         new(MergeRollup.NotChecked, MergingSheetFilter.Unchecked, "Not checked", "none", false, "no completed pull request of theirs has been checked yet"),
         new(MergeRollup.NoPullRequests, MergingSheetFilter.NoPrs, "No PRs", "nopr", false, "no pull request was found for them")
     };
@@ -273,7 +279,7 @@
             _ => ""
         };
         var subject = count == 1 ? "1 work item" : $"{count} work items";
-        var action = active ? "Showing only these — click to show every work item again." : "Click to show only these.";
+        var action = active ? "Showing only these. Click to show every work item again." : "Click to show only these.";
         return $"{subject}: {chip.Meaning}{detail}. {action}";
     }
 
@@ -283,13 +289,13 @@
             {
                 (run.Present, "present"), (run.Missing, "missing"), (run.Partial, "partly merged"),
                 (run.Unverified, "not fully compared"), (run.Skipped, "skipped"),
-                (run.TooLarge, "too large for this run — check those on their own"), (run.Failed, "failed")
+                (run.TooLarge, "too large for this run (check those on their own)"), (run.Failed, "failed")
             }
             .Where(p => p.Item1 > 0)
             .Select(p => $"{p.Item1} {p.Item2}");
         var subject = run.PullRequests == 1 ? "1 pull request" : $"{run.PullRequests} pull requests";
         var text = $"Compared the code of {subject} ({run.Files:N0} files) in {Duration(run.Elapsed)}: {string.Join(" · ", parts)}.";
-        return run.Stopped ? text + " Stopped before the end — the rest keep their earlier result." : text;
+        return run.Stopped ? text + " Stopped before the end. The rest keep their earlier result." : text;
     }
 
     private static string Duration(TimeSpan span)

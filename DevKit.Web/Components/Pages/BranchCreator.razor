@@ -14,7 +14,7 @@
                 <label class="cfg-label">📂 Area Path</label>
                 <GlassDropdown Style="min-width:260px;"
                                Value="@(selectedArea != null ? AreaSprintSelect.Serialize(selectedArea) : "")"
-                               Placeholder="— Select area —"
+                               Placeholder="Select area"
                                Disabled="@(areas.Count==0)"
                                Groups="@AreaGroups"
                                OnChange="OnAreaChange" />
@@ -33,8 +33,8 @@
                 <label class="cfg-label">📅 Sprint</label>
                 <GlassDropdown Style="min-width:180px;"
                                Value="@(selectedSprint ?? "")"
-                               Placeholder="— All —"
-                               EmptyLabel="— All —" EmptyValue=""
+                               Placeholder="All"
+                               EmptyLabel="All" EmptyValue=""
                                Disabled="@(iterations.Count==0)"
                                Groups="@SprintGroups"
                                OnChange="OnSprintChange" />
@@ -53,6 +53,7 @@
             }
         </div>
     </div>
+    @if (!string.IsNullOrEmpty(metadataError)) { <div class="notice warn">⚠ @metadataError</div> }
 
     <!-- Filter bar -->
     <div class="cfg-bar-filters">
@@ -65,14 +66,14 @@
         <div style="flex:1;">
             <div class="cfg-field">
                 <label class="cfg-label">🏷 Type</label>
-                <GlassDropdown Value="@typeFilter" Placeholder="— All —" EmptyLabel="— All —" EmptyValue=""
+                <GlassDropdown Value="@typeFilter" Placeholder="All" EmptyLabel="All" EmptyValue=""
                                Options="@TypeOptions" OnChange="OnTypeFilter" />
             </div>
         </div>
         <div style="flex:1;">
             <div class="cfg-field">
                 <label class="cfg-label">👤 Assignee</label>
-                <GlassDropdown Value="@assigneeFilter" Placeholder="— All —" EmptyLabel="— All —" EmptyValue=""
+                <GlassDropdown Value="@assigneeFilter" Placeholder="All" EmptyLabel="All" EmptyValue=""
                                Options="@AssigneeOptions" OnChange="OnAssigneeFilter" />
             </div>
         </div>
@@ -98,7 +99,7 @@
                             <tbody>
                                 @if (filtered.Count == 0)
                                 {
-                                    <tr><td colspan="4" class="tbl-empty">@(workItems.Count == 0 ? "Select area above, then click Load" : "No items match the filter.")</td></tr>
+                                    <tr><td colspan="4" class="tbl-empty">@(workItems.Count == 0 ? "Select an area above, then click Load." : "No items match the filter.")</td></tr>
                                 }
                                 @foreach (var item in filtered)
                                 {
@@ -123,14 +124,14 @@
         <div class="content-right">
             <div class="gpanel">
                 <div class="phead">
-                    <span class="ptitle">🔀 Branch Configuration</span>
+                    <span class="ptitle">🔀 New Branch</span>
                     @if (selectedRepo != null)
                     {
                         <span style="font-size:.58rem;color:var(--muted);margin-left:auto;">@selectedRepo.Project</span>
                     }
                 </div>
                 <div class="pbody">
-                    <!-- Repository — drives the base-branch list and where the branch is created -->
+                    <!-- Repository: drives the base-branch list and where the branch is created -->
                     <div class="f-row">
                         <div class="f-label">
                             Repository
@@ -145,7 +146,7 @@
                         </div>
                         <GlassDropdown CssClass="fi-size"
                                        Value="@(selectedRepo?.Id ?? "")"
-                                       Placeholder="— Select repository —"
+                                       Placeholder="Select repository"
                                        ShowEmptyOption="false"
                                        Disabled="@(repos.Count == 0)"
                                        Groups="@RepoGroups"
@@ -161,7 +162,7 @@
                         <div class="pr-placeholder">
                             <div style="font-size:2rem;opacity:.2;">🔀</div>
                             <div class="bp-title">Select a Requirement</div>
-                            <div class="bp-sub">Click any row in the table to configure and create a branch.</div>
+                            <div class="bp-sub">Click a row in the table to set up and create its branch.</div>
                         </div>
                     }
                     else
@@ -278,7 +279,7 @@
                                           ValueChanged="OnBaseBranchChange"
                                           Loading="@loadingBranches"
                                           Disabled="@(selectedRepo == null)"
-                                          Placeholder="@(selectedRepo == null ? "— Select a repository first —" : "— Select branch —")" />
+                                          Placeholder="@(selectedRepo == null ? "Select a repository first" : "Select branch")" />
                         </div>
 
                         <!-- Action Buttons -->

@@ -6,7 +6,7 @@ namespace DevKit.Tests;
 
 /// <summary>
 /// A target-framework upgrade moves a source build from bin/Debug/net9.0 to bin/Debug/net10.0. These pin
-/// that the settings — TFS URL, PAT, every tool's defaults — follow it rather than the app opening empty.
+/// that the settings (TFS URL, PAT, every tool's defaults) follow it rather than the app opening empty.
 /// Each test works in its own temporary folder tree, never the real build output.
 /// </summary>
 public sealed class SettingsUpgradeTests : IDisposable

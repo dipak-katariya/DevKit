@@ -33,7 +33,7 @@ public enum CodeVerdict
     /// <summary>Not compared, and nothing to do about it: not completed, abandoned, or no merging branch.</summary>
     Skipped,
 
-    /// <summary>Changes more files than this scope compares — needs a check of this pull request on its own.</summary>
+    /// <summary>Changes more files than this scope compares, so it needs a check of this pull request on its own.</summary>
     TooLarge,
 
     /// <summary>The comparison itself failed; running it again may succeed.</summary>
@@ -77,7 +77,7 @@ public enum HunkStatus
 
     Missing,
 
-    /// <summary>Some of the lines are there and some are not — usually a conflict resolved by hand.</summary>
+    /// <summary>Some of the lines are there and some are not, usually a conflict resolved by hand.</summary>
     Altered
 }
 
@@ -103,7 +103,7 @@ public sealed class HunkCheck
     /// <summary>Where the block starts in the file as the pull request left it on QA (1-based).</summary>
     public int QaLine { get; init; }
 
-    /// <summary>Where it was found on the branch — or where the old code still is. Null when nowhere.</summary>
+    /// <summary>Where it was found on the branch, or where the old code still is. Null when nowhere.</summary>
     public int? DestinationLine { get; init; }
 
     public int Added { get; init; }
@@ -205,7 +205,7 @@ public sealed record PrCodeCheck
         };
     }
 
-    /// <summary>A copy with one file replaced — how line detail produced on demand is attached.</summary>
+    /// <summary>A copy with one file replaced. This is how line detail produced on demand is attached.</summary>
     public PrCodeCheck WithFile(FileCodeCheck replacement) =>
         this with { Files = Files.Select(f => f.Path == replacement.Path ? replacement : f).ToList() };
 

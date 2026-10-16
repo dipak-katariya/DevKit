@@ -22,8 +22,9 @@ public sealed record ChangeList(IReadOnlyList<FileChange> Files, bool Truncated,
 /// Git objects read from TFS for one comparison run. Commits, trees and blobs never change, so each is
 /// fetched once per run and shared: every pull request in a sprint walks the same destination tree, and
 /// a file two pull requests touched is downloaded once. A file's object id comes from walking the
-/// trees, so "not there" is an answer rather than a 404. Every request goes through
-/// <see cref="TfsThrottle"/>.
+/// trees, so "not there" is an answer rather than a 404. Every request waits its turn at the shared
+/// <see cref="TfsGate"/>: the transport queues the JSON reads, and a blob read holds its slot until
+/// its body is in.
 /// </summary>
 public sealed class GitObjectReader
 {
@@ -91,7 +92,7 @@ public sealed class GitObjectReader
     /// <remarks>
     /// A short page is not taken as the last one: a server may hand back fewer changes than asked for, and
     /// treating that as the end would leave files unchecked and the pull request reading as merged. So
-    /// paging moves on by what actually arrived, until a page brings nothing new — which also ends the
+    /// paging moves on by what actually arrived, until a page brings nothing new, which also ends the
     /// loop on a server that ignores <c>$skip</c> and repeats itself. When TFS states how many changes
     /// there are, fewer arriving means the list was cut short.
     /// </remarks>
@@ -149,7 +150,7 @@ public sealed class GitObjectReader
         return total;
     }
 
-    /// <summary>The commit's first parent — what a merge commit was made on top of — or null for a root commit.</summary>
+    /// <summary>The commit's first parent (what a merge commit was made on top of), or null for a root commit.</summary>
     public async Task<string?> FirstParentAsync(string project, string repoId, string commitId, CancellationToken ct) =>
         (await CommitAsync(project, repoId, commitId, ct)).Parents.FirstOrDefault();
 
@@ -172,7 +173,7 @@ public sealed class GitObjectReader
             }
 
             // Something is at this path, just not what the change needs. "Absent" would be the wrong
-            // answer — on QA's side it would even excuse a missing file — so it is an error instead.
+            // answer (on QA's side it would even excuse a missing file), so it is an error instead.
             var last = i == segments.Length - 1;
             if (last ? !entry.IsBlob : !entry.IsTree)
             {
@@ -192,7 +193,7 @@ public sealed class GitObjectReader
     public Task<byte[]?> ReadBlobAsync(string project, string repoId, string blobId, long maxBytes, CancellationToken ct) =>
         _blobs.GetOrAddAsync($"{repoId}:{blobId}", () => CountedAsync(() => _req.GetBytesAsync(
             RepoApi(project, repoId, $"blobs/{Uri.EscapeDataString(blobId)}?$format=octetstream&api-version={_req.Ver}"),
-            maxBytes, ct), ct));
+            maxBytes, ct)));
 
     private Task<CommitObject> CommitAsync(string project, string repoId, string commitId, CancellationToken ct) =>
         _commits.GetOrAddAsync($"{repoId}:{commitId}", async () =>
@@ -237,12 +238,12 @@ public sealed class GitObjectReader
         _req.ProjectApi(project, $"git/repositories/{Uri.EscapeDataString(repoId)}/{path}");
 
     private Task<JsonElement> GetJsonAsync(string url, CancellationToken ct) =>
-        CountedAsync(() => _req.GetJsonAsync(url, ct), ct);
+        CountedAsync(() => _req.GetJsonAsync(url, ct));
 
-    private Task<T> CountedAsync<T>(Func<Task<T>> request, CancellationToken ct)
+    private Task<T> CountedAsync<T>(Func<Task<T>> request)
     {
         Interlocked.Increment(ref _requests);
-        return TfsThrottle.RunAsync(request, ct);
+        return request();
     }
 
     private static FileChange? ParseChange(JsonElement change)
@@ -269,7 +270,7 @@ public sealed class GitObjectReader
             // Kept, not dropped: a pull request that only moves a submodule would otherwise list no
             // files and read as fully merged.
             return new FileChange(path, null, kind, null, null, objectType == CommitType
-                ? "A submodule pointer — the code it points at lives in another repository, so it can't be compared here; check it by hand."
+                ? "A submodule pointer. The code it points at lives in another repository, so it can't be compared here; check it by hand."
                 : $"A git {objectType} entry, which can't be compared here; check it by hand.");
         }
 
@@ -419,7 +420,7 @@ internal sealed class AsyncLruCache<T>
             else
             {
                 // Started outside the lock, and wrapped so even a synchronous throw becomes a faulted
-                // task — Lazy would otherwise cache the exception for good.
+                // task. Lazy would otherwise cache the exception for good.
                 slot = new Slot(key, new Lazy<Task<T>>(() => RunAsync(fetch), LazyThreadSafetyMode.ExecutionAndPublication));
                 _slots[key] = _recency.AddFirst(slot);
                 added = true;

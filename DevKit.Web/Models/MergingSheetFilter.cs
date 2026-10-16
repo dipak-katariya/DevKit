@@ -3,8 +3,8 @@ namespace DevKit.Web.Models;
 /// <summary>
 /// Client-side filtering and ordering for the Code Merging Sheet.
 ///
-/// Every visible number goes through <see cref="VisiblePrs"/> — the pull-request table, the
-/// per-row counts and the summary cards all call it — so the figures on screen cannot drift
+/// Every visible number goes through <see cref="VisiblePrs"/> (the pull-request table, the
+/// per-row counts and the summary cards all call it), so the figures on screen cannot drift
 /// apart as filters are added. The Created By filter is why this matters: it narrows the
 /// pull requests *inside* a row as well as the rows themselves.
 /// </summary>
@@ -17,6 +17,9 @@ public class MergingSheetFilter
     public const string Unchecked = "unchecked";
     public const string NoPrs = "noprs";
 
+    /// <summary>A read that could have found more of the work item's pull requests failed.</summary>
+    public const string Incomplete = "incomplete";
+
     /// <summary>A pull request's code comparison found something to look at, or could not run.</summary>
     public const string CodeIssues = "codeissues";
 
@@ -26,7 +29,7 @@ public class MergingSheetFilter
     public string MergeState { get; set; } = "";
 
     /// <summary>
-    /// Order by when work started — see <see cref="WorkStarted"/> — instead of by assignee; rows
+    /// Order by when work started (see <see cref="WorkStarted"/>) instead of by assignee; rows
     /// with no pull requests go last. On by default: reading the sheet in the order work actually
     /// started is the common case.
     /// </summary>
@@ -43,7 +46,7 @@ public class MergingSheetFilter
     /// <summary>
     /// The one place a row's pull requests are chosen. Counts, the per-row table, the summary
     /// cards and the merge roll-up all read it, so nothing on screen can disagree with anything
-    /// else — including when <see cref="ShowAllPrs"/> widens the set.
+    /// else, including when <see cref="ShowAllPrs"/> widens the set.
     /// </summary>
     public List<MergingPullRequest> VisiblePrs(RequirementMergingRow row)
     {
@@ -87,7 +90,7 @@ public class MergingSheetFilter
 
     /// <summary>
     /// Pull requests whose code comparison has finished, whatever it found. One skipped for having
-    /// nothing to compare — abandoned, say — was not compared, so it does not count.
+    /// nothing to compare (abandoned, say) was not compared, so it does not count.
     /// </summary>
     public int CountCodeCompared(IEnumerable<RequirementMergingRow> rows) =>
         rows.SelectMany(VisiblePrs).Count(p => p.CodeCheck is { Verdict: not (CodeVerdict.Checking or CodeVerdict.Skipped) });
@@ -133,7 +136,7 @@ public class MergingSheetFilter
         || row.Title.Contains(Search, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The work-item level roll-up, computed from the pull requests this filter shows.</summary>
-    public MergeRollupResult Rollup(RequirementMergingRow row) => MergeRollupCalculator.For(VisiblePrs(row));
+    public MergeRollupResult Rollup(RequirementMergingRow row) => MergeRollupCalculator.For(row, VisiblePrs(row));
 
     private bool MatchesMergeState(RequirementMergingRow row)
     {
@@ -152,6 +155,7 @@ public class MergingSheetFilter
             RolledBack => state == MergeRollup.RolledBack,
             Unchecked => state == MergeRollup.NotChecked,
             NoPrs => state == MergeRollup.NoPullRequests,
+            Incomplete => state == MergeRollup.Incomplete,
             _ => true
         };
     }

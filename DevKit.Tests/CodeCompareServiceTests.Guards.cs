@@ -5,7 +5,7 @@ using Xunit;
 namespace DevKit.Tests;
 
 /// <summary>
-/// The guards: whatever TFS does — fail, stall, page oddly, answer half a reply — or whatever the user
+/// The guards: whatever TFS does (fail, stall, page oddly, answer half a reply) or whatever the user
 /// does mid-run, a pull request is never reported as having its code on the branch when that was not
 /// established, and nothing is left showing "Comparing…".
 /// </summary>
@@ -86,6 +86,30 @@ public sealed partial class CodeCompareServiceTests
         await running;
 
         Assert.Null(pr.CodeCheck);
+    }
+
+    [Fact]
+    public async Task A_run_overtaken_by_clearing_the_sheet_leaves_no_verdict_on_qa_or_off_qa_pull_requests()
+    {
+        var (onQa, after) = MergedPr(1035);
+        var (offQa, _) = MergedPr(1036);
+        offQa.TargetBranch = "feature/order-totals";
+        _git.Branch(Release, _git.Commit(after));
+        var bundle = new CodeMergingBundle
+        {
+            Requirements = { new RequirementMergingRow { WorkItemId = 1, PullRequests = { onQa }, OffQaBranchPullRequests = { offQa } } }
+        };
+        _git.Gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var running = CompareAsync(CodeCompareScope.WorkItem, onQa, offQa);
+        await _git.DiffRequested.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        MergeVerificationService.ClearVerification(bundle);
+        _git.Gate.SetResult();
+        await running;
+
+        Assert.Null(onQa.CodeCheck);
+        Assert.Null(offQa.CodeCheck);
+        Assert.Null(offQa.EffectiveMerged);
     }
 
     [Fact]

@@ -10,7 +10,7 @@ namespace DevKit.Tests;
 
 /// <summary>
 /// Answers TFS's git endpoints from commits built in memory. Object ids are content hashes, so
-/// identical content gets an identical id — the property the comparison relies on.
+/// identical content gets an identical id, which is the property the comparison relies on.
 /// </summary>
 internal sealed class FakeGitServer : HttpMessageHandler
 {
@@ -37,13 +37,13 @@ internal sealed class FakeGitServer : HttpMessageHandler
     /// <summary>Answers every page as if $skip were 0, like a server that does not page.</summary>
     public bool IgnoreSkip { get; set; }
 
-    /// <summary>When set, diff requests wait for it — or for cancellation.</summary>
+    /// <summary>When set, diff requests wait for it or for cancellation.</summary>
     public TaskCompletionSource? Gate { get; set; }
 
     public TaskCompletionSource DiffRequested { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     /// <summary>
-    /// When set, branch reads wait for it whatever happens — like a request already on its way — and
+    /// When set, branch reads wait for it whatever happens (like a request already on its way) and
     /// then fail, so a TFS error can land after the run was stopped.
     /// </summary>
     public TaskCompletionSource? RefsGate { get; set; }

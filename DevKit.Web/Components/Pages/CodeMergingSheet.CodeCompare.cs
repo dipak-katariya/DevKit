@@ -5,7 +5,7 @@ namespace DevKit.Web.Components.Pages;
 
 /// <summary>
 /// Comparing the code itself with each repository's merging branch, in three scopes: every pull request
-/// on the sheet, one work item's, or one pull request's — the last allowing far larger pull requests, so
+/// on the sheet, one work item's, or one pull request's. The last allows far larger pull requests, so
 /// one too big for the sprint-wide run can still be checked. One comparison runs at a time.
 /// </summary>
 public partial class CodeMergingSheet
@@ -19,16 +19,15 @@ public partial class CodeMergingSheet
     private bool ComparingCode => codeRun is not null;
 
     private bool CanCompareCode =>
-        bundle.Requirements.Count > 0 && MergingBranchByRepoId.Count > 0
-        && !ComparingCode && !verifying && !loading && !loadingRest;
+        bundle.Requirements.Count > 0 && MergingBranchByRepoId.Count > 0 && Activity.IsIdle;
 
     /// <summary>The Merged column shows once something can be checked, not only after a check ran.</summary>
     private bool ShowMergeColumns =>
         bundle.TargetBranchName is not null || (bundle.Requirements.Count > 0 && MergingBranchByRepoId.Count > 0);
 
     private string CompareAllTooltip =>
-        "Compare the code of every completed pull request shown with its repository's merging branch — each " +
-        "pull request's own change, file by file. Reads any commits not loaded yet and runs Verify All first.";
+        "Compare the code of every completed pull request shown with its repository's merging branch, " +
+        "file by file. Reads any commits not loaded yet and runs Verify All first.";
 
     private MergingRow.CodeState RowCodeState =>
         new(ComparingCode, MergingBranchByRepoId.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase), explaining);
@@ -42,23 +41,36 @@ public partial class CodeMergingSheet
 
         // The commit check is quick, and with it in place the sheet can point out pull requests whose
         // commits are all on the branch while their code is not. It needs every row's commits, which
-        // Verify reads first — so it runs again whenever some were still unread.
-        if (bundle.TargetBranchName is null || PendingRowCount > 0)
+        // Verify reads first, so it runs again whenever some were still unread.
+        var sheet = bundle;
+        if (sheet.TargetBranchName is null || PendingRowCount > 0)
         {
             await Verify();
+        }
+
+        // A sheet loaded meanwhile is not the one this click was for, and its commits were not read.
+        if (!ReferenceEquals(sheet, bundle))
+        {
+            return;
         }
 
         var prs = visibleRows
             .SelectMany(r => filter.VisiblePrs(r).Where(p => r.PullRequests.Contains(p)))
             .Distinct()
             .ToList();
-        await RunCodeCompare(prs, CodeCompareScope.Sprint);
+        await RunCodeCompare(sheet, prs, CodeCompareScope.Sprint);
     }
 
     private async Task CompareRowCode(RequirementMergingRow row)
     {
+        var sheet = bundle;
         await LoadRowCommits(row);
-        await RunCodeCompare(filter.VisiblePrs(row).Where(p => row.PullRequests.Contains(p)).ToList(), CodeCompareScope.WorkItem);
+        if (!ReferenceEquals(sheet, bundle))
+        {
+            return;
+        }
+
+        await RunCodeCompare(sheet, filter.VisiblePrs(row).Where(p => row.PullRequests.Contains(p)).ToList(), CodeCompareScope.WorkItem);
 
         // Same reason as the sheet-wide run: without the commit check the row cannot say its commits
         // are there while its code is not.
@@ -69,17 +81,22 @@ public partial class CodeMergingSheet
     }
 
     private Task ComparePrCode(MergingPullRequest pr) =>
-        RunCodeCompare(new[] { pr }, CodeCompareScope.PullRequest);
+        RunCodeCompare(bundle, new[] { pr }, CodeCompareScope.PullRequest);
 
-    private async Task RunCodeCompare(IReadOnlyList<MergingPullRequest> prs, CodeCompareScope scope)
+    /// <summary>
+    /// Compares the given pull requests of <paramref name="target"/>, the sheet the click was on. Each pull
+    /// request's result is kept out after a reset or a reload by the in-progress marker the reset clears;
+    /// the sheet's generation does the same for the run summary and error, which describe the settings the
+    /// run started with.
+    /// </summary>
+    private async Task RunCodeCompare(CodeMergingBundle target, IReadOnlyList<MergingPullRequest> prs, CodeCompareScope scope)
     {
         if (ComparingCode || prs.Count == 0)
         {
             return;
         }
 
-        // Captured, so a run that outlives a reload writes its summary to the sheet it compared.
-        var target = bundle;
+        var generation = target.VerificationGeneration;
         var branches = MergingBranchByRepoId;
         foreach (var repoId in prs.Select(p => p.RepositoryId).Where(branches.ContainsKey))
         {
@@ -104,16 +121,16 @@ public partial class CodeMergingSheet
         catch (Exception ex)
         {
             Log.LogError(ex, "Code compare ({Scope}) failed for {PullRequests} pull requests", scope, prs.Count);
-            target.ErrorMessage = $"Code compare failed: {TfsErrors.Describe(ex)}";
+            target.TryWriteResults(generation, () => target.ErrorMessage = $"Code compare failed: {TfsErrors.Describe(ex)}");
         }
 
-        // Still the current run, unless a reload or a branch change cancelled it and moved on — its
+        // Still the current run, unless a reload or a branch change cancelled it and moved on. Its
         // summary would then describe settings that no longer apply. Stop leaves it current.
         var current = ReferenceEquals(codeRun, cts);
         if (current)
         {
             codeRun = null;
-            target.LastCodeCompare = summary ?? target.LastCodeCompare;
+            target.TryWriteResults(generation, () => target.LastCodeCompare = summary ?? target.LastCodeCompare);
         }
         cts.Dispose();
 
@@ -138,7 +155,7 @@ public partial class CodeMergingSheet
         StateHasChanged();
         try
         {
-            var detailed = await CodeCompare.ExplainAsync(pr, file);
+            var detailed = await CodeCompare.ExplainAsync(pr, file, page.Token);
 
             // Attached only to the result it was read for: a comparison that finished meanwhile has
             // its own files, and an old one must not be slipped into it.
@@ -146,6 +163,10 @@ public partial class CodeMergingSheet
             {
                 pr.TryReplaceCodeCheck(explained, explained.WithFile(detailed));
             }
+        }
+        catch (OperationCanceledException ex) when (page.Token.IsCancellationRequested)
+        {
+            Log.LogDebug(ex, "Reading the lines of {Path} stopped because the page was left", file.Path);
         }
         catch (Exception ex)
         {

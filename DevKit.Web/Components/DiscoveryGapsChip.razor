@@ -1,0 +1,66 @@
+@* The reads that failed while loading the sheet (work items TFS did not return, and reads that could have
+   found more pull requests), as one chip in the insight strip: the count on the strip, the list in a popover,
+   so a bad load costs the grid no rows. *@
+
+<Popover Open="@open" OpenChanged="@(o => open = o)" CssClass="cm-gaps" PanelClass="cm-gaps-pop" Label="Reads that failed">
+    <Trigger>
+        <button type="button" class="cm-qf cm-st-gap @(open ? "on" : "")" aria-expanded="@(open ? "true" : "false")"
+                title="@Summary Click for the list." @onclick="() => open = !open">
+            <Icon Inner="@Icons.AlertTriangle" /><b>@Bundle.DiscoveryWarnings.Count</b> @(Bundle.DiscoveryWarnings.Count == 1 ? "read" : "reads") failed
+        </button>
+    </Trigger>
+    <ChildContent>
+        <h3 class="cm-pop-h">Reads that failed</h3>
+        <p class="cm-gaps-note">@Summary Load Data again to retry.</p>
+        <ul class="cm-gaps-list">
+            @foreach (var warning in Bundle.DiscoveryWarnings.Take(MaxListed))
+            {
+                <li><b>@warning.Subject</b><span>@warning.Reason</span></li>
+            }
+        </ul>
+        @if (Bundle.DiscoveryWarnings.Count > MaxListed)
+        {
+            <p class="cm-gaps-note">And @(Bundle.DiscoveryWarnings.Count - MaxListed) more. The DevKit log has the full list.</p>
+        }
+    </ChildContent>
+</Popover>
+
+@code {
+    [Parameter, EditorRequired] public CodeMergingBundle Bundle { get; set; } = new();
+
+    /// <summary>A sprint where TFS is struggling can fail a read per work item; the log keeps the full list.</summary>
+    private const int MaxListed = 50;
+
+    private bool open;
+    private int incompleteRows;
+    private int unreadItems;
+    private bool pullRequestReadsFailed;
+
+    private string Summary
+    {
+        get
+        {
+            var unread = unreadItems switch
+            {
+                0 => "",
+                1 => "1 work item could not be read, so it is not on the sheet. ",
+                _ => $"{unreadItems} work items could not be read, so they are not on the sheet. "
+            };
+            return pullRequestReadsFailed ? unread + PullRequestSummary : unread.TrimEnd();
+        }
+    }
+
+    private string PullRequestSummary => incompleteRows switch
+    {
+        0 => "No work item lost a pull request: each linked one was read on its own.",
+        1 => "1 work item may be missing pull requests, so it cannot count as merged.",
+        _ => $"{incompleteRows} work items may be missing pull requests, so they cannot count as merged."
+    };
+
+    protected override void OnParametersSet()
+    {
+        incompleteRows = Bundle.Requirements.Count(r => r.DiscoveryIncomplete);
+        unreadItems = Bundle.UnreadWorkItemIds.Count;
+        pullRequestReadsFailed = Bundle.DiscoveryWarnings.Count > unreadItems;
+    }
+}

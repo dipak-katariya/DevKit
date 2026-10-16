@@ -6,7 +6,7 @@ using DevKit.Web.Services;
 namespace DevKit.Web.Components;
 
 /// <summary>Requirement sizes checked against the estimates on their child tasks.</summary>
-public partial class SizeCheckPanel
+public sealed partial class SizeCheckPanel : IDisposable
 {
     /// <summary>Types the grid starts on. Bugs are excluded until the user ticks them in.</summary>
     private static readonly string[] DefaultTypes = { "Change Request", "Requirement" };
@@ -14,10 +14,13 @@ public partial class SizeCheckPanel
     /// <summary>Types the sprint query can return, so the filter is usable before a load.</summary>
     private static readonly string[] KnownTypes = { "Bug", "Change Request", "Requirement" };
 
+    /// <summary>Requirements whose child tasks are read, or whose sizes are written, side by side.</summary>
+    private const int ParallelRequirements = 5;
+
     [Parameter] public TfsArea? Area { get; set; }
     [Parameter] public string? Sprint { get; set; }
 
-    /// <summary>The hub's shared area/sprint pickers, rendered inside this panel's config bar.</summary>
+    /// <summary>The page's shared area/sprint pickers, rendered inside this panel's config bar.</summary>
     [Parameter] public RenderFragment? Selectors { get; set; }
 
     private List<PlanningItem> planningItems = new();
@@ -36,18 +39,24 @@ public partial class SizeCheckPanel
     // instead of showing another sprint's numbers under the new selection.
     private string loadedKey = "";
 
+    // Leaving the tab stops the sprint's reads; a size write already sent is left to finish.
+    private readonly PageLifetime page = new();
+
     private bool AllExpanded => filteredItems.Count > 0 && filteredItems.All(p => p.IsExpanded);
     private int CalcDiffersCount => planningItems.Count(p => p.CalcDiffersFromCurrent);
 
     private string EmptyGridMessage => typeFilter.Count == 0
-        ? "No types selected — tick at least one type to see items."
+        ? "No types selected. Tick at least one type to see items."
         : "No items match the filter.";
 
     private string SelectionKey => $"{Area?.Project}|{Area?.Path}|{Sprint}";
 
     protected override void OnParametersSet()
     {
-        if (planningItems.Count == 0 || loadedKey == SelectionKey) return;
+        if (planningItems.Count == 0 || loadedKey == SelectionKey)
+        {
+            return;
+        }
         planningItems = new();
         filteredItems = new();
         showMismatchOnly = false;
@@ -80,40 +89,73 @@ public partial class SizeCheckPanel
 
     private async Task Load()
     {
-        if (Area == null || string.IsNullOrEmpty(Sprint)) return;
+        var area = Area;
+        var sprint = Sprint;
+        if (area == null || string.IsNullOrEmpty(sprint))
+        {
+            return;
+        }
         loading = true; planningItems.Clear(); filteredItems.Clear(); statusMsg = "";
         loadedKey = SelectionKey;
         StateHasChanged();
         try
         {
-            var iterPath = TfsApiService.ToWiqlPath(Sprint);
-            var reqs = await TfsApi.LoadPlanningItemsAsync(Area.Project, iterPath);
+            var iterPath = TfsApiService.ToWiqlPath(sprint);
+            var reqs = await TfsApi.LoadPlanningItemsAsync(area.Project, iterPath, page.Token);
 
-            var areaPath = TfsApiService.ToWiqlPath(Area.Path);
+            var areaPath = TfsApiService.ToWiqlPath(area.Path);
             reqs = reqs.Where(r => r.Area.Replace("\\Area\\", "\\").Contains(areaPath, StringComparison.OrdinalIgnoreCase)
                               || r.Area.Equals(areaPath, StringComparison.OrdinalIgnoreCase)).ToList();
 
             planningItems = reqs.Select(r => new PlanningItem { WorkItem = r, CurrentSprintPath = iterPath }).ToList();
 
-            foreach (var chunk in planningItems.Chunk(5))
+            var unread = await LoadChildTasksAsync(page.Token);
+            if (unread.Count > 0)
             {
-                var tasks = chunk.Select(async pi =>
-                {
-                    try { pi.Tasks = await TfsApi.GetChildTasksAsync(pi.WorkItem.Project, pi.WorkItem.Id); }
-                    catch { pi.Tasks = new(); }
-                }).ToArray();
-                await Task.WhenAll(tasks);
-                ApplyFilter();
-                StateHasChanged();
+                statusMsg = $"⚠ Tasks of {unread.Count} requirement(s) could not be read, so their hours show as 0: {unread[0]}";
+                statusOk = false;
             }
         }
-        catch (Exception ex) { statusMsg = $"✕ Load failed: {ex.Message}"; statusOk = false; }
+        catch (OperationCanceledException ex) when (page.Token.IsCancellationRequested)
+        {
+            Logger.LogDebug(ex, "Size Check load for {Area} / {Sprint} stopped because the tab was left", area.Path, sprint);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Size Check load failed for {Area} / {Sprint}", area.Path, sprint);
+            statusMsg = $"✕ Load failed: {TfsErrors.Describe(ex)}";
+            statusOk = false;
+        }
         loading = false;
     }
 
-    private void StartEditSize(PlanningItem pi)
+    /// <summary>
+    /// Reads each requirement's child tasks a batch at a time, repainting as each batch lands. A requirement
+    /// whose tasks could not be read is left with none, and its failure is handed back, already worded, so the
+    /// page can say its hours are missing rather than zero.
+    /// </summary>
+    private async Task<List<string>> LoadChildTasksAsync(CancellationToken ct)
     {
-        pi.EditingSize = pi.WorkItem.Effort?.ToString("0.##") ?? "";
+        var failures = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        foreach (var chunk in planningItems.Chunk(ParallelRequirements))
+        {
+            await Task.WhenAll(chunk.Select(async pi =>
+            {
+                try
+                {
+                    pi.Tasks = await TfsApi.GetChildTasksAsync(pi.WorkItem.Project, pi.WorkItem.Id, ct);
+                }
+                catch (Exception ex) when (!TfsErrors.IsRequestedCancellation(ex, ct))
+                {
+                    Logger.LogError(ex, "Size Check could not read the child tasks of #{Id}", pi.WorkItem.Id);
+                    pi.Tasks = new();
+                    failures.Enqueue(TfsErrors.Describe(ex));
+                }
+            }));
+            ApplyFilter();
+            StateHasChanged();
+        }
+        return failures.ToList();
     }
 
     private async Task OnSizeKeyDown(KeyboardEventArgs e, PlanningItem pi)
@@ -124,23 +166,25 @@ public partial class SizeCheckPanel
 
     private async Task SaveSize(PlanningItem pi)
     {
-        if (pi.EditingSize == null) return;
-        if (!double.TryParse(pi.EditingSize, out var newSize) || newSize < 0)
+        if (pi.EditingSize == null)
+        {
+            return;
+        }
+        if (pi.EditedSize is not { } newSize)
         {
             SetStatus("✕ Invalid size value", false, 2500);
             return;
         }
 
         pi.Saving = true; StateHasChanged();
-        try
+        if (await PushSize(pi, newSize) is { } failure)
         {
-            await PushSize(pi, newSize);
+            SetStatus($"✕ Update failed: {failure}", false, 3500);
+        }
+        else
+        {
             pi.EditingSize = null;
             SetStatus($"✓ Updated #{pi.WorkItem.Id} size to {newSize:0.##}", true, 2000);
-        }
-        catch (Exception ex)
-        {
-            SetStatus($"✕ Update failed: {ex.Message}", false, 3500);
         }
         pi.Saving = false;
     }
@@ -156,15 +200,14 @@ public partial class SizeCheckPanel
         }
 
         pi.Saving = true; StateHasChanged();
-        try
+        if (await PushSize(pi, newSize) is { } failure)
         {
-            await PushSize(pi, newSize);
+            SetStatus($"✕ Update failed: {failure}", false, 3500);
+        }
+        else
+        {
             pi.EditingSize = null;
             SetStatus($"✓ Set #{pi.WorkItem.Id} size to {newSize:0.##} ({pi.PastSprintCompleted:0.##}h done + {pi.CurrentSprintOriginal:0.##}h est)", true, 2800);
-        }
-        catch (Exception ex)
-        {
-            SetStatus($"✕ Update failed: {ex.Message}", false, 3500);
         }
         pi.Saving = false;
     }
@@ -180,14 +223,16 @@ public partial class SizeCheckPanel
         }
 
         bulkApplying = true; StateHasChanged();
-        var results = new System.Collections.Concurrent.ConcurrentBag<bool>();
-        foreach (var chunk in targets.Chunk(5))
+        var failures = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        foreach (var chunk in targets.Chunk(ParallelRequirements))
         {
             var jobs = chunk.Select(async pi =>
             {
                 pi.Saving = true;
-                try { await PushSize(pi, pi.CalculatedSize); results.Add(true); }
-                catch { results.Add(false); }
+                if (await PushSize(pi, pi.CalculatedSize) is { } failure)
+                {
+                    failures.Enqueue(failure);
+                }
                 pi.Saving = false;
             }).ToArray();
             await Task.WhenAll(jobs);
@@ -195,9 +240,9 @@ public partial class SizeCheckPanel
         }
         bulkApplying = false;
 
-        var ok = results.Count(r => r);
-        var fail = results.Count - ok;
-        SetStatus(fail == 0 ? $"✓ Updated {ok} requirement size(s)" : $"⚠ Updated {ok}, {fail} failed", fail == 0, 3500);
+        var ok = targets.Count - failures.Count;
+        SetStatus(failures.TryPeek(out var first) ? $"⚠ Updated {ok}, {failures.Count} failed: {first}" : $"✓ Updated {ok} requirement size(s)",
+            failures.IsEmpty, 3500);
     }
 
     // Requirement/Change Request "Size" field across the common process templates.
@@ -208,21 +253,30 @@ public partial class SizeCheckPanel
         "Microsoft.VSTS.Scheduling.StoryPoints" // Agile (User Story)
     };
 
-    /// <summary>Writes the size value to the requirement's Size field (falling back across templates) and updates the local model.</summary>
-    private async Task PushSize(PlanningItem pi, double newSize)
+    /// <summary>
+    /// Writes the size value to the requirement's Size field (falling back across templates) and updates the local
+    /// model. Answers null once a field took it, or the last field's failure, worded for the page. The write is started
+    /// by a click, so it is not cancelled when the page closes.
+    /// </summary>
+    private async Task<string?> PushSize(PlanningItem pi, double newSize)
     {
-        Exception? lastError = null;
+        var failure = "No size field could be updated.";
         foreach (var field in SizeFieldCandidates)
         {
             try
             {
-                await TfsApi.UpdateWorkItemFieldAsync(pi.WorkItem.Project, pi.WorkItem.Id, field, newSize);
+                await TfsApi.UpdateWorkItemFieldAsync(pi.WorkItem.Project, pi.WorkItem.Id, field, newSize, CancellationToken.None);
                 pi.WorkItem.Effort = newSize;
-                return;
+                return null;
             }
-            catch (Exception ex) { lastError = ex; }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Setting {Field} of #{Id} to {Size} failed; any other size field is tried next",
+                    field, pi.WorkItem.Id, newSize);
+                failure = TfsErrors.Describe(ex);
+            }
         }
-        throw lastError ?? new InvalidOperationException("No size field could be updated.");
+        return failure;
     }
 
     private void SetStatus(string msg, bool ok, int clearMs)
@@ -238,6 +292,8 @@ public partial class SizeCheckPanel
         statusMsg = "";
         await InvokeAsync(StateHasChanged);
     }
+
+    public void Dispose() => page.Dispose();
 
     // ─── Filtering ───
     private void OnSearch(ChangeEventArgs e) { searchQ = (e.Value?.ToString() ?? "").ToLower(); ApplyFilter(); }
@@ -301,15 +357,4 @@ public partial class SizeCheckPanel
         .OrderBy(t => t, StringComparer.OrdinalIgnoreCase)
         .Select(t => new MultiSelectDropdown.Option { Value = t, Label = t })
         .ToList();
-
-    private static string TypeCls(string t) => t.ToLower() switch { "bug" => "bug", "change request" => "cr", _ => "" };
-
-    private static string StateCls(string s)
-    {
-        var l = s.ToLower();
-        if (l.Contains("progress") || l.Contains("active")) return "state-active";
-        if (l.Contains("resolve") || l.Contains("done") || l.Contains("complete")) return "state-resolved";
-        if (l.Contains("closed")) return "state-closed";
-        return "state-new";
-    }
 }

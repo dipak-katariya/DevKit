@@ -92,7 +92,7 @@ public sealed partial class CodeCompareService
 
     /// <summary>
     /// The text of each version the line check needs. QA's current version is read only when it differs
-    /// from what the pull request left — otherwise there is nothing later on QA to check against.
+    /// from what the pull request left; otherwise there is nothing later on QA to check against.
     /// </summary>
     private static async Task<(FileVersions? Versions, string? Problem)> ReadVersionsAsync(
         BlobSource source, BlobIds ids, CodeCompareLimits limits, CancellationToken ct)
@@ -128,12 +128,12 @@ public sealed partial class CodeCompareService
 
         var text = TextBlob.Decode(bytes);
         return text is null
-            ? new TextRead(null, "A binary file that differs from QA, so it can't be compared line by line — check it by hand.")
+            ? new TextRead(null, "A binary file that differs from QA, so it can't be compared line by line. Check it by hand.")
             : new TextRead(text, null);
     }
 
     private static string TooLargeReason(CodeCompareLimits limits) =>
-        $"Larger than {limits.MaxTextMegabytes} MB and different from QA, so it can't be compared line by line here — check it by hand.";
+        $"Larger than {limits.MaxTextMegabytes} MB and different from QA, so it can't be compared line by line here. Check it by hand.";
 
     private static FileCodeCheck Result(FileChange change, BlobIds ids, FileCodeStatus status, string reason) => new()
     {

@@ -6,7 +6,7 @@ namespace DevKit.Tests;
 
 /// <summary>
 /// Every code verdict stands on the line diff: a wrong edit script would put a pull request's change
-/// in the wrong place and report code missing — or present — by mistake. The randomised test holds the
+/// in the wrong place and report code missing (or present) by mistake. The randomised test holds the
 /// implementation to a brute-force LCS, so correctness and minimality are proven, not sampled.
 /// </summary>
 public class LineDiffTests

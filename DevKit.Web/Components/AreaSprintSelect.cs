@@ -23,7 +23,7 @@ public static class AreaSprintSelect
     }
 
     /// <summary>
-    /// The saved default area, but only while it still exists among the areas that loaded — a renamed or
+    /// The saved default area, but only while it still exists among the areas that loaded. A renamed or
     /// deleted area would otherwise leave the dropdown showing a raw "name|||path|||project" value.
     /// </summary>
     public static TfsArea? Restore(string? saved, IEnumerable<TfsArea> areas)
@@ -35,6 +35,38 @@ public static class AreaSprintSelect
             : null;
     }
 
+    /// <summary>
+    /// The sprint a page starts on, from Settings: the sprint running <paramref name="today"/> in the area's project, or
+    /// the sprint chosen in Settings while it still exists. Null when neither applies; the page then starts with none.
+    /// </summary>
+    public static string? DefaultSprint(SettingsService settings, IReadOnlyCollection<TfsIteration> iterations, TfsArea? area, DateTime today)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        if (settings.DefaultSprintIsCurrent)
+        {
+            return CurrentSprint(iterations, area?.Project, today)?.Path;
+        }
+
+        var chosen = settings.DefaultSprint;
+        return iterations.Any(i => string.Equals(i.Path, chosen, StringComparison.OrdinalIgnoreCase)) ? chosen : null;
+    }
+
+    /// <summary>
+    /// The sprint whose dates include <paramref name="today"/>, in <paramref name="project"/> when one is given. Between
+    /// two sprints it is the one that ended last. Sprints without dates in TFS are never picked.
+    /// </summary>
+    public static TfsIteration? CurrentSprint(IEnumerable<TfsIteration> iterations, string? project, DateTime today)
+    {
+        var dated = iterations
+            .Where(i => i.StartDate is not null && i.FinishDate is not null
+                        && (string.IsNullOrEmpty(project) || string.Equals(i.Project, project, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+        return dated
+                   .Where(i => i.StartDate!.Value.Date <= today.Date && today.Date <= i.FinishDate!.Value.Date)
+                   .MaxBy(i => i.StartDate)
+               ?? dated.Where(i => i.FinishDate!.Value.Date < today.Date).MaxBy(i => i.FinishDate);
+    }
+
     public static List<GlassDropdown.DropdownGroup> AreaGroups(IEnumerable<TfsArea> areas) => areas
         .GroupBy(a => a.Project)
         .Select(grp => new GlassDropdown.DropdownGroup
@@ -43,7 +75,7 @@ public static class AreaSprintSelect
             Options = grp.Select(a => new GlassDropdown.DropdownOption
             {
                 Value = Serialize(a),
-                Label = grp.Key + " — " + TfsApiService.AreaDisplayPath(a.Path)
+                Label = grp.Key + " · " + TfsApiService.AreaDisplayPath(a.Path)
             }).ToList()
         }).ToList();
 
@@ -52,7 +84,7 @@ public static class AreaSprintSelect
         .Select(grp => new GlassDropdown.DropdownGroup
         {
             Label = ProjectGroupPrefix + grp.Key,
-            Options = grp.Select(it => new GlassDropdown.DropdownOption { Value = it.Path, Label = grp.Key + " — " + it.Name }).ToList()
+            Options = grp.Select(it => new GlassDropdown.DropdownOption { Value = it.Path, Label = grp.Key + " · " + it.Name }).ToList()
         }).ToList();
 
     /// <summary>
@@ -62,6 +94,6 @@ public static class AreaSprintSelect
     /// </summary>
     public static List<MultiSelectDropdown.Option> SprintOptions(IEnumerable<TfsIteration> iterations, TfsArea? area) => iterations
         .Where(it => area == null || string.Equals(it.Project, area.Project, StringComparison.OrdinalIgnoreCase))
-        .Select(it => new MultiSelectDropdown.Option { Value = it.Path, Label = it.Name, Hint = $"{it.Project} — {it.Path}" })
+        .Select(it => new MultiSelectDropdown.Option { Value = it.Path, Label = it.Name, Hint = $"{it.Project} · {it.Path}" })
         .ToList();
 }

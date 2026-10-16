@@ -5,7 +5,7 @@ using Xunit;
 namespace DevKit.Tests;
 
 /// <summary>
-/// The commit check: is a pull request's commit — or a copy of it — on the release branch? The cases
+/// The commit check: is a pull request's commit (or a copy of it) on the release branch? The cases
 /// are the ones that produced wrong answers: a cherry-pick whose message was changed while fixing a
 /// conflict (read as missing), and an unrelated commit with a common message (read as merged).
 /// </summary>

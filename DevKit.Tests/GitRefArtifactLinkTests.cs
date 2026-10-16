@@ -6,7 +6,7 @@ namespace DevKit.Tests;
 /// <summary>
 /// Branch links are how the Branch Creator learns which branches a work item already has. TFS
 /// writes them in more than one shape, and a parser that misses one silently reports "no existing
-/// branches" — which reads as "safe to create" when it is not.
+/// branches", which reads as "safe to create" when it is not.
 /// </summary>
 public class GitRefArtifactLinkTests
 {

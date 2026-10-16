@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build and test (Windows)
+    # DevKit encrypts the PAT with DPAPI and its file-permission tests need NTFS, so it is tested on Windows.
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse committed settings files
+        shell: pwsh
+        run: |
+          $tracked = git ls-files | Where-Object { $_ -match '(^|/)usersettings\.json' }
+          if ($tracked) {
+            Write-Error "Settings files hold a PAT and must never be committed: $($tracked -join ', ')"
+            exit 1
+          }
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore DevKit.sln
+
+      - name: Build (warnings are errors)
+        run: dotnet build DevKit.sln -c Release --no-restore -warnaserror
+
+      - name: Test with coverage
+        run: >
+          dotnet test DevKit.sln -c Release --no-build
+          --collect "Code Coverage;Format=cobertura"
+          --results-directory TestResults
+          --logger trx
+
+      - name: Upload test results and coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults
+
+  sonar-analyzer:
+    name: SonarAnalyzer report (does not block)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Build with SonarAnalyzer
+        shell: pwsh
+        run: |
+          dotnet build DevKit.sln -c Release -p:DevKitSonarAnalyzer=true --no-incremental 2>&1 | Tee-Object -FilePath sonar-build.log
+          $issues = Select-String -Path sonar-build.log -Pattern 'warning S\d+' | ForEach-Object { $_.Line.Trim() } | Sort-Object -Unique
+          "SonarAnalyzer found $($issues.Count) issues." | Tee-Object -FilePath sonar-summary.txt
+          $issues | Add-Content sonar-summary.txt
+
+      - name: Upload the SonarAnalyzer report
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonar-analyzer
+          path: sonar-summary.txt

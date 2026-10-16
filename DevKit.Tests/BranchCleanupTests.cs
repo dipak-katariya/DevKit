@@ -6,7 +6,7 @@ using Xunit;
 namespace DevKit.Tests;
 
 /// <summary>
-/// Branch Delete removes branches for good, so every rule that decides what it offers is pinned here:
+/// Branch Cleanup removes branches for good, so every rule that decides what it offers is pinned here:
 /// what is locked, what a work item links, and what counts as an unattached team branch.
 /// </summary>
 public class BranchCleanupTests

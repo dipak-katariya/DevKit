@@ -7,7 +7,7 @@ public sealed record BranchNameParts(string Team, string Sprint, int WorkItemId,
 
 /// <summary>
 /// The team's branch-naming formula, <c>{team}/{sprint}/{workItemId}_{title}</c>, in one place: Branch
-/// Creator builds names with it and Branch Delete reads them back, so the two cannot disagree about
+/// Creator builds names with it and Branch Cleanup reads them back, so the two cannot disagree about
 /// what a team branch looks like.
 /// </summary>
 public static class BranchNaming
@@ -90,7 +90,7 @@ public static class BranchNaming
     }
 
     /// <summary>
-    /// Whether the team prefix is one of the branch's words — "FXCPMGR/…", "feature/fxcpmgr-fix" — so a
+    /// Whether the team prefix is one of the branch's words ("FXCPMGR/…", "feature/fxcpmgr-fix"), so a
     /// short prefix such as "QA" does not claim every branch that merely contains those letters.
     /// </summary>
     public static bool MentionsTeam(string? branch, string? teamSegment) =>

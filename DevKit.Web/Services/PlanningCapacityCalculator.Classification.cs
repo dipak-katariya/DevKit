@@ -18,7 +18,7 @@ public static partial class PlanningCapacityCalculator
 
     /// <summary>
     /// Decides a task's team, deliverable bucket and over-plan exclusion from the settings. A tag
-    /// counts whether it is on the task or on its parent Requirement / Change Request — the parent
+    /// counts whether it is on the task or on its parent Requirement / Change Request; the parent
     /// is where these categories are usually organised ("ALM Activities", "Regression Testing").
     /// </summary>
     private sealed class TaskClassifier
@@ -47,7 +47,7 @@ public static partial class PlanningCapacityCalculator
 
             // First rule the task carries decides deliverability; the first carried rule that is
             // carved out of the over-plan decides exclusion. A task is excluded once, however many
-            // excluded tags it has — it used to be subtracted once per matching tag.
+            // excluded tags it has. It used to be subtracted once per matching tag.
             PlanningTagRule? classifying = null;
             PlanningTagRule? excluding = null;
             foreach (var rule in _rules)
@@ -87,7 +87,7 @@ public static partial class PlanningCapacityCalculator
 
     /// <summary>
     /// Tag strings parsed once into case-insensitive sets. Many tasks share a parent, so parent
-    /// sets are cached — the old code re-split the same tag string for every tag it checked.
+    /// sets are cached; the old code re-split the same tag string for every tag it checked.
     /// </summary>
     private sealed class TagIndex
     {

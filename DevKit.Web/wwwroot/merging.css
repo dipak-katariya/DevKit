@@ -243,6 +243,8 @@ table.cm-commit-table tbody tr:last-child{border-bottom:none;}
 
 /* Count of a row's pull requests held back for targeting something other than the QA branch. */
 .cm-num-off{margin-left:4px;font-size:.55rem;color:var(--muted);font-family:var(--mono);}
+.cm-num-gap{display:inline-flex;margin-left:4px;vertical-align:middle;color:var(--cyan);}
+.cm-num-gap .ic{width:12px;height:12px;}
 
 /* ─── Timestamp (TimeStamp.razor) ─── */
 .ts{display:inline-flex;align-items:baseline;gap:5px;min-width:0;}
@@ -251,7 +253,7 @@ table.cm-commit-table tbody tr:last-child{border-bottom:none;}
 .ts-none{color:var(--muted);}
 
 /* One line of "dd MMM yyyy HH:mm:ss" in mono does not fit the merging tables' date column, so
-   there it stacks instead — the date above, the time with seconds below. */
+   there it stacks instead: the date above, the time with seconds below. */
 .cm-p-date .ts{flex-direction:column;align-items:flex-start;gap:0;line-height:1.4;}
 
 /* ─── Copyable ref (branch / SHA) ─── */
@@ -317,6 +319,8 @@ a.cref-text:hover{text-decoration:underline;}
 
 /* ─── Merging sheet: roll-up + pickers ─── */
 .merge-part{background:rgba(251,191,36,.12);color:#fcd34d;}
+/* Not fully checked: some pull requests could not be read. Cyan, so it never passes for Partial's amber. */
+.merge-gap{background:rgba(56,189,248,.1);color:var(--cyan);}
 
 /* ─── Merging sheet: grid tabs + unlinked pull requests ─── */
 .cm-gridtabs{display:flex;gap:4px;align-items:center;}
@@ -348,6 +352,10 @@ a.cref-text:hover{text-decoration:underline;}
 .cm-pending-chip b{font-family:var(--mono);color:var(--text);}
 .cm-pending-act{padding:3px 9px;border-radius:var(--pill);background:rgba(251,191,36,.16);color:#fde68a;font-weight:700;}
 .cm-num-pending{color:var(--muted3);letter-spacing:1px;}
+/* A commit read that failed: the row stays pending and is read again. */
+.cm-num-err{display:inline-flex;align-items:center;gap:3px;vertical-align:middle;color:var(--amber);}
+.cm-num-err .ic{width:12px;height:12px;}
+.cm-pending-err{display:inline-flex;align-items:center;gap:3px;color:var(--amber);font-weight:700;}
 
 .upr-scope{
   display:flex;gap:8px;align-items:flex-start;padding:7px 12px;margin-bottom:10px;
@@ -356,6 +364,7 @@ a.cref-text:hover{text-decoration:underline;}
 }
 .upr-scope .ic{width:13px;height:13px;color:var(--accent2);flex-shrink:0;margin-top:2px;}
 .upr-hint{font-size:.66rem;color:var(--amber);margin-top:6px;}
+.upr-fail,.upr-fail .ic{color:var(--amber);cursor:help;}
 .upr-count{font-size:.58rem;font-family:var(--mono);color:var(--muted);white-space:nowrap;}
 .upr-wrap .mr-hdr{display:flex;align-items:center;gap:8px;}
 .upr-wrap .cm-commit-wrap{padding:6px 10px 10px 34px;}
@@ -419,6 +428,7 @@ a.cref-text:hover{text-decoration:underline;}
 .cm-st-back{--st:var(--purple);}
 .cm-st-none{--st:var(--muted2);}
 .cm-st-nopr{--st:#45455a;}
+.cm-st-gap{--st:var(--cyan);}
 .cm-qf{
   display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:var(--pill);
   border:1px solid var(--border2);background:var(--surface2);color:var(--muted2);
@@ -453,6 +463,13 @@ button.cm-qf:focus-visible,.cm-ins-info:focus-visible{outline:2px solid var(--ac
 .cm-pop-sec p b{color:var(--text);}
 .cm-pop-sec code{font-family:var(--mono);font-size:.62rem;padding:0 4px;border-radius:4px;background:var(--surface3);color:var(--text);}
 .cm-pop-run{padding:7px 10px;border-radius:8px;background:var(--surface2);}
+
+/* Failed discovery reads (DiscoveryGapsChip.razor): the chip sits on the strip's left, so the panel opens rightwards. */
+.cm-gaps-pop{left:0;width:min(520px,calc(100vw - 48px));max-height:min(60vh,480px);overflow-y:auto;padding:14px 16px 8px;scrollbar-width:thin;}
+.cm-gaps-note{font-size:.68rem;line-height:1.6;color:var(--muted2);margin-bottom:8px;}
+.cm-gaps-list{list-style:none;margin:0 0 8px;padding:0;display:flex;flex-direction:column;gap:4px;}
+.cm-gaps-list li{display:flex;flex-direction:column;gap:2px;padding:6px 10px;border-radius:8px;background:var(--surface2);font-size:.66rem;line-height:1.5;color:var(--muted2);}
+.cm-gaps-list b{font-weight:600;color:var(--text);}
 
 /* Laptop widths: a tighter strip, and the help button keeps only its icon. */
 @media(max-width:1600px){

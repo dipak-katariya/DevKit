@@ -14,6 +14,19 @@ public class BurndownContribution
     public double Delta { get; set; }
 }
 
+/// <summary>
+/// What a burndown load read: every CompletedWork change it could, and the work items whose hours it could not
+/// read, so a partial grid says it is partial instead of quietly understating hours.
+/// </summary>
+/// <param name="FirstProblem">What went wrong with the first unread item, in words for the page; null when nothing failed.</param>
+public sealed record BurndownLoad(
+    IReadOnlyList<BurndownContribution> Contributions,
+    IReadOnlyList<string> UnreadItemIds,
+    string? FirstProblem)
+{
+    public bool IsPartial => UnreadItemIds.Count > 0;
+}
+
 public class BurndownCell
 {
     public double Regular { get; set; }
@@ -28,7 +41,7 @@ public class BurndownColumn
     public string Label { get; set; } = "";
 
     /// <summary>
-    /// Working days the column covers — one for a day, and for a week the sprint's working days
+    /// Working days the column covers: one for a day, and for a week the sprint's working days
     /// inside it, so the hours expected of a three-day first week are not a full week's.
     /// </summary>
     public int WorkingDays { get; set; } = 1;

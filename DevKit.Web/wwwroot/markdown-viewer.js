@@ -1,4 +1,4 @@
-// DevKit — The Markdown Viewer page: editing, preview, import and export.
+// DevKit Markdown Viewer page: editing, preview, import and export.
 // Rendering itself lives in markdown.js, reached through window.devKitMd.render.
 
 (function () {
@@ -19,7 +19,7 @@
     var DEFAULT_MD = [
         '# Welcome to Markdown Viewer',
         '',
-        'A **live** Markdown editor with GitHub-style preview. No internet required.',
+        'A Markdown editor with a GitHub-style preview that updates as you type. Works offline.',
         '',
         '## Features',
         '',
@@ -58,7 +58,7 @@
         '- [x] Add live preview',
         '- [ ] Add more themes',
         '',
-        '> "The best way to predict the future is to invent it." — Alan Kay',
+        '> "The best way to predict the future is to invent it." (Alan Kay)',
         '',
         '---',
         '',
@@ -155,7 +155,7 @@
             var label = btn.querySelector('span');
             if (!label) return;
             var orig = label.textContent;
-            label.textContent = 'Copied!';
+            label.textContent = 'Copied';
             btn.classList.add('copied');
             setTimeout(function () { label.textContent = orig; btn.classList.remove('copied'); }, 2000);
         }
@@ -285,7 +285,7 @@
         var copyBtn = document.getElementById('mdCopyBtn');
         if (copyBtn) copyBtn.addEventListener('click', function () { copyAsText(copyBtn); });
 
-        // Close the export menu on outside click — bound once for the app lifetime.
+        // Close the export menu on an outside click. Bound once for the app lifetime.
         if (!exportMenuCloserBound) {
             exportMenuCloserBound = true;
             document.addEventListener('click', function (e) {

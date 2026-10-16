@@ -18,8 +18,9 @@ public partial class TfsApiService
 
     /// <summary>
     /// Branches already linked to a work item, across every repository, read from the work item's
-    /// own artifact links. This is one request — the alternative, scanning every repository's refs
+    /// own artifact links. This is one request. The alternative, scanning every repository's refs
     /// for the id, is ~50 paged listings per click and still misses a branch whose name omits the id.
+    /// Throws when TFS cannot be read; the caller logs the failure once and decides what it means.
     /// </summary>
     public async Task<List<WorkItemBranchLink>> GetWorkItemBranchLinksAsync(
         string project, string workItemId, CancellationToken ct = default)
@@ -28,31 +29,23 @@ public partial class TfsApiService
         if (!int.TryParse(workItemId, out var numericId) || numericId <= 0)
             return new List<WorkItemBranchLink>();
 
-        try
-        {
-            var data = await _req.GetJsonAsync(
-                ProjectApi(project, $"wit/workitems/{numericId}?$expand=relations&api-version={Ver}"), ct);
-            return ParseBranchLinks(data);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Could not read branch links for work item {Id}", numericId);
-            throw;
-        }
+        var data = await _req.GetJsonAsync(
+            ProjectApi(project, $"wit/workitems/{numericId}?$expand=relations&api-version={Ver}"), ct);
+        return ParseBranchLinks(data);
     }
 
     /// <summary>
     /// Work items and the branches each links, for many ids at once. Batches are read in parallel under
     /// the shared gate and collection-wide, so an id from any project resolves; an id that no longer
     /// exists is left out (errorPolicy=omit) rather than failing its whole batch. A failed batch
-    /// throws — a partial answer would make linked branches look unattached.
+    /// throws: a partial answer would make linked branches look unattached.
     /// </summary>
     public async Task<List<WorkItemBranches>> GetBranchLinksAsync(IEnumerable<int> workItemIds, CancellationToken ct = default)
     {
         var ids = workItemIds.Where(id => id > 0).Distinct().ToList();
         if (ids.Count == 0) return new List<WorkItemBranches>();
 
-        var pages = await Task.WhenAll(ids.Chunk(WorkItemBatchSize).Select(chunk => GetJsonThrottled(
+        var pages = await Task.WhenAll(ids.Chunk(WorkItemBatchSize).Select(chunk => GetJson(
             Api($"wit/workitems?ids={string.Join(",", chunk)}&$expand=relations&errorPolicy=omit&api-version={Ver}"), ct)));
 
         return pages
@@ -79,10 +72,10 @@ public partial class TfsApiService
         return links;
     }
 
-    public async Task<TfsRef?> GetRefAsync(string project, string repoId, string refName)
+    public async Task<TfsRef?> GetRefAsync(string project, string repoId, string refName, CancellationToken ct = default)
     {
         var filter = refName.Replace("refs/", "");
-        var data = await GetJson(ProjectApi(project, $"git/repositories/{repoId}/refs?filter={Uri.EscapeDataString(filter)}&api-version={Ver}"));
+        var data = await GetJson(ProjectApi(project, $"git/repositories/{repoId}/refs?filter={Uri.EscapeDataString(filter)}&api-version={Ver}"), ct);
         foreach (var r in data.GetProperty("value").EnumerateArray())
         {
             if (r.GetProperty("name").GetString() == refName)
@@ -92,18 +85,23 @@ public partial class TfsApiService
     }
 
     // ═══ CREATE BRANCH ═══
-    public async Task<JsonElement> CreateBranchAsync(string project, string repoId, string branchName, string baseSha)
+
+    /// <summary>
+    /// Creates a branch at <paramref name="baseSha"/> and returns TFS's reply. TFS answers 200 when it
+    /// refuses the ref as well, so this throws <see cref="TfsResponseException"/> unless the branch's own
+    /// entry confirms it; nothing may treat the branch as existing otherwise.
+    /// </summary>
+    public async Task<JsonElement> CreateBranchAsync(
+        string project, string repoId, string branchName, string baseSha, CancellationToken ct = default)
     {
         var body = new[] { new { name = $"refs/heads/{branchName}", newObjectId = baseSha, oldObjectId = EmptyObjectId } };
-        using var req = new HttpRequestMessage(HttpMethod.Post, ProjectApi(project, $"git/repositories/{repoId}/refs?api-version={Ver}"))
-        {
-            Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
-        };
-        using var resp = await SendAuthed(req);
-        return JsonSerializer.Deserialize<JsonElement>(await resp.Content.ReadAsStringAsync());
+        var response = await _req.PostJsonAsync(
+            ProjectApi(project, $"git/repositories/{Uri.EscapeDataString(repoId)}/refs?api-version={Ver}"), body, ct);
+        GitRefUpdate.ConfirmCreated(branchName, response);
+        return response;
     }
 
-    // ═══ LIST + DELETE BRANCHES (Branch Delete) ═══
+    // ═══ LIST + DELETE BRANCHES (Branch Cleanup) ═══
 
     /// <summary>Most branches one delete request carries, so one refusal never spans a huge batch.</summary>
     public const int MaxBranchesPerDelete = 100;
@@ -138,8 +136,8 @@ public partial class TfsApiService
     ///
     /// Two details make this more than a single PATCH. A work item and the repository holding the
     /// branch can live in different projects, so the work item is addressed under
-    /// <paramref name="workItemProject"/> while the artifact URI carries the repository's project —
-    /// using the repository's project for both is what made linking fail whenever the chosen
+    /// <paramref name="workItemProject"/> while the artifact URI carries the repository's project.
+    /// Using the repository's project for both is what made linking fail whenever the chosen
     /// repository belonged to another project. And TFS refuses a relation that already exists: a
     /// work item keeps its branch link after the branch is deleted, so recreating that same branch
     /// produces a duplicate. That is reported as already-linked rather than as a failure.
@@ -167,15 +165,19 @@ public partial class TfsApiService
             await SendBranchLinkPatchAsync(workItemProject, numericId, repoProjectId, repoId, branch, ct);
             return WorkItemLinkResult.Linked();
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!TfsErrors.IsRequestedCancellation(ex, ct))
         {
             // TFS rejects a duplicate relation with a message whose wording is not contractual,
             // so the relations are re-read rather than the error text matched.
             if (await HasBranchLinkAsync(workItemProject, workItemId, repoId, branch, ct))
+            {
+                _logger.LogInformation("TFS refused linking {Branch} to work item {Id} because the link is already there",
+                    branch, numericId);
                 return WorkItemLinkResult.AlreadyLinked();
+            }
 
-            _logger.LogWarning(ex, "Linking branch {Branch} to work item {Id} failed", branch, numericId);
-            return WorkItemLinkResult.Failed(ex.Message);
+            _logger.LogError(ex, "Linking branch {Branch} to work item {Id} failed", branch, numericId);
+            return WorkItemLinkResult.Failed(TfsErrors.Describe(ex));
         }
     }
 
@@ -191,15 +193,15 @@ public partial class TfsApiService
             var links = await GetWorkItemBranchLinksAsync(project, workItemId, ct);
             return links.Any(l => l.Matches(repoId, branch));
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!TfsErrors.IsRequestedCancellation(ex, ct))
         {
-            _logger.LogDebug(ex, "Could not read existing branch links for work item {Id}", workItemId);
+            _logger.LogError(ex, "Could not read the branch links of work item {Id}, so the link change could not be confirmed", workItemId);
             return false;
         }
     }
 
     /// <summary>
-    /// Removes the relation linking a work item to a branch — the stale link TFS leaves behind
+    /// Removes the relation linking a work item to a branch: the stale link TFS leaves behind
     /// when a branch is deleted.
     ///
     /// JSON Patch addresses a relation by its index in the work item's relations array, which
@@ -226,7 +228,7 @@ public partial class TfsApiService
             if (index < 0) return WorkItemLinkResult.NotLinked();
 
             // Built as nodes rather than anonymous objects because the two operations have
-            // different shapes — "remove" must not carry a value property.
+            // different shapes: "remove" must not carry a value property.
             var patch = new JsonArray
             {
                 new JsonObject { ["op"] = "test", ["path"] = "/rev", ["value"] = rev },
@@ -241,7 +243,7 @@ public partial class TfsApiService
             using var resp = await SendAuthed(req, ct);
 
             // Relations are removed by index, so success is confirmed against the work item rather
-            // than assumed from a 200 — if the intended link is somehow still there, that is
+            // than assumed from a 200. If the intended link is somehow still there, that is
             // reported instead of a false success.
             if (await HasBranchLinkAsync(workItemProject, workItemId, repoId, branch, ct))
                 return WorkItemLinkResult.Failed("TFS accepted the change but the link is still on the work item.");
@@ -249,10 +251,10 @@ public partial class TfsApiService
             _logger.LogInformation("Removed stale branch link {Branch} from work item {Id}", branch, numericId);
             return WorkItemLinkResult.Unlinked();
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!TfsErrors.IsRequestedCancellation(ex, ct))
         {
-            _logger.LogWarning(ex, "Removing branch link {Branch} from work item {Id} failed", branch, numericId);
-            return WorkItemLinkResult.Failed(ex.Message);
+            _logger.LogError(ex, "Removing branch link {Branch} from work item {Id} failed", branch, numericId);
+            return WorkItemLinkResult.Failed(TfsErrors.Describe(ex));
         }
     }
 
@@ -286,7 +288,7 @@ public partial class TfsApiService
     {
         // The Git branch artifact ref is "GB" + the branch name WITHOUT the
         // "refs/heads/" prefix. Including the prefix makes TFS resolve a ref
-        // named "refs/heads/refs/heads/<branch>", which doesn't exist — the work
+        // named "refs/heads/refs/heads/<branch>", which doesn't exist, and the work
         // item then shows "Branch not found or no permission to access it".
         // Slashes inside the branch name belong to that single ref segment, so
         // they must be percent-encoded; this matches the artifact link TFS
@@ -312,30 +314,31 @@ public partial class TfsApiService
 
     // ═══ PULL REQUESTS ═══
 
-    /// <summary>A repository's pull requests; empty when TFS cannot be read, which the Merge Tool shows as none.</summary>
-    public async Task<List<TfsPullRequest>> GetPullRequestsAsync(string project, string repoId)
-    {
-        try
-        {
-            return await FetchPullRequestsAsync(project, repoId, $"status=all&$top={MaxPullRequests}", default);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to load pull requests for repo {RepoId}", repoId);
-            return new List<TfsPullRequest>();
-        }
-    }
-
     /// <summary>
-    /// Source branches of the repository's active pull requests. Throws when TFS cannot be read: an empty
-    /// answer would let a branch with an open pull request be deleted from under it.
+    /// Source and target branches of the repository's active pull requests: both ends of one are in use.
+    /// Pages are read until a short one; when <see cref="MaxActivePullRequests"/> have been read without
+    /// one, the answer is marked truncated rather than passed off as complete. Throws when TFS cannot be
+    /// read: an empty answer would let a branch with an open pull request be deleted from under it.
     /// </summary>
-    public async Task<HashSet<string>> GetActivePullRequestBranchesAsync(TfsRepo repo, CancellationToken ct = default)
+    public async Task<ActivePullRequestBranches> GetActivePullRequestBranchesAsync(TfsRepo repo, CancellationToken ct = default)
     {
-        var prs = await FetchPullRequestsAsync(repo.Project, repo.Id, $"searchCriteria.status=active&$top={MaxActivePullRequests}", ct);
-        return prs.Select(pr => GitRefName.Strip(pr.SourceRefName))
-                  .Where(branch => branch.Length > 0)
-                  .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        ArgumentNullException.ThrowIfNull(repo);
+        var branches = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var page = 0; page < MaxActivePullRequestPages; page++)
+        {
+            var prs = await FetchPullRequestsAsync(repo.Project, repo.Id,
+                $"searchCriteria.status=active&$top={ActivePullRequestPageSize}&$skip={page * ActivePullRequestPageSize}", ct);
+            branches.UnionWith(prs
+                .SelectMany(pr => new[] { pr.SourceRefName, pr.TargetRefName })
+                .Select(GitRefName.Strip)
+                .Where(branch => branch.Length > 0));
+
+            if (prs.Count < ActivePullRequestPageSize)
+            {
+                return new ActivePullRequestBranches(branches, Truncated: false);
+            }
+        }
+        return new ActivePullRequestBranches(branches, Truncated: true);
     }
 
     private async Task<List<TfsPullRequest>> FetchPullRequestsAsync(string project, string repoId, string criteria, CancellationToken ct)
@@ -344,35 +347,8 @@ public partial class TfsApiService
         return data.GetProperty("value").EnumerateArray().Select(pr => new TfsPullRequest
         {
             PullRequestId = pr.GetProperty("pullRequestId").GetInt32(),
-            Title = GetStr(pr, "title", ""),
-            Description = pr.TryGetProperty("description", out var desc) ? desc.GetString() : null,
-            Status = GetStr(pr, "status", "active"),
             SourceRefName = GetStr(pr, "sourceRefName", ""),
-            TargetRefName = GetStr(pr, "targetRefName", ""),
-            CreationDate = pr.TryGetProperty("creationDate", out var cd) ? cd.GetDateTime() : null,
-            CreatedBy = pr.TryGetProperty("createdBy", out var cb) && cb.TryGetProperty("displayName", out var dn)
-                ? new TfsPrAuthor { DisplayName = dn.GetString() } : null
+            TargetRefName = GetStr(pr, "targetRefName", "")
         }).ToList();
     }
-
-    public async Task<List<TfsCommit>> GetPrCommitsAsync(string project, string repoId, int prId)
-    {
-        try
-        {
-            var data = await GetJson(ProjectApi(project, $"git/repositories/{repoId}/pullrequests/{prId}/commits?api-version={Ver}"));
-            return data.GetProperty("value").EnumerateArray().Select(c => new TfsCommit
-            {
-                CommitId = GetStr(c, "commitId", ""),
-                Comment = c.TryGetProperty("comment", out var cm) ? cm.GetString() : null,
-                Author = ParsePerson(c, "author"),
-                Committer = ParsePerson(c, "committer")
-            }).ToList();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to load commits for PR {PrId}", prId);
-            return new List<TfsCommit>();
-        }
-    }
-
 }

@@ -1,5 +1,5 @@
 @* One pull request's code comparison: the verdict, then each file that needs a look, opening onto the
-   blocks that are missing — the lines QA has, marked with whether the branch has each of them. *@
+   blocks that are missing: the lines QA has, marked with whether the branch has each of them. *@
 
 @if (Pr.CodeCheck is { } check)
 {
@@ -22,8 +22,8 @@
             <div class="cc-alert">
                 <Icon Inner="@Icons.AlertTriangle" />
                 <span>
-                    Every commit of this pull request is on <b>@check.DestinationBranch</b>, but not all of its code is —
-                    most likely lost while resolving a merge conflict, or undone by hand.
+                    Every commit of this pull request is on <b>@check.DestinationBranch</b>, but not all of its code is.
+                    It was most likely lost while resolving a merge conflict, or undone by hand.
                 </span>
             </div>
         }

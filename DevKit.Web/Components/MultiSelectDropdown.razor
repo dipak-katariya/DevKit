@@ -1,9 +1,8 @@
-@inject IJSRuntime JS
-@implements IDisposable
+@inherits ClickOutsideComponent
 
 @* Searchable multi-select built on the same .gdd-* shell as GlassDropdown. *@
 
-<div class="gdd msd @(IsOpen ? "gdd-open" : "") @CssClass" @ref="rootEl" style="@Style">
+<div class="gdd msd @(IsOpen ? "gdd-open" : "") @CssClass" @ref="Root" style="@Style">
     <div class="gdd-trigger @(Disabled ? "bpk-disabled" : "")" @onclick="Toggle" @onclick:stopPropagation>
         <span class="gdd-value @(Selected.Count == 0 ? "gdd-placeholder" : "")">@TriggerLabel</span>
         @if (Selected.Count > 1)
@@ -45,7 +44,7 @@
             </div>
             @if (HiddenCount > 0)
             {
-                <div class="bpk-more">@HiddenCount more — keep typing to narrow</div>
+                <div class="bpk-more">@HiddenCount more. Type to narrow the list.</div>
             }
         </div>
     }
@@ -66,7 +65,7 @@
     [Parameter] public HashSet<string> Selected { get; set; } = new();
     [Parameter] public EventCallback<HashSet<string>> SelectedChanged { get; set; }
     [Parameter] public bool Disabled { get; set; }
-    [Parameter] public string Placeholder { get; set; } = "— Select —";
+    [Parameter] public string Placeholder { get; set; } = "Select";
     [Parameter] public string SearchPlaceholder { get; set; } = "Search…";
     [Parameter] public string ItemNoun { get; set; } = "item";
     [Parameter] public string? CssClass { get; set; }
@@ -74,9 +73,9 @@
 
     private bool IsOpen;
     private string searchText = "";
-    private ElementReference rootEl;
     private ElementReference searchInput;
-    private DotNetObjectReference<MultiSelectDropdown>? dotNetRef;
+
+    protected override bool IsPanelOpen => IsOpen;
 
     private bool HasSearch => !string.IsNullOrWhiteSpace(searchText);
 
@@ -101,28 +100,25 @@
 
     private async Task Toggle()
     {
-        if (Disabled) return;
+        if (Disabled)
+        {
+            return;
+        }
         IsOpen = !IsOpen;
         searchText = "";
         if (IsOpen)
         {
             await Task.Yield();
-            try { await JS.InvokeVoidAsync("devKit.focusEl", searchInput); } catch (JSException) { }
-            dotNetRef ??= DotNetObjectReference.Create(this);
-            try { await JS.InvokeVoidAsync("devKit.registerClickOutside", rootEl, dotNetRef); } catch (JSException) { }
-        }
-        else
-        {
-            await Unregister();
+            await FocusAsync(searchInput);
         }
     }
 
-    [JSInvokable]
-    public void CloseDropdown()
+    protected override Task CloseFromOutsideAsync()
     {
         IsOpen = false;
         searchText = "";
         StateHasChanged();
+        return Task.CompletedTask;
     }
 
     private Task ToggleValue(string value)
@@ -149,11 +145,4 @@
     {
         if (e.Key == "Escape") await Toggle();
     }
-
-    private async Task Unregister()
-    {
-        try { await JS.InvokeVoidAsync("devKit.unregisterClickOutside", rootEl); } catch (JSException) { }
-    }
-
-    public void Dispose() => dotNetRef?.Dispose();
 }

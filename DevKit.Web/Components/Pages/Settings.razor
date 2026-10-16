@@ -1,26 +1,76 @@
 @page "/settings"
 @inject SettingsService SettingsSvc
 @inject TfsApiService TfsApi
+@inject PageStateService PageState
 @inject BranchCacheService BranchCache
+@inject IJSRuntime JS
 @inject ILogger<Settings> Logger
 
 <div style="flex:1;display:flex;flex-direction:column;max-width:800px;margin:0 auto;overflow-y:auto;width:100%;padding-bottom:20px;">
     <div class="gpanel">
         <div class="phead">
             <span class="ptitle">⚙ Configuration</span>
+            <div style="margin-left:auto;display:flex;gap:6px;">
+                <button class="btn-sm" @onclick="ExportSettings"
+                        title="Download your settings as a file. The TFS connection and token are not included.">📤 Export</button>
+                <label class="btn-sm" style="cursor:pointer;"
+                       title="Load settings from a file exported by DevKit. Your TFS connection is not changed.">
+                    📥 Import
+                    <InputFile OnChange="ImportSettings" accept=".json,application/json" style="display:none;" />
+                </label>
+            </div>
         </div>
         <div class="pbody">
+            @if (!string.IsNullOrEmpty(transferMsg))
+            {
+                <div style="margin-bottom:14px;font-size:.74rem;color:@(transferOk ? "var(--green)" : "var(--red)");">@transferMsg</div>
+            }
+            @foreach (var problem in new[] { SettingsSvc.LoadProblem, SettingsSvc.LastSaveError }.OfType<string>().Distinct())
+            {
+                <div style="margin-bottom:14px;font-size:.74rem;color:var(--red);">@problem</div>
+            }
             <!-- TFS Connection -->
             <h3 style="font-size:.82rem;font-weight:700;margin-bottom:14px;color:var(--text);">TFS / Azure DevOps Connection</h3>
+            @* Windows sign-in to TFS acts as the account DevKit runs as, so shared DevKit offers it to that account alone. *@
+            @if (SettingsSvc.AllowsWindowsSignIn)
+            {
+                <div class="f-row">
+                    <div class="f-label">Sign in with</div>
+                    <div class="cm-seg">
+                        <button type="button" class="cm-seg-btn @(tfsAuth == TfsAuthMode.Windows ? "on" : "")"
+                                @onclick="() => SetSignIn(TfsAuthMode.Windows)">Windows account</button>
+                        <button type="button" class="cm-seg-btn @(tfsAuth == TfsAuthMode.Pat ? "on" : "")"
+                                @onclick="() => SetSignIn(TfsAuthMode.Pat)">Personal Access Token</button>
+                    </div>
+                </div>
+            }
             <div class="settings-grid">
                 <div class="f-row">
                     <div class="f-label">Server URL <span class="req-badge">required</span></div>
-                    <input class="fi" @bind="tfsUrl" placeholder="https://tfs.casepoint.in/tfs/Casepoint" />
+                    @if (SettingsSvc.FixedTfsUrl is { } fixedUrl)
+                    {
+                        <input class="fi" value="@fixedUrl" readonly title="Set for everyone by whoever runs this shared DevKit." />
+                    }
+                    else
+                    {
+                        <input class="fi" @bind="tfsUrl" placeholder="@TfsConnectionForm.ExampleHint" />
+                    }
                 </div>
-                <div class="f-row">
-                    <div class="f-label">Personal Access Token <span class="req-badge">required</span></div>
-                    <input class="fi" type="password" @bind="tfsPat" placeholder="Enter PAT" />
-                </div>
+                @if (tfsAuth == TfsAuthMode.Windows)
+                {
+                    <div class="f-row">
+                        <div class="f-label">Windows account <em>no token needed</em></div>
+                        <input class="fi" value="@WindowsAccount" readonly title="DevKit signs in to TFS as the Windows account it runs as." />
+                    </div>
+                }
+                else
+                {
+                    <div class="f-row">
+                        <div class="f-label">Personal Access Token <span class="req-badge">required</span></div>
+                        <input class="fi" type="password" autocomplete="new-password" @bind="tfsPat"
+                               placeholder="@(hasStoredPat ? "Saved. Leave blank to keep it" : "Enter PAT")" />
+                    </div>
+                }
             </div>
             <div style="display:flex;gap:8px;margin-top:12px;">
                 <button class="btn-ghost" @onclick="SaveAndConnect" disabled="@saving">
@@ -36,46 +86,76 @@
             {
                 <div style="margin-top:10px;font-size:.74rem;color:@(statusOk ? "var(--green)" : "var(--red)");">@statusMsg</div>
             }
+            <p style="font-size:.62rem;color:var(--muted);margin-top:10px;">
+                Saved in <code style="font-size:.62rem;color:var(--cyan);">@SettingsSvc.SettingsFilePath</code>.
+                @if (SettingsSvc.FixedTfsUrl is not null)
+                {
+                    <text>They are encrypted, loaded only for your Windows account, and come back on any PC or browser you sign in from, also after DevKit is updated or moves to another address.</text>
+                }
+                else if (SettingsSvc.Tfs.Auth == TfsAuthMode.Windows)
+                {
+                    <text>Only your Windows account can open it, and it holds no token: DevKit signs in to TFS as your Windows account.</text>
+                }
+                else
+                {
+                    <text>Only your Windows account can open it, and the PAT inside is encrypted for this server.</text>
+                }
+            </p>
 
             <hr style="border:none;border-top:1px solid rgba(255,255,255,.05);margin:20px 0;" />
 
             <!-- Team Name & Default Selections -->
             <h3 style="font-size:.82rem;font-weight:700;margin-bottom:6px;color:var(--text);">Team & Default Selections</h3>
             <p style="font-size:.66rem;color:var(--muted);margin-bottom:10px;">
-                Configure your team name and default selections. These auto-fill in Branch Creator and Merge Tool.
+                Configure your team name and default selections. These pre-fill the area and sprint pickers on the other pages.
             </p>
             <div class="f-row" style="max-width:400px;margin-bottom:14px;">
                 <div class="f-label">Team Name</div>
                 <input class="fi" value="@teamName" @onchange="OnTeamNameChange" placeholder="e.g. FOIA, Platform, Core…" />
                 <p style="font-size:.56rem;color:var(--muted);margin-top:4px;">Used in branch naming: <code style="font-size:.56rem;color:var(--cyan);">TeamName/sprint/id_title</code></p>
             </div>
+            @if (!string.IsNullOrEmpty(metadataError)) { <div class="notice warn">⚠ @metadataError</div> }
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
                 <div class="f-row">
                     <div class="f-label">Default Area Path</div>
                     <GlassDropdown CssClass="fi-size"
                                    Value="@defaultAreaPath"
-                                   Placeholder="— None —"
-                                   EmptyLabel="— None —" EmptyValue=""
+                                   Placeholder="None"
+                                   EmptyLabel="None" EmptyValue=""
                                    Disabled="@(areas.Count==0)"
                                    Groups="@AreaGroups"
                                    OnChange="OnDefaultAreaChange" />
                 </div>
                 <div class="f-row">
                     <div class="f-label">Default Sprint</div>
-                    <GlassDropdown CssClass="fi-size"
-                                   Value="@defaultSprint"
-                                   Placeholder="— None —"
-                                   EmptyLabel="— None —" EmptyValue=""
-                                   Disabled="@(iterations.Count==0)"
-                                   Groups="@SprintGroups"
-                                   OnChange="OnDefaultSprintChange" />
+                    <div class="cm-seg" style="margin-bottom:6px;">
+                        <button type="button" class="cm-seg-btn @(defaultSprintIsCurrent ? "on" : "")"
+                                @onclick="() => SetDefaultSprintMode(true)">Current sprint</button>
+                        <button type="button" class="cm-seg-btn @(defaultSprintIsCurrent ? "" : "on")"
+                                @onclick="() => SetDefaultSprintMode(false)">Choose a sprint</button>
+                    </div>
+                    @if (defaultSprintIsCurrent)
+                    {
+                        <input class="fi" value="@CurrentSprintLabel" readonly
+                               title="Worked out from today's date and the sprint dates in TFS, in the default area's project." />
+                    }
+                    else
+                    {
+                        <GlassDropdown CssClass="fi-size"
+                                       Value="@defaultSprint"
+                                       Placeholder="None"
+                                       EmptyLabel="None" EmptyValue=""
+                                       Disabled="@(iterations.Count==0)"
+                                       Groups="@SprintGroups"
+                                       OnChange="OnDefaultSprintChange" />
+                    }
                 </div>
                 <div class="f-row">
                     <div class="f-label">Default Repository</div>
                     <GlassDropdown CssClass="fi-size"
                                    Value="@defaultRepoId"
-                                   Placeholder="— None —"
-                                   EmptyLabel="— None —" EmptyValue=""
+                                   Placeholder="None"
+                                   EmptyLabel="None" EmptyValue=""
                                    Disabled="@(repos.Count==0)"
                                    Groups="@RepoGroups"
                                    OnChange="OnDefaultRepoChange" />
@@ -98,7 +178,7 @@
                     <GlassDropdown CssClass="fi-size"
                                    Value="@mostUsedCount.ToString()"
                                    ShowEmptyOption="false"
-                                   Placeholder="— Off —"
+                                   Placeholder="Off"
                                    Options="@MostUsedCountOptions"
                                    OnChange="OnMostUsedCountChange" />
                 </div>
@@ -113,7 +193,7 @@
                     <MultiSelectDropdown Options="@AllRepoOptions" Selected="@mostUsedSelection"
                                          SelectedChanged="OnMostUsedReposChanged" ItemNoun="repository"
                                          Disabled="@(mostUsedCount == 0 || repos.Count == 0)"
-                                         Placeholder="@(mostUsedCount == 0 ? "— Turned off —" : "— Select repositories —")"
+                                         Placeholder="@(mostUsedCount == 0 ? "Turned off" : "Select repositories")"
                                          SearchPlaceholder="Search repositories…" />
                 </div>
             </div>
@@ -142,98 +222,16 @@
 
             <hr style="border:none;border-top:1px solid rgba(255,255,255,.05);margin:20px 0;" />
 
-            <!-- Default Project Path -->
-            <h3 style="font-size:.82rem;font-weight:700;margin-bottom:6px;color:var(--text);">Default Project Path</h3>
-            <p style="font-size:.66rem;color:var(--muted);margin-bottom:10px;">
-                Base folder where your repositories are cloned. We'll scan for <code style="font-size:.64rem;color:var(--cyan);">.git</code> folders and auto-map them to TFS repos.
-            </p>
-            <div class="f-row" style="display:flex;gap:8px;align-items:flex-end;">
-                <div style="flex:1;">
-                    <input class="fi" @bind="defaultProjectPath" placeholder="D:\Projects\..." />
-                </div>
-                <button class="btn-ghost" @onclick="ScanAndApply" disabled="@(string.IsNullOrWhiteSpace(defaultProjectPath))">
-                    🔍 Scan & Map
-                </button>
-            </div>
-            @if (!string.IsNullOrEmpty(scanMsg))
-            {
-                <div style="margin-top:8px;font-size:.7rem;color:@(scanOk ? "var(--green)" : "var(--amber)");">@scanMsg</div>
-            }
-
-            <hr style="border:none;border-top:1px solid rgba(255,255,255,.05);margin:20px 0;" />
-
-            <!-- Local Repositories (auto-detected) -->
-            <h3 style="font-size:.82rem;font-weight:700;margin-bottom:6px;color:var(--text);">Local Repositories</h3>
-            <p style="font-size:.66rem;color:var(--muted);margin-bottom:10px;">
-                Only locally cloned repositories (with <code style="font-size:.64rem;color:var(--cyan);">.git</code> folder) are shown. Used for cherry-pick and merge operations.
-            </p>
-
-            @if (localRepos.Count == 0)
-            {
-                <div class="tbl-empty">@(string.IsNullOrWhiteSpace(defaultProjectPath) ? "Set a default project path above, then click Scan & Map." : "No local git repos found. Click Scan & Map to detect.")</div>
-            }
-            else
-            {
-                <table class="repo-path-table">
-                    <thead>
-                        <tr>
-                            <th style="width:25%;">Local Folder</th>
-                            <th style="width:30%;">Mapped TFS Repo</th>
-                            <th style="width:25%;">Remote URL</th>
-                            <th>Path</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var local in localRepos)
-                        {
-                            <tr>
-                                <td>
-                                    <div style="display:flex;align-items:center;gap:6px;">
-                                        <span style="color:@(local.IsMapped ? "var(--green)" : "var(--amber)");font-size:.7rem;">●</span>
-                                        <span style="font-weight:700;">@local.FolderName</span>
-                                    </div>
-                                </td>
-                                <td>
-                                    @if (local.IsMapped)
-                                    {
-                                        <span style="font-size:.6rem;color:var(--muted);">@local.TfsProject /</span>
-                                        <span style="font-size:.68rem;font-weight:600;color:var(--accent2);">@local.TfsRepoName</span>
-                                    }
-                                    else
-                                    {
-                                        <span style="font-size:.64rem;color:var(--amber);">⚠ No TFS match</span>
-                                    }
-                                </td>
-                                <td>
-                                    <span style="font-family:var(--mono);font-size:.56rem;color:var(--muted);word-break:break-all;">
-                                        @(string.IsNullOrEmpty(local.RemoteUrl) ? "—" : ExtractShortRemote(local.RemoteUrl))
-                                    </span>
-                                </td>
-                                <td>
-                                    <span style="font-family:var(--mono);font-size:.6rem;color:var(--muted2);">@local.LocalPath</span>
-                                </td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
-                <div style="margin-top:6px;font-size:.6rem;color:var(--muted);">
-                    <span style="color:var(--green);">●</span> Mapped (@localRepos.Count(r => r.IsMapped))
-                    &nbsp;&nbsp;
-                    <span style="color:var(--amber);">●</span> Unmatched (@localRepos.Count(r => !r.IsMapped))
-                    &nbsp;&nbsp;
-                    Total: @localRepos.Count repo(s)
-                </div>
-            }
-
-            <hr style="border:none;border-top:1px solid rgba(255,255,255,.05);margin:20px 0;" />
-
             <!-- Code Merging branch defaults -->
-            <h3 style="font-size:.82rem;font-weight:700;margin-bottom:6px;color:var(--text);">Code Merging Branches</h3>
+            <h3 style="font-size:.82rem;font-weight:700;margin-bottom:6px;color:var(--text);">Default Branches for Code Merging</h3>
             <p style="font-size:.66rem;color:var(--muted);margin-bottom:10px;">
-                Per-repository defaults for the Code Merging Sheet. <b>QA branch</b> is where developers merge their
-                pull requests — it decides which PRs the sheet shows. <b>Merging target</b> is the release branch those
-                commits have to reach, and is what verification checks against. Both can be overridden per session on
-                the sheet itself.
+                The branches the Code Merging Sheet starts with for each repository. The <b>QA branch</b> is where
+                developers merge their pull requests, and decides which pull requests the sheet lists. The
+                <b>merging target</b> is the release branch the changes must reach, and is what verification checks.
+                Left empty, both are automatic: the merging target is the newest release branch (such as
+                <code>release/cp-26.5.2</code>), and the QA branch is <code>main</code>. When a repository has no such
+                branch, its default branch is used. Either can still be changed on the sheet for one session.
+                Your most-used repositories are listed first.
             </p>
 
             <div class="cfg-field" style="max-width:320px;margin-bottom:12px;">
@@ -265,7 +263,13 @@
                             var saved = SettingsSvc.GetRepoBranches(repo.Id);
                             <tr @key="repo.Id">
                                 <td>
-                                    <div style="font-weight:700;">@repo.Name</div>
+                                    <div style="font-weight:700;">
+                                        @repo.Name
+                                        @if (mostUsedSelection.Contains(repo.Id))
+                                        {
+                                            <span class="chip chip-cyan" style="font-size:.5rem;margin-left:4px;">Most used</span>
+                                        }
+                                    </div>
                                     <div style="font-size:.6rem;color:var(--muted);">@repo.Project</div>
                                 </td>
                                 <td>
@@ -273,14 +277,14 @@
                                                   ValueChanged="@(b => OnQaBranchChange(repo.Id, b))"
                                                   OnOpened="@(() => LoadBranchesFor(repo))"
                                                   Loading="@(loadingBranchRepoId == repo.Id)"
-                                                  Placeholder="— All branches —" />
+                                                  Placeholder="@AutomaticBranch(repo, MergingBranchDefaults.QaBranch, "main")" />
                                 </td>
                                 <td>
                                     <BranchPicker Branches="@BranchesFor(repo.Id)" Value="@saved.MergingBranch"
                                                   ValueChanged="@(b => OnMergingBranchChange(repo.Id, b))"
                                                   OnOpened="@(() => LoadBranchesFor(repo))"
                                                   Loading="@(loadingBranchRepoId == repo.Id)"
-                                                  Placeholder="— None —" />
+                                                  Placeholder="@AutomaticBranch(repo, MergingBranchDefaults.MergingTarget, "newest release branch")" />
                                 </td>
                             </tr>
                         }

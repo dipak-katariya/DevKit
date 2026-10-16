@@ -10,7 +10,7 @@ namespace DevKit.Web.Services;
 ///
 /// The evidence is weighed by what it proves. A SHA, or the "(cherry picked from commit …)" line that
 /// <c>git cherry-pick -x</c> writes, names the commit itself. The author's email and author time survive
-/// a cherry-pick and a rebase — even when the message was changed while fixing a conflict — and one
+/// a cherry-pick and a rebase (even when the message was changed while fixing a conflict), and one
 /// person writing two different commits in the same second is vanishingly rare. A message proves least:
 /// "fix typo" is written every week, so a message counts only when it is long enough to be specific,
 /// occurs once on the branch, and no two commits being checked share it.
@@ -43,7 +43,7 @@ public sealed class BranchHistoryIndex
     /// <summary>
     /// key (SHA, author or subject) -> the verdict, stamped with the position in history that set it.
     /// The stamp is what makes the index correct: one commit is looked up under several keys, and they
-    /// can disagree — a directly merged commit leaves its SHA present while a later revert marks its
+    /// can disagree: a directly merged commit leaves its SHA present while a later revert marks its
     /// author reverted. Taking whichever key was written last resolves that, and resolves
     /// revert-then-reapply with it.
     /// </summary>
@@ -65,7 +65,7 @@ public sealed class BranchHistoryIndex
     /// <summary>How far back the scan reached, for the accuracy note. Null when unbounded.</summary>
     public DateTime? ScannedFrom { get; set; }
 
-    /// <summary>The key a commit's author is matched by — email and author time to the second — or null.</summary>
+    /// <summary>The key a commit's author is matched by (email and author time to the second), or null.</summary>
     public static string? AuthorKey(string? email, DateTime? authorDate) =>
         string.IsNullOrWhiteSpace(email) || authorDate is null
             ? null
@@ -196,7 +196,7 @@ public sealed class BranchHistoryIndex
         return (subject, depth);
     }
 
-    /// <summary>A message's first line, trimmed — what a cherry-pick keeps and a revert quotes.</summary>
+    /// <summary>A message's first line, trimmed: what a cherry-pick keeps and a revert quotes.</summary>
     public static string SubjectOf(string? message)
     {
         var text = (message ?? "").Trim();

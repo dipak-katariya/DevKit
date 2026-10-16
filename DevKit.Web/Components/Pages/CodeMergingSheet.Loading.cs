@@ -5,7 +5,7 @@ using DevKit.Web.Services;
 namespace DevKit.Web.Components.Pages;
 
 /// <summary>
-/// Choosing what to look at — area, sprints, repositories and their branches — then loading it,
+/// Choosing what to look at (area, sprints, repositories and their branches), then loading it,
 /// verifying the merge state, and the unlinked pull-request search.
 /// </summary>
 public partial class CodeMergingSheet
@@ -47,7 +47,7 @@ public partial class CodeMergingSheet
             // Trim rather than reject, so the click still does something predictable.
             foreach (var extra in ids.Skip(MaxSelectableRepos).ToList()) ids.Remove(extra);
             bundle.TruncationNotice =
-                $"At most {MaxSelectableRepos} repositories can be loaded at once — the selection was trimmed.";
+                $"At most {MaxSelectableRepos} repositories can be loaded at once, so the selection was trimmed.";
         }
 
         await ApplyRepoSelection();
@@ -80,12 +80,14 @@ public partial class CodeMergingSheet
         StateHasChanged();
         try
         {
+            // A listing cancelled because the page closed answers empty, which leaves the row as it was.
             await Task.WhenAll(pending.Select(async row =>
-                row.Branches = await Merging.GetBranchesAsync(new[] { row.Repo })));
+                row.Branches = await Merging.GetBranchesAsync(new[] { row.Repo }, page.Token)));
         }
         catch (Exception ex)
         {
-            bundle.ErrorMessage = $"Failed to load branches: {ex.Message}";
+            Log.LogError(ex, "Branch lists failed to load for {Repos} repositories", pending.Count);
+            bundle.ErrorMessage = $"Failed to load branches: {TfsErrors.Describe(ex)}";
         }
         finally
         {
@@ -93,6 +95,10 @@ public partial class CodeMergingSheet
         }
 
         DropBranchesTheRepoDoesNotHave();
+        foreach (var row in pending.Where(r => r.Branches.Count > 0))
+        {
+            row.ApplyAutomaticDefaults();
+        }
     }
 
     /// <summary>
@@ -123,11 +129,11 @@ public partial class CodeMergingSheet
     private string BranchHint(TfsRepo repo)
     {
         var saved = Settings.GetRepoBranches(repo.Id);
-        if (saved.IsEmpty) return $"{repo.Project} — no branches configured";
+        if (saved.IsEmpty) return $"{repo.Project} · no branches configured";
 
         var qa = string.IsNullOrWhiteSpace(saved.QaBranch) ? "all branches" : saved.QaBranch;
         var target = string.IsNullOrWhiteSpace(saved.MergingBranch) ? "no target" : saved.MergingBranch;
-        return $"{repo.Project} — PRs → {qa} · verify → {target}";
+        return $"{repo.Project} · PRs → {qa} · verify → {target}";
     }
 
     /// <summary>A branch edit invalidates whatever was verified against the previous one.</summary>
@@ -138,16 +144,23 @@ public partial class CodeMergingSheet
         Refilter();
     }
 
+    /// <summary>
+    /// Stores each row's branches as its defaults. A branch equal to the automatic one is stored as automatic, so the
+    /// row keeps moving to the newest release branch as new ones are created.
+    /// </summary>
     private void SaveBranchDefaults()
     {
         foreach (var row in branchRows)
         {
-            Settings.SetRepoQaBranch(row.Repo.Id, row.QaBranch);
-            Settings.SetRepoMergingBranch(row.Repo.Id, row.MergingBranch);
-            row.SavedQaBranch = row.QaBranch;
-            row.SavedMergingBranch = row.MergingBranch;
+            row.SavedQaBranch = ExceptAutomatic(row.QaBranch, row.AutoQaBranch);
+            row.SavedMergingBranch = ExceptAutomatic(row.MergingBranch, row.AutoMergingBranch);
+            Settings.SetRepoQaBranch(row.Repo.Id, row.SavedQaBranch);
+            Settings.SetRepoMergingBranch(row.Repo.Id, row.SavedMergingBranch);
         }
     }
+
+    private static string ExceptAutomatic(string branch, string automatic) =>
+        string.Equals(branch, automatic, StringComparison.OrdinalIgnoreCase) ? "" : branch;
 
     // ═══ LOAD + VERIFY ═══
 
@@ -156,8 +169,9 @@ public partial class CodeMergingSheet
         if (!CanLoad) return;
         loading = true;
 
-        // A comparison still running belongs to the sheet about to be replaced.
-        CancellationSources.CancelAndDispose(ref codeRun);
+        // Anything still running belongs to the sheet about to be replaced: the comparison is cancelled,
+        // and moving that sheet to a new generation stops any check from writing to it.
+        ResetVerification();
         bundle = new CodeMergingBundle();
         expandedPrKey = null;
         Refilter();
@@ -172,7 +186,15 @@ public partial class CodeMergingSheet
             QaBranchByRepoId,
             matchByBranchOrTitle);
 
-        bundle = await Merging.GetMergingDataAsync(query);
+        try
+        {
+            bundle = await Merging.GetMergingDataAsync(query, page.Token);
+        }
+        catch (OperationCanceledException ex) when (page.Token.IsCancellationRequested)
+        {
+            Log.LogDebug(ex, "The Code Merging Sheet load stopped because the page was left");
+            return;
+        }
         if (bundle.Requirements.Count == 0 && string.IsNullOrEmpty(bundle.ErrorMessage))
             bundle.ErrorMessage = "No work items matched this area, sprint and scope.";
 
@@ -186,8 +208,9 @@ public partial class CodeMergingSheet
     /// <summary>
     /// Checks every row's commits against its merging branch. Rows past the first few have not read
     /// their commits yet, so those are read first: without them the check can only ask whether a pull
-    /// request's merge commit is on the branch — which a cherry-picked change never is — and the work
-    /// would read as not merged until the row was opened.
+    /// request's merge commit is on the branch (which a cherry-picked change never is), and the work
+    /// would read as not merged until the row was opened. The sheet is held from the click on, so the
+    /// check never moves to a sheet loaded meanwhile, whose commits it did not read.
     /// </summary>
     private async Task Verify()
     {
@@ -195,18 +218,23 @@ public partial class CodeMergingSheet
         {
             return;
         }
+        var sheet = bundle;
         verifying = true;
         StateHasChanged();
 
         try
         {
             await LoadRemainingCommits();
-            await Verifier.VerifyAsync(bundle, MergingBranchByRepoId, ScanFrom);
+            await Verifier.VerifyAsync(sheet, MergingBranchByRepoId, ScanFrom, page.Token);
+        }
+        catch (OperationCanceledException ex) when (page.Token.IsCancellationRequested)
+        {
+            Log.LogDebug(ex, "Verify All stopped because the page was left");
         }
         catch (Exception ex)
         {
-            Log.LogError(ex, "Verify All failed for {Rows} work items", bundle.Requirements.Count);
-            bundle.ErrorMessage = $"Verification failed: {TfsErrors.Describe(ex)}";
+            Log.LogError(ex, "Verify All failed for {Rows} work items", sheet.Requirements.Count);
+            sheet.ErrorMessage = $"Verification failed: {TfsErrors.Describe(ex)}";
         }
         verifying = false;
         Refilter();
@@ -220,7 +248,10 @@ public partial class CodeMergingSheet
     /// </summary>
     private async Task ReverifyRow(RequirementMergingRow row)
     {
-        if (bundle.TargetBranchName is null || row.IsVerifying)
+        // A row of a sheet replaced since it was opened would be looked up by id in the new sheet, whose
+        // commits for it may not be read; it is left alone instead.
+        var sheet = bundle;
+        if (sheet.TargetBranchName is null || row.IsVerifying || !sheet.Requirements.Contains(row))
         {
             return;
         }
@@ -231,12 +262,16 @@ public partial class CodeMergingSheet
         try
         {
             await LoadRowCommits(row);
-            await Verifier.VerifyRequirementAsync(bundle, row.WorkItemId, MergingBranchByRepoId, ScanFrom);
+            await Verifier.VerifyRequirementAsync(sheet, row.WorkItemId, MergingBranchByRepoId, ScanFrom, page.Token);
+        }
+        catch (OperationCanceledException ex) when (page.Token.IsCancellationRequested)
+        {
+            Log.LogDebug(ex, "Re-check of work item {WorkItemId} stopped because the page was left", row.WorkItemId);
         }
         catch (Exception ex)
         {
             Log.LogError(ex, "Re-check failed for work item {WorkItemId}", row.WorkItemId);
-            bundle.ErrorMessage = $"Re-check failed for #{row.WorkItemId}: {TfsErrors.Describe(ex)}";
+            sheet.ErrorMessage = $"Re-check failed for #{row.WorkItemId}: {TfsErrors.Describe(ex)}";
         }
         row.IsVerifying = false;
         Refilter();
@@ -264,11 +299,16 @@ public partial class CodeMergingSheet
         try
         {
             unlinked = await Merging.GetUnlinkedPullRequestsAsync(
-                SelectedRepos, unlinkedDays, QaBranchByRepoId, matchByBranchOrTitle);
+                SelectedRepos, unlinkedDays, QaBranchByRepoId, matchByBranchOrTitle, page.Token);
+        }
+        catch (OperationCanceledException ex) when (page.Token.IsCancellationRequested)
+        {
+            Log.LogDebug(ex, "The unlinked pull-request search stopped because the page was left");
         }
         catch (Exception ex)
         {
-            unlinked = new UnlinkedPrBundle { HasRun = true, ErrorMessage = $"Search failed: {ex.Message}" };
+            Log.LogError(ex, "Unlinked pull-request search failed over {Days} days", unlinkedDays);
+            unlinked = new UnlinkedPrBundle { HasRun = true, ErrorMessage = $"Search failed: {TfsErrors.Describe(ex)}" };
         }
         unlinkedSearching = false;
     }

@@ -5,12 +5,15 @@ set "ROOT=%~dp0"
 set "WEBDIR=%ROOT%DevKit.Web"
 set "PUBDIR=%WEBDIR%\publish"
 set "PORT=5850"
-set "URL=http://localhost:%PORT%"
+set "URL=http://*:%PORT%"
+set "LOCALURL=http://localhost:%PORT%"
 set "APPNAME=DevKit"
-set "SETSDK=%ROOT%scripts\_set-sdk.bat"
+set "SETSDK=%ROOT%tools\set-sdk.bat"
 
 if "%~1"=="" goto :usage
 if /i "%~1"=="run"       goto :run
+if /i "%~1"=="host"      goto :host
+if /i "%~1"=="local"     goto :local
 if /i "%~1"=="publish"   goto :publish
 if /i "%~1"=="autostart" goto :autostart
 if /i "%~1"=="remove"    goto :remove
@@ -19,20 +22,38 @@ if /i "%~1"=="version"   goto :version
 goto :usage
 
 :run
+:: Listens on every name of this machine. This machine's devkit.json (in %LOCALAPPDATA%\DevKit) decides the mode:
+:: shared, where people open http://<this machine>:%PORT% and sign in with Windows, or (with no file) local.
+set "START_URL=%URL%"
+set "START_NOTE=DevKit prints where to open it once it is ready."
+goto :start
+
+:host
+:: Cleans, restores and builds the Release build, then starts it shared on this machine.
+call "%ROOT%scripts\devkit-host.bat"
+goto :eof
+
+:local
+:: Only for the person who starts it, on this machine, opened with the link it prints.
+set "DevKit__Mode=Local"
+set "START_URL=%LOCALURL%"
+set "START_NOTE=DevKit opens your browser with a sign-in link once it is ready."
+goto :start
+
+:start
 echo.
 echo  ╔══════════════════════════════════════╗
-echo  ║       DevKit — Starting...          ║
+echo  ║       DevKit: Starting...           ║
 echo  ╚══════════════════════════════════════╝
 echo.
 
 :: Check if published exe exists
 if exist "%PUBDIR%\DevKit.Web.exe" (
     echo [*] Running from published build...
-    echo [*] URL: %URL%
+    echo [*] %START_NOTE%
     echo.
-    start "" "%URL%"
     cd /d "%PUBDIR%"
-    DevKit.Web.exe --urls "%URL%"
+    DevKit.Web.exe --urls "%START_URL%"
     goto :eof
 )
 
@@ -49,11 +70,10 @@ if exist "%SETSDK%" (
     call "%SETSDK%" || (pause & goto :eof)
 )
 echo [*] Running from source (dotnet run)...
-echo [*] URL: %URL%
+echo [*] %START_NOTE%
 echo.
-start "" "%URL%"
 cd /d "%WEBDIR%"
-dotnet run --urls "%URL%"
+dotnet run --urls "%START_URL%"
 goto :eof
 
 :publish
@@ -79,7 +99,7 @@ if errorlevel 1 (
 )
 echo.
 echo [OK] Published to: %PUBDIR%
-echo [OK] Copy this folder to any Windows machine — no .NET required.
+echo [OK] Copy this folder to any Windows machine. No .NET required.
 echo [OK] Run: DevKit.Web.exe --urls "%URL%"
 echo.
 pause
@@ -120,7 +140,7 @@ echo.
 echo --- %APPNAME% Status ---
 set "SHORTCUT=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\DevKit.lnk"
 if exist "%SHORTCUT%" (echo [*] Autostart: REGISTERED) else (echo [*] Autostart: not registered)
-if exist "%PUBDIR%\DevKit.Web.exe" (echo [*] Published: YES — %PUBDIR%) else (echo [*] Published: NO)
+if exist "%PUBDIR%\DevKit.Web.exe" (echo [*] Published: YES, in %PUBDIR%) else (echo [*] Published: NO)
 netstat -ano 2>nul | findstr ":%PORT% " >nul 2>&1
 if not errorlevel 1 (echo [*] Running: YES on port %PORT%) else (echo [*] Running: NO)
 echo.
@@ -135,12 +155,14 @@ goto :eof
 
 :usage
 echo.
-echo  DevKit — Branch Creator ^& Merge Tool
+echo  DevKit: TFS workflow tools
 echo  ────────────────────────────────────────
 echo  Usage: devkit [command]
 echo.
 echo  Commands:
-echo    run        Start the application (%URL%)
+echo    host       Clean, restore, build and start it shared at http://%COMPUTERNAME%:%PORT% (scripts\devkit-host.bat)
+echo    run        Start it as this machine's devkit.json says, without rebuilding
+echo    local      Start it for yourself only (%LOCALURL%, with the printed link)
 echo    publish    Build self-contained exe (no .NET needed)
 echo    autostart  Add to Windows Startup
 echo    remove     Remove from Startup

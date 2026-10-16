@@ -14,7 +14,7 @@ public static partial class CodePresenceAnalyzer
     /// <summary>
     /// How QA moved on from the pull request's own lines: the span of QA's current file that now stands in
     /// their place, and how many unchanged lines sit either side of it. Only a QA edit of those lines
-    /// counts — an edit next to them is not a later version of them.
+    /// counts; an edit next to them is not a later version of them.
     /// </summary>
     private readonly record struct QaArea(bool Changed, int Start, int Length, int ContextBefore, int ContextAfter)
     {
@@ -190,8 +190,8 @@ public static partial class CodePresenceAnalyzer
                     : FromAddedLines(added);
             }
 
-            // Nothing meaningful was added, so the block is judged by what it took away — which, as the
-            // block is not trivial, is something meaningful.
+            // Nothing meaningful was added, so the block is judged by what it took away. As the block is
+            // not trivial, that is something meaningful.
             return FromRemovedLines(_before.Ids.AsSpan(hunk.OldStart, hunk.OldLength));
         }
 
@@ -219,7 +219,7 @@ public static partial class CodePresenceAnalyzer
 
         /// <summary>
         /// For a block that removed code: whether those lines are gone, one by one. Gone as a whole run is
-        /// not enough — a resolution that kept half of them breaks the run without removing the code.
+        /// not enough: a resolution that kept half of them breaks the run without removing the code.
         /// </summary>
         private Finding FromRemovedLines(ReadOnlySpan<int> removed)
         {
@@ -296,8 +296,8 @@ public static partial class CodePresenceAnalyzer
         }
 
         /// <summary>
-        /// The nearest copy of <paramref name="block"/> on the branch that is new — the branch has more
-        /// copies than the file had before the pull request — and not credited to another block yet. Its
+        /// The nearest copy of <paramref name="block"/> on the branch that is new (the branch has more
+        /// copies than the file had before the pull request) and not credited to another block yet. Its
         /// core lines, <c>[coreOffset, coreOffset + coreLength)</c> of the block, are credited to this one.
         /// -1 when there is no such copy.
         /// </summary>

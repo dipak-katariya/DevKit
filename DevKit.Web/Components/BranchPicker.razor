@@ -1,10 +1,9 @@
-@inject IJSRuntime JS
-@implements IDisposable
+@inherits ClickOutsideComponent
 
 @* Searchable branch dropdown. Only a bounded slice is rendered, so a repository with
    thousands of refs cannot flood the DOM. *@
 
-<div class="gdd bpk @(IsOpen ? "gdd-open" : "") @CssClass" @ref="rootEl" style="@Style">
+<div class="gdd bpk @(IsOpen ? "gdd-open" : "") @CssClass" @ref="Root" style="@Style">
     <div class="gdd-trigger @(Disabled ? "bpk-disabled" : "")" @onclick="Toggle" @onclick:stopPropagation>
         <span class="gdd-value @(string.IsNullOrEmpty(Value) ? "gdd-placeholder" : "bpk-branch")">
             @(string.IsNullOrEmpty(Value) ? Placeholder : Value)
@@ -45,7 +44,7 @@
             </div>
             @if (HiddenCount > 0)
             {
-                <div class="bpk-more">@HiddenCount more — keep typing to narrow</div>
+                <div class="bpk-more">@HiddenCount more. Type to narrow the list.</div>
             }
         </div>
     }
@@ -59,7 +58,7 @@
     [Parameter] public string? Value { get; set; }
     [Parameter] public EventCallback<string> ValueChanged { get; set; }
     [Parameter] public bool Disabled { get; set; }
-    [Parameter] public string Placeholder { get; set; } = "— Select branch —";
+    [Parameter] public string Placeholder { get; set; } = "Select branch";
     [Parameter] public string? Style { get; set; }
 
     /// <summary>Extra classes on the shell, e.g. "fi-size" to match the form inputs around it.</summary>
@@ -76,9 +75,9 @@
 
     private bool IsOpen;
     private string searchText = "";
-    private ElementReference rootEl;
     private ElementReference searchInput;
-    private DotNetObjectReference<BranchPicker>? dotNetRef;
+
+    protected override bool IsPanelOpen => IsOpen;
 
     private List<string> Matches => Branches
         .Where(b => string.IsNullOrEmpty(searchText) || b.Contains(searchText, StringComparison.OrdinalIgnoreCase))
@@ -90,29 +89,26 @@
 
     private async Task Toggle()
     {
-        if (Disabled) return;
+        if (Disabled)
+        {
+            return;
+        }
         IsOpen = !IsOpen;
         searchText = "";
         if (IsOpen)
         {
             await OnOpened.InvokeAsync();
             await Task.Yield();
-            try { await JS.InvokeVoidAsync("devKit.focusEl", searchInput); } catch (JSException) { }
-            dotNetRef ??= DotNetObjectReference.Create(this);
-            try { await JS.InvokeVoidAsync("devKit.registerClickOutside", rootEl, dotNetRef); } catch (JSException) { }
-        }
-        else
-        {
-            await Unregister();
+            await FocusAsync(searchInput);
         }
     }
 
-    [JSInvokable]
-    public void CloseDropdown()
+    protected override Task CloseFromOutsideAsync()
     {
         IsOpen = false;
         searchText = "";
         StateHasChanged();
+        return Task.CompletedTask;
     }
 
     private async Task Select(string branch)
@@ -120,7 +116,6 @@
         Value = branch;
         IsOpen = false;
         searchText = "";
-        await Unregister();
         await ValueChanged.InvokeAsync(branch);
     }
 
@@ -128,7 +123,6 @@
     {
         Value = "";
         IsOpen = false;
-        await Unregister();
         await ValueChanged.InvokeAsync("");
     }
 
@@ -142,11 +136,4 @@
         var first = Visible.FirstOrDefault();
         if (first != null) await Select(first);
     }
-
-    private async Task Unregister()
-    {
-        try { await JS.InvokeVoidAsync("devKit.unregisterClickOutside", rootEl); } catch (JSException) { }
-    }
-
-    public void Dispose() => dotNetRef?.Dispose();
 }

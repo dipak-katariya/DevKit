@@ -40,7 +40,7 @@
 
     private string DisplayText => string.IsNullOrEmpty(Display) ? Text : Display;
 
-    private string Tooltip => string.IsNullOrEmpty(Url) ? Text : $"{Text} — open in a new tab";
+    private string Tooltip => string.IsNullOrEmpty(Url) ? Text : $"{Text} (opens in a new tab)";
 
     private async Task Copy()
     {

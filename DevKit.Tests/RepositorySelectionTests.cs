@@ -11,7 +11,7 @@ namespace DevKit.Tests;
 
 /// <summary>
 /// The sheet answers for the repositories the user selected. A work item commonly links pull requests
-/// in several repositories — an FX-to-CPFOIA requirement links both CasepointARA and FX-CPFOIA-Migration —
+/// in several repositories (an FX-to-CPFOIA requirement links both CasepointARA and FX-CPFOIA-Migration),
 /// and with only CasepointARA selected, the FX pull requests used to be fetched by id and shown anyway.
 /// </summary>
 [Collection(SettingsFileCollection.Name)]

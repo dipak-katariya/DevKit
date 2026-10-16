@@ -2,7 +2,7 @@
 
 @if (Checks.Count == 0)
 {
-    <div class="tbl-empty">Select an area and sprint, then Load to run the checks.</div>
+    <div class="tbl-empty">Select an area and sprint, then click Run Checks.</div>
 }
 else
 {
@@ -47,9 +47,9 @@ else
                                         @if (RowMeta(r.Item) is { Length: > 0 } meta) { <div class="cell-meta">@meta</div> }
                                     </td>
                                     <td style="font-size:.7rem;">@r.Item.Assigned</td>
-                                    <td><span class="state-pill @StateCls(r.Item.State)">@(string.IsNullOrEmpty(r.Item.State) ? "—" : r.Item.State)</span></td>
+                                    <td><span class="state-pill @WorkItemBadges.StateClass(r.Item.State)">@(string.IsNullOrEmpty(r.Item.State) ? "Unknown" : r.Item.State)</span></td>
                                     @if (c.ExtraColumn != null) { <td style="font-size:.66rem;color:var(--muted2);">@r.Expected</td> }
-                                    @if (c.ExtraColumn2 != null) { <td style="font-size:.66rem;font-family:var(--mono);">@(r.Expected2 ?? "—")</td> }
+                                    @if (c.ExtraColumn2 != null) { <td style="font-size:.66rem;font-family:var(--mono);">@(r.Expected2 ?? "Not found")</td> }
                                 </tr>
                             }
                         </tbody>
@@ -71,14 +71,6 @@ else
 
     private static string CountClass(AuditCheck c) => c.Count == 0 ? "cnt-ok"
         : c.Severity switch { AuditSeverity.Critical => "cnt-crit", AuditSeverity.Warning => "cnt-warn", _ => "cnt-info" };
-
-    private static string StateCls(string? s) => (s ?? "").ToLowerInvariant() switch
-    {
-        "active" => "state-active",
-        "resolved" => "state-resolved",
-        "closed" => "state-closed",
-        _ => "state-new"
-    };
 
     private static string RowMeta(WorkItem w)
     {

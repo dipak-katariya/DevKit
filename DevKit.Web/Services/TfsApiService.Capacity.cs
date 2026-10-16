@@ -9,30 +9,27 @@ namespace DevKit.Web.Services;
 /// </summary>
 public partial class TfsApiService
 {
-    // ═══ TEAMS + CAPACITY (Insight Hub) ═══
+    // ═══ TEAMS + CAPACITY (Sprint Insights) ═══
+
+    /// <summary>The project's teams. Throws when they cannot be read: no teams read is not "no teams".</summary>
     public async Task<List<TfsTeam>> GetTeamsAsync(string project, CancellationToken ct = default)
     {
-        try
-        {
-            var data = await GetJson(Api($"projects/{Uri.EscapeDataString(project)}/teams?api-version={Ver}"), ct);
-            return data.GetProperty("value").EnumerateArray()
-                .Select(t => new TfsTeam { Id = t.GetProperty("id").GetString()!, Name = t.GetProperty("name").GetString()! })
-                .ToList();
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogWarning(ex, "Failed to load teams for project {Project}", project);
-            return new List<TfsTeam>();
-        }
+        var data = await GetJson(Api($"projects/{Uri.EscapeDataString(project)}/teams?api-version={Ver}"), ct);
+        return data.GetProperty("value").EnumerateArray()
+            .Select(t => new TfsTeam { Id = t.GetProperty("id").GetString()!, Name = t.GetProperty("name").GetString()! })
+            .ToList();
     }
 
     /// <summary>
     /// Resolves per-member capacity for a sprint by scanning every team's iteration settings,
     /// matching the selected iteration, and merging capacities + team days-off across teams.
-    /// Degrades gracefully (Loaded=false + Error) so the caller can fall back to default capacity.
+    /// Degrades gracefully (Loaded=false + Error) so the caller can fall back to default capacity;
+    /// a team list that cannot be read sets <see cref="SprintCapacity.ReadFailed"/>, and teams that
+    /// cannot be read are counted in <see cref="SprintCapacity.TeamsUnread"/>, so neither reads as
+    /// capacity that was never configured.
     ///
     /// Teams are independent, so they are read concurrently under the shared TFS gate instead of
-    /// one after another — this scan was most of the wait on Load. The reads are merged afterwards
+    /// one after another; this scan was most of the wait on Load. The reads are merged afterwards
     /// in team order, so the outcome is exactly that of a sequential scan: the first matching team
     /// supplies the sprint dates, and a tie in capacity keeps the earlier team's figure.
     /// </summary>
@@ -45,61 +42,85 @@ public partial class TfsApiService
             result.TeamsScanned = teams.Count;
 
             var reads = await Task.WhenAll(teams.Select(team => ReadTeamCapacityAsync(project, team, iterationPath, ct)));
-            foreach (var read in reads)
-                if (read != null) MergeTeamCapacity(read, result);
+            result.TeamsUnread = reads.Count(read => read.Unread);
+            foreach (var capacity in reads.Select(read => read.Capacity).OfType<TeamCapacityRead>())
+            {
+                MergeTeamCapacity(capacity, result);
+            }
 
             result.Loaded = result.Members.Count > 0 && result.Start.HasValue && result.Finish.HasValue;
-            if (!result.Loaded)
-                result.Error = result.Members.Count == 0
-                    ? "No team capacity is configured for this sprint."
-                    : "Sprint start/finish dates were not found.";
+            result.Error = result.Loaded ? null : MissingCapacityReason(result);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (!TfsErrors.IsRequestedCancellation(ex, ct))
         {
-            _logger.LogWarning(ex, "Capacity resolution failed for {Iter}", iterationPath);
-            result.Error = ex.Message;
+            _logger.LogError(ex, "Capacity for {Project} / {Iter} could not be read", project, iterationPath);
+            result.ReadFailed = true;
+            result.Error = TfsErrors.Describe(ex);
         }
         return result;
+    }
+
+    private static string MissingCapacityReason(SprintCapacity result)
+    {
+        if (result.Members.Count > 0)
+        {
+            return "Sprint start/finish dates were not found.";
+        }
+        return result.TeamsUnread > 0
+            ? $"The capacity of {result.TeamsUnread} of {result.TeamsScanned} teams could not be read."
+            : "No team capacity is configured for this sprint.";
     }
 
     /// <summary>One team's contribution to the sprint's capacity, before merging.</summary>
     private sealed record TeamCapacityRead(IterationMatch Iteration, JsonElement Capacities, List<DateRange> DaysOff);
 
     /// <summary>
-    /// Reads one team's settings for the sprint, or null when the team does not plan that sprint
-    /// or its settings cannot be read. A team that fails is skipped rather than failing the load:
+    /// What reading one team gave: its capacity, or none when it does not plan the sprint. <paramref name="Unread"/>
+    /// when its settings, or only its days off, could not be read.
+    /// </summary>
+    private readonly record struct TeamRead(TeamCapacityRead? Capacity, bool Unread);
+
+    /// <summary>
+    /// Reads one team's settings for the sprint. A team that fails is counted rather than failing the load:
     /// the others still describe most of the people in the sprint.
     /// </summary>
-    private async Task<TeamCapacityRead?> ReadTeamCapacityAsync(string project, TfsTeam team, string iterationPath, CancellationToken ct)
+    private async Task<TeamRead> ReadTeamCapacityAsync(string project, TfsTeam team, string iterationPath, CancellationToken ct)
     {
         try
         {
-            var iters = await GetJsonThrottled(ProjectTeamApi(project, team.Id, $"work/teamsettings/iterations?api-version={Ver}"), ct);
+            var iters = await GetJson(ProjectTeamApi(project, team.Id, $"work/teamsettings/iterations?api-version={Ver}"), ct);
             var iteration = FindIteration(iters, iterationPath);
-            if (iteration == null) return null;
+            if (iteration == null)
+            {
+                return new TeamRead(null, Unread: false);
+            }
 
-            var caps = await GetJsonThrottled(ProjectTeamApi(project, team.Id, $"work/teamsettings/iterations/{iteration.Id}/capacities?api-version={Ver}"), ct);
-            return new TeamCapacityRead(iteration, caps, await ReadTeamDaysOffAsync(project, team, iteration.Id, ct));
+            var caps = await GetJson(ProjectTeamApi(project, team.Id, $"work/teamsettings/iterations/{iteration.Id}/capacities?api-version={Ver}"), ct);
+            var daysOff = await ReadTeamDaysOffAsync(project, team, iteration.Id, ct);
+            return new TeamRead(new TeamCapacityRead(iteration, caps, daysOff ?? new List<DateRange>()), Unread: daysOff is null);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (!TfsErrors.IsRequestedCancellation(ex, ct))
         {
-            _logger.LogDebug(ex, "capacity fetch failed for team {Team}", team.Name);
-            return null;
+            _logger.LogError(ex, "Capacity settings of team {Team} could not be read; its members use the default capacity", team.Name);
+            return new TeamRead(null, Unread: true);
         }
     }
 
-    /// <summary>Team days off are optional in TFS; missing ones leave capacity unaffected.</summary>
-    private async Task<List<DateRange>> ReadTeamDaysOffAsync(string project, TfsTeam team, string iterationId, CancellationToken ct)
+    /// <summary>
+    /// The team's days off in the sprint; TFS answers an empty list for a team that has none. Null when they
+    /// could not be read, so the team's capacities still count while its leave is reported as not deducted.
+    /// </summary>
+    private async Task<List<DateRange>?> ReadTeamDaysOffAsync(string project, TfsTeam team, string iterationId, CancellationToken ct)
     {
         try
         {
-            var tdo = await GetJsonThrottled(ProjectTeamApi(project, team.Id, $"work/teamsettings/iterations/{iterationId}/teamdaysoff?api-version={Ver}"), ct);
+            var tdo = await GetJson(ProjectTeamApi(project, team.Id, $"work/teamsettings/iterations/{iterationId}/teamdaysoff?api-version={Ver}"), ct);
             return ParseDateRanges(tdo, "daysOff");
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (!TfsErrors.IsRequestedCancellation(ex, ct))
         {
-            _logger.LogDebug(ex, "team days-off fetch failed for {Team}", team.Name);
-            return new List<DateRange>();
+            _logger.LogError(ex, "Days off of team {Team} could not be read; its leave is not deducted", team.Name);
+            return null;
         }
     }
 
@@ -135,7 +156,7 @@ public partial class TfsApiService
         // the result keeps the WIQL's id order. $expand=relations brings each task's parent link,
         // which deliverable classification needs.
         var pages = await Task.WhenAll(ids.Chunk(WorkItemBatchSize).Select(chunk =>
-            GetJsonThrottled(ProjectApi(project, $"wit/workitems?ids={string.Join(",", chunk)}&$expand=relations&api-version={Ver}"), ct)));
+            GetJson(ProjectApi(project, $"wit/workitems?ids={string.Join(",", chunk)}&$expand=relations&api-version={Ver}"), ct)));
 
         return pages
             .SelectMany(page => page.GetProperty("value").EnumerateArray())
@@ -171,7 +192,7 @@ public partial class TfsApiService
     }
 
     /// <summary>
-    /// Tags, type and title of the given work items, keyed by id — the parents of capacity tasks.
+    /// Tags, type and title of the given work items (the parents of capacity tasks), keyed by id.
     /// Tags drive deliverable classification; the type is how a task under a Bug is recognised as
     /// bug work. Ids that are not numeric are dropped, since they end up in the request URL. A parent
     /// TFS cannot return is missing from the map, so its tasks are classified by their own tags alone.
@@ -181,8 +202,10 @@ public partial class TfsApiService
         var numeric = ids.Where(i => int.TryParse(i, out _)).Select(int.Parse).Distinct().ToList();
         var map = new Dictionary<string, WorkItem>(StringComparer.Ordinal);
         if (numeric.Count == 0) return map;
-        foreach (var w in await FetchFieldsByIds(project, numeric, "System.Tags,System.WorkItemType,System.Title", ct))
+        foreach (var w in (await FetchFieldsByIds(project, numeric, "System.Tags,System.WorkItemType,System.Title", ct)).Items)
+        {
             map[w.Id] = w;
+        }
         return map;
     }
 
@@ -190,7 +213,7 @@ public partial class TfsApiService
     private sealed record IterationMatch(string Id, DateTime? Start, DateTime? Finish);
 
     /// <summary>
-    /// Finds the selected sprint among one team's iterations. Pure — the sequential version wrote
+    /// Finds the selected sprint among one team's iterations. Pure: the sequential version wrote
     /// the dates straight into the shared result, which concurrent team reads cannot do safely.
     /// </summary>
     private static IterationMatch? FindIteration(JsonElement iters, string selectedPath)

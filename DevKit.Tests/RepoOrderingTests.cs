@@ -119,7 +119,7 @@ public class RepoSelectTests
         var label = RepoSelect.Groups(SampleRepos(), Array.Empty<string>())
             .SelectMany(g => g.Options).First(o => o.Value == "r2").Label;
 
-        Assert.Equal("Alpha — Beta", label);
+        Assert.Equal("Alpha · Beta", label);
     }
 
     [Fact]

@@ -15,7 +15,7 @@ public sealed record DiffResult(IReadOnlyList<DiffHunk> Hunks, bool Approximate)
 /// Line diff over interned line ids: Myers' O(ND) algorithm with the linear-space middle-snake split,
 /// so memory grows with the file rather than with its square. A cost budget bounds the time spent on
 /// two versions with almost nothing in common; past it, the region still undecided is reported as
-/// replaced wholesale. That is a valid diff, only a coarser one — never a wrong one.
+/// replaced wholesale. That is a valid diff, only a coarser one, never a wrong one.
 /// </summary>
 public static class LineDiff
 {
