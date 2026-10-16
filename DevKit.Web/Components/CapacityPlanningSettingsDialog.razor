@@ -1,5 +1,5 @@
 @* Capacity Planning settings. Edits a private draft and hands it back through OnSave, so
-   nothing reaches the saved settings — or the table behind the dialog — until Save. *@
+   nothing reaches the saved settings (or the table behind the dialog) until Save. *@
 
 <div class="modal-overlay" @onclick="Cancel">
     <div class="modal cp-settings" @onclick:stopPropagation role="dialog" aria-label="Capacity planning settings">
@@ -16,7 +16,7 @@
                 </div>
                 <div class="cp-grid2">
                     <label class="f-row">
-                        <span class="f-label">AI over-plan % <em>0 – @MaxOverPlan</em></span>
+                        <span class="f-label">AI over-plan % <em>0 to @MaxOverPlan</em></span>
                         <input class="fi" type="number" min="0" max="@MaxOverPlan" step="1"
                                disabled="@(draft.Mode != PlanningMode.AiOverPlan)" @bind="draft.AiOverPlanPercent" />
                     </label>
@@ -33,7 +33,7 @@
                     </label>
                     <label class="cp-check">
                         <input type="checkbox" @bind="draft.UseTfsMemberCapacity" />
-                        <span>Use each member's capacity from TFS when it is set — the hours above then only fill in for members without one</span>
+                        <span>Use each member's capacity from TFS when it is set. The hours above then apply only to members without one.</span>
                     </label>
                 </div>
                 <div class="f-row">
@@ -42,7 +42,7 @@
                         @foreach (var day in Week)
                         {
                             <button type="button" class="cp-day @(IsWorkingDay(day) ? "on" : "")" @onclick="() => ToggleDay(day)"
-                                    title="@(IsWorkingDay(day) ? "Working day" : "Day off") — click to change">@day.ToString()[..3]</button>
+                                    title="@(IsWorkingDay(day) ? "Working day" : "Day off"). Click to change.">@day.ToString()[..3]</button>
                         }
                     </div>
                 </div>
@@ -58,7 +58,7 @@
                 </div>
                 <div class="cp-grid2">
                     <label class="f-row">
-                        <span class="f-label">Weeks per sprint <em>1 – @MaxWeeks</em></span>
+                        <span class="f-label">Weeks per sprint <em>1 to @MaxWeeks</em></span>
                         <input class="fi" type="number" min="1" max="@MaxWeeks" step="1" @bind="draft.SprintWeeks" />
                     </label>
                     <div class="cp-hint">
@@ -103,7 +103,7 @@
                         }
                         @if (draft.TagRules.Count == 0)
                         {
-                            <tr><td colspan="4" class="tbl-empty">No tag rules — work is classified by its parent's marker tag only.</td></tr>
+                            <tr><td colspan="4" class="tbl-empty">No tag rules. Work is classified by its parent's marker tag only.</td></tr>
                         }
                     </tbody>
                 </table>
@@ -140,19 +140,19 @@
                     <div class="f-row">
                         <span class="f-label">Development team</span>
                         <ChipListEditor Items="@draft.DevDisciplines" ItemsChanged="v => draft.DevDisciplines = v"
-                                        Suggestions="@ObservedDisciplines" Placeholder="Add a discipline…" EmptyText="None — add one" />
+                                        Suggestions="@ObservedDisciplines" Placeholder="Add a discipline…" EmptyText="None. Add one below." />
                     </div>
                     <div class="f-row">
                         <span class="f-label">QA team</span>
                         <ChipListEditor Items="@draft.QaDisciplines" ItemsChanged="v => draft.QaDisciplines = v"
-                                        Suggestions="@ObservedDisciplines" Placeholder="Add a discipline…" EmptyText="None — add one" />
+                                        Suggestions="@ObservedDisciplines" Placeholder="Add a discipline…" EmptyText="None. Add one below." />
                     </div>
                 </div>
             </section>
         </div>
         <div class="modal-actions">
             <button type="button" class="btn-ghost" style="margin-right:auto;" @onclick="ResetToDefaults"
-                    title="Restore the original formula: 40% AI over-plan, 8.5 h, Mon–Fri, the four standard tags. Not saved until you press Save.">
+                    title="Restores the defaults: 40% AI over-plan, 8.5 h a day, Monday to Friday and the four standard tags. Not saved until you press Save.">
                 ↺ Reset to defaults
             </button>
             <button type="button" class="btn-ghost" @onclick="Cancel">Cancel</button>
@@ -191,7 +191,7 @@
     private IEnumerable<string> TagSuggestions =>
         ObservedTags.Where(t => !draft.TagRules.Any(r => string.Equals(r.Tag, t, StringComparison.OrdinalIgnoreCase)));
 
-    /// <summary>What a full, leave-free sprint comes to under the draft — the formula made concrete.</summary>
+    /// <summary>What a full, leave-free sprint comes to under the draft: the formula made concrete.</summary>
     private string Preview
     {
         get
@@ -235,7 +235,7 @@
     {
         if (tag.Length == 0) return "Enter a tag.";
         if (tag.Length > MaxName) return $"Tags are limited to {MaxName} characters.";
-        if (tag.Contains(';')) return "A tag cannot contain ';' — TFS uses it to separate tags.";
+        if (tag.Contains(';')) return "A tag cannot contain ';' because TFS uses it to separate tags.";
         if (draft.TagRules.Count >= CapacityPlanningSettings.MaxTagRules) return $"At most {CapacityPlanningSettings.MaxTagRules} tag rules.";
         return draft.TagRules.Any(r => string.Equals(r.Tag, tag, StringComparison.OrdinalIgnoreCase))
             ? $"\"{tag}\" is already listed."

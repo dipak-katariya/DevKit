@@ -5,7 +5,7 @@ namespace DevKit.Web.Models;
 public record PlanningCategory(string Prefix, string Discipline, string Group, string[] ExecTypes);
 
 /// <summary>
-/// Single source of truth for planning task prefixes — shared by Task Creation (§6) and the
+/// Single source of truth for planning task prefixes, shared by Task Creation (§6) and the
 /// Tasks audit (§4) so the two can never drift out of sync.
 /// </summary>
 public static class PlanningTaskCatalog

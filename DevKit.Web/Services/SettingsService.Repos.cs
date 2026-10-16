@@ -3,8 +3,7 @@ using DevKit.Web.Models;
 namespace DevKit.Web.Services;
 
 /// <summary>
-/// Everything settings know about repositories: the branches the merging sheet works with, and
-/// the scan that pairs local clones with their TFS repository by git remote.
+/// Everything settings know about repositories: the branches the merging sheet works with.
 /// </summary>
 public partial class SettingsService
 {
@@ -14,17 +13,14 @@ public partial class SettingsService
     public string CodeMergingTargetBranch
     {
         get => _settings.CodeMergingTargetBranch;
-        set { _settings.CodeMergingTargetBranch = value; Save(); }
+        set => Update(() => _settings.CodeMergingTargetBranch = value);
     }
 
     /// <summary>Repository ids last selected on the merging sheet.</summary>
     public List<string> CodeMergingRepoIds => _settings.CodeMergingRepoIds;
 
-    public void SetCodeMergingRepoIds(IEnumerable<string> repoIds)
-    {
-        _settings.CodeMergingRepoIds = repoIds.Distinct().ToList();
-        Save();
-    }
+    public void SetCodeMergingRepoIds(IEnumerable<string> repoIds) =>
+        Update(() => _settings.CodeMergingRepoIds = repoIds.Distinct().ToList());
 
     /// <summary>
     /// Superseded by <see cref="RepoBranches"/>, which is keyed by repository id. Kept so an
@@ -32,16 +28,21 @@ public partial class SettingsService
     /// </summary>
     public Dictionary<string, string> RepoTargetBranches => _settings.RepoTargetBranches;
 
-    public void SetRepoTargetBranch(string repoName, string branch)
+    public void SetRepoTargetBranch(string repoName, string branch) => Update(() =>
     {
-        if (string.IsNullOrWhiteSpace(branch)) _settings.RepoTargetBranches.Remove(repoName);
-        else _settings.RepoTargetBranches[repoName] = branch.Trim();
-        Save();
-    }
+        if (string.IsNullOrWhiteSpace(branch))
+        {
+            _settings.RepoTargetBranches.Remove(repoName);
+        }
+        else
+        {
+            _settings.RepoTargetBranches[repoName] = branch.Trim();
+        }
+    });
 
     /// <summary>
     /// Per-repository branch defaults for the merging sheet, keyed by repository <em>id</em>.
-    /// Names are not unique across projects — FOIAXpress-NextGen exists in two — so a
+    /// Names are not unique across projects (FOIAXpress-NextGen exists in two), so a
     /// name-keyed default silently applies to the wrong repository.
     /// </summary>
     public Dictionary<string, RepoBranchDefaults> RepoBranches => _settings.RepoBranches;
@@ -58,14 +59,24 @@ public partial class SettingsService
     /// <summary>Drops an entry once both branches are blank, so cleared rows don't accumulate.</summary>
     private void UpdateRepoBranches(string repoId, Action<RepoBranchDefaults> apply)
     {
-        if (string.IsNullOrWhiteSpace(repoId)) return;
+        if (string.IsNullOrWhiteSpace(repoId))
+        {
+            return;
+        }
 
-        if (!_settings.RepoBranches.TryGetValue(repoId, out var entry))
-            entry = _settings.RepoBranches[repoId] = new RepoBranchDefaults();
+        Update(() =>
+        {
+            if (!_settings.RepoBranches.TryGetValue(repoId, out var entry))
+            {
+                entry = _settings.RepoBranches[repoId] = new RepoBranchDefaults();
+            }
 
-        apply(entry);
-        if (entry.IsEmpty) _settings.RepoBranches.Remove(repoId);
-        Save();
+            apply(entry);
+            if (entry.IsEmpty)
+            {
+                _settings.RepoBranches.Remove(repoId);
+            }
+        });
     }
 
     /// <summary>
@@ -78,199 +89,40 @@ public partial class SettingsService
     {
         if (repos.Count == 0) return false;
 
-        var changed = false;
-        foreach (var repo in repos)
+        lock (_sync)
         {
-            if (_settings.RepoBranches.ContainsKey(repo.Id)) continue;
-
-            var qa = _settings.RepoTargetBranches.TryGetValue(repo.Name, out var legacy) ? legacy : "";
-
-            // The old global verification branch only ever described the remembered repos;
-            // applying it to every repository would invent defaults nobody configured.
-            var merging = _settings.CodeMergingRepoIds.Contains(repo.Id)
-                ? _settings.CodeMergingTargetBranch
-                : "";
-
-            var entry = new RepoBranchDefaults { QaBranch = qa.Trim(), MergingBranch = merging.Trim() };
-            if (entry.IsEmpty) continue;
-
-            _settings.RepoBranches[repo.Id] = entry;
-            changed = true;
-        }
-
-        if (changed) Save();
-        return changed;
-    }
-
-    public string GetBaseBranch(string repoId) =>
-        _settings.BaseBranches.TryGetValue(repoId, out var b) ? b : "";
-
-    public void SetBaseBranch(string repoId, string branch)
-    {
-        _settings.BaseBranches[repoId] = branch;
-        Save();
-    }
-
-    /// <summary>
-    /// Scans DefaultProjectPath for subdirectories containing .git folders.
-    /// Reads the git remote origin URL from each to identify the TFS repo.
-    /// </summary>
-    public List<LocalRepoInfo> ScanLocalRepos(List<TfsRepo>? tfsRepos = null)
-    {
-        var result = new List<LocalRepoInfo>();
-        var basePath = _settings.DefaultProjectPath;
-        if (string.IsNullOrWhiteSpace(basePath) || !Directory.Exists(basePath))
-            return result;
-
-        try
-        {
-            foreach (var dir in Directory.GetDirectories(basePath))
+            var changed = false;
+            foreach (var repo in repos)
             {
-                var gitDir = System.IO.Path.Combine(dir, ".git");
-                if (!Directory.Exists(gitDir)) continue;
-
-                var info = new LocalRepoInfo
+                if (_settings.RepoBranches.ContainsKey(repo.Id))
                 {
-                    FolderName = System.IO.Path.GetFileName(dir),
-                    LocalPath = dir,
-                    RemoteUrl = ReadGitRemoteUrl(dir)
-                };
-
-                // Try to match to a TFS repo by remote URL or name
-                if (tfsRepos != null)
-                    MatchToTfsRepo(info, tfsRepos);
-
-                result.Add(info);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to scan local repos in {Path}", basePath);
-        }
-        return result;
-    }
-
-    /// <summary>
-    /// Reads the git remote origin URL from a local repo.
-    /// First tries git config file, falls back to running git command.
-    /// </summary>
-    private string ReadGitRemoteUrl(string repoPath)
-    {
-        try
-        {
-            // Read from .git/config directly (no process needed)
-            var configPath = System.IO.Path.Combine(repoPath, ".git", "config");
-            if (File.Exists(configPath))
-            {
-                var lines = File.ReadAllLines(configPath);
-                bool inOrigin = false;
-                foreach (var line in lines)
-                {
-                    var trimmed = line.Trim();
-                    if (trimmed == "[remote \"origin\"]")
-                    {
-                        inOrigin = true;
-                        continue;
-                    }
-                    if (inOrigin && trimmed.StartsWith("["))
-                        break;
-                    if (inOrigin && trimmed.StartsWith("url = ", StringComparison.OrdinalIgnoreCase))
-                        return trimmed["url = ".Length..].Trim();
+                    continue;
                 }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Could not read git remote URL from {RepoPath}", repoPath);
-        }
-        return "";
-    }
 
-    /// <summary>
-    /// Matches a local repo to a TFS repo by comparing remote URLs, then by repo name extracted from URL.
-    /// Handles clones like FX-CPFOIA-Migration_2 which have the same remote as FX-CPFOIA-Migration.
-    /// </summary>
-    private void MatchToTfsRepo(LocalRepoInfo local, List<TfsRepo> tfsRepos)
-    {
-        // Strategy 1: Exact remote URL match
-        if (!string.IsNullOrEmpty(local.RemoteUrl))
-        {
-            var normalizedLocal = NormalizeUrl(local.RemoteUrl);
-            var match = tfsRepos.FirstOrDefault(r => NormalizeUrl(r.RemoteUrl) == normalizedLocal);
-            if (match != null)
-            {
-                local.TfsRepoId = match.Id;
-                local.TfsRepoName = match.Name;
-                local.TfsProject = match.Project;
-                return;
-            }
+                var qa = _settings.RepoTargetBranches.TryGetValue(repo.Name, out var legacy) ? legacy : "";
 
-            // Strategy 2: Extract repo name from remote URL and match
-            var repoNameFromUrl = ExtractRepoNameFromUrl(local.RemoteUrl);
-            if (!string.IsNullOrEmpty(repoNameFromUrl))
-            {
-                match = tfsRepos.FirstOrDefault(r =>
-                    r.Name.Equals(repoNameFromUrl, StringComparison.OrdinalIgnoreCase));
-                if (match != null)
+                // The old global verification branch only ever described the remembered repos, so
+                // applying it to every repository would invent defaults nobody configured.
+                var merging = _settings.CodeMergingRepoIds.Contains(repo.Id)
+                    ? _settings.CodeMergingTargetBranch
+                    : "";
+
+                var entry = new RepoBranchDefaults { QaBranch = qa.Trim(), MergingBranch = merging.Trim() };
+                if (entry.IsEmpty)
                 {
-                    local.TfsRepoId = match.Id;
-                    local.TfsRepoName = match.Name;
-                    local.TfsProject = match.Project;
-                    return;
+                    continue;
                 }
+
+                _settings.RepoBranches[repo.Id] = entry;
+                changed = true;
             }
-        }
 
-        // Strategy 3: Folder name exact match
-        var nameMatch = tfsRepos.FirstOrDefault(r =>
-            r.Name.Equals(local.FolderName, StringComparison.OrdinalIgnoreCase));
-        if (nameMatch != null)
-        {
-            local.TfsRepoId = nameMatch.Id;
-            local.TfsRepoName = nameMatch.Name;
-            local.TfsProject = nameMatch.Project;
-        }
-    }
+            if (changed)
+            {
+                Save();
+            }
 
-    private static string NormalizeUrl(string url)
-    {
-        if (string.IsNullOrEmpty(url)) return "";
-        return url.TrimEnd('/').ToLowerInvariant()
-            .Replace("http://", "").Replace("https://", "");
-    }
-
-    private static string ExtractRepoNameFromUrl(string url)
-    {
-        if (string.IsNullOrEmpty(url)) return "";
-        // TFS/Azure DevOps: https://tfs.example.com/tfs/Collection/Project/_git/RepoName
-        var gitIdx = url.LastIndexOf("/_git/", StringComparison.OrdinalIgnoreCase);
-        if (gitIdx >= 0)
-            return url[(gitIdx + 6)..].TrimEnd('/');
-        // Generic: last segment of URL
-        var lastSlash = url.TrimEnd('/').LastIndexOf('/');
-        if (lastSlash >= 0)
-        {
-            var name = url[(lastSlash + 1)..].TrimEnd('/');
-            if (name.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
-                name = name[..^4];
-            return name;
+            return changed;
         }
-        return "";
-    }
-
-    /// <summary>
-    /// Auto-maps all scanned local repos to TFS repos and saves paths.
-    /// </summary>
-    public int AutoMapLocalRepos(List<TfsRepo> tfsRepos)
-    {
-        var localRepos = ScanLocalRepos(tfsRepos);
-        int mapped = 0;
-        foreach (var local in localRepos.Where(l => l.IsMapped))
-        {
-            _settings.RepoPaths[local.TfsRepoId!] = local.LocalPath;
-            mapped++;
-        }
-        if (mapped > 0) Save();
-        return mapped;
     }
 }

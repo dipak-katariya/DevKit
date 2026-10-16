@@ -5,7 +5,7 @@ using DevKit.Web.Models;
 namespace DevKit.Web.Services;
 
 /// <summary>
-/// Branch Delete's TFS work: list the chosen repositories' branches, find the work items that link
+/// Branch Cleanup's TFS work: list the chosen repositories' branches, find the work items that link
 /// them, and delete the ones picked. The rules that decide what may be deleted live in
 /// <see cref="BranchCleanupClassifier"/>, and deletion applies them again rather than trusting the page.
 /// </summary>
@@ -21,12 +21,15 @@ public sealed class BranchCleanupService
 
     private readonly TfsApiService _tfs;
     private readonly BranchCacheService _branchCache;
+    private readonly SettingsService _settings;
     private readonly ILogger<BranchCleanupService> _logger;
 
-    public BranchCleanupService(TfsApiService tfs, BranchCacheService branchCache, ILogger<BranchCleanupService> logger)
+    public BranchCleanupService(
+        TfsApiService tfs, BranchCacheService branchCache, SettingsService settings, ILogger<BranchCleanupService> logger)
     {
         _tfs = tfs;
         _branchCache = branchCache;
+        _settings = settings;
         _logger = logger;
     }
 
@@ -73,41 +76,83 @@ public sealed class BranchCleanupService
     }
 
     /// <summary>
-    /// Deletes the rows in batches per repository. A protected row is refused here as well, so a stale page
-    /// can never delete what the rules keep. Branch pickers are refreshed for every repository touched.
+    /// Deletes the rows in batches per repository. A row locked at load is refused unsent. Just before a
+    /// repository's batches, its active pull requests and its Settings branches are read again and the
+    /// load's rule is applied to them, so a branch that became protected since the load is refused unsent
+    /// too and its row locked with the reason. Branch pickers are refreshed for every repository touched.
     /// </summary>
     public async Task<List<BranchDeleteOutcome>> DeleteAsync(
         IReadOnlyCollection<BranchCleanupRow> rows, IProgress<BranchCleanupProgress>? progress, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(rows);
-        var outcomes = rows.Where(r => !r.CanDelete)
-            .Select(r => new BranchDeleteOutcome(r.Repo.Id, r.Repo.Name, r.Branch, false, $"Not deleted — {r.ProtectedReason}."))
-            .ToList();
+        var outcomes = rows.Where(r => !r.CanDelete).Select(Refused).ToList();
 
         var deletable = rows.Where(r => r.CanDelete).ToList();
         var done = 0;
         _logger.LogInformation("Branch cleanup delete started: {Count} branches in {Repos} repositories",
             deletable.Count, deletable.Select(r => r.Repo.Id).Distinct(StringComparer.OrdinalIgnoreCase).Count());
-        progress?.Report(new BranchCleanupProgress(DeleteStage, 0, deletable.Count));
+        Advance(0);
 
         foreach (var byRepo in deletable.GroupBy(r => r.Repo.Id, StringComparer.OrdinalIgnoreCase))
         {
-            var repo = byRepo.First().Repo;
-            var deletedHere = 0;
-            foreach (var batch in byRepo.Chunk(DeleteBatchSize))
-            {
-                var answered = await DeleteBatchAsync(repo, batch, ct);
-                outcomes.AddRange(answered);
-                deletedHere += answered.Count(o => o.Deleted);
-                done += batch.Length;
-                progress?.Report(new BranchCleanupProgress(DeleteStage, done, deletable.Count));
-            }
-
-            if (deletedHere > 0) _branchCache.Invalidate(repo.Id);
-            _logger.LogInformation("Deleted {Deleted} of {Requested} branches in {Repo}", deletedHere, byRepo.Count(), repo.Name);
+            outcomes.AddRange(await DeleteInRepositoryAsync(byRepo.First().Repo, byRepo.ToList(), Advance, ct));
         }
         return outcomes;
+
+        void Advance(int answered)
+        {
+            done += answered;
+            progress?.Report(new BranchCleanupProgress(DeleteStage, done, deletable.Count));
+        }
     }
+
+    private async Task<List<BranchDeleteOutcome>> DeleteInRepositoryAsync(
+        TfsRepo repo, IReadOnlyList<BranchCleanupRow> rows, Action<int> advance, CancellationToken ct)
+    {
+        var protection = await CurrentProtectionAsync(repo, ct);
+        foreach (var row in rows)
+        {
+            row.ProtectedReason = protection(row.Branch);
+        }
+
+        var outcomes = rows.Where(r => !r.CanDelete).Select(Refused).ToList();
+        if (outcomes.Count > 0)
+        {
+            _logger.LogInformation("Refused {Count} branches in {Repo} that are protected now", outcomes.Count, repo.Name);
+            advance(outcomes.Count);
+        }
+
+        var deletedHere = 0;
+        foreach (var batch in rows.Where(r => r.CanDelete).Chunk(DeleteBatchSize))
+        {
+            var answered = await DeleteBatchAsync(repo, batch, ct);
+            outcomes.AddRange(answered);
+            deletedHere += answered.Count(o => o.Deleted);
+            advance(batch.Length);
+        }
+
+        if (deletedHere > 0)
+        {
+            _branchCache.Invalidate(repo.Id);
+        }
+        _logger.LogInformation("Deleted {Deleted} of {Requested} branches in {Repo}", deletedHere, rows.Count, repo.Name);
+        return outcomes;
+    }
+
+    /// <summary>
+    /// The rule the load applied, run on what TFS and Settings say now: another tab may have made a branch a
+    /// QA or merging branch, and a pull request may have been opened since the page was loaded.
+    /// </summary>
+    private async Task<Func<string, string?>> CurrentProtectionAsync(TfsRepo repo, CancellationToken ct)
+    {
+        var configured = BranchCleanupClassifier.ConfiguredSet(
+            BranchCleanupClassifier.ConfiguredNames(_settings.GetRepoBranches(repo.Id)));
+        var (openPrBranches, _) = await ReadOpenPullRequestBranchesAsync(repo, ct);
+        return branch => BranchCleanupClassifier.ProtectedReason(branch, configured, openPrBranches);
+    }
+
+    private static BranchDeleteOutcome Refused(BranchCleanupRow row) =>
+        new(row.Repo.Id, row.Repo.Name, row.Branch, false, $"Not deleted: {row.ProtectedReason}.");
 
     private async Task<List<RepoBranches>> ListRepositoriesAsync(
         IReadOnlyList<TfsRepo> repos, BranchCleanupResult result, IProgress<BranchCleanupProgress>? progress, CancellationToken ct)
@@ -130,11 +175,11 @@ public sealed class BranchCleanupService
     private async Task<RepoBranches> ListRepositoryAsync(TfsRepo repo, CancellationToken ct)
     {
         var refsRead = TryReadAsync(() => _tfs.ListBranchRefsAsync(repo, ct), "branches", repo, ct);
-        var prsRead = TryReadAsync(() => _tfs.GetActivePullRequestBranchesAsync(repo, ct), "open pull requests", repo, ct);
+        var prsRead = ReadOpenPullRequestBranchesAsync(repo, ct);
         await Task.WhenAll(refsRead, prsRead);
 
         var (listing, listError) = await refsRead;
-        var (openPrBranches, prError) = await prsRead;
+        var (openPrBranches, prWarning) = await prsRead;
 
         var warnings = new List<string>();
         if (listing == null)
@@ -143,11 +188,37 @@ public sealed class BranchCleanupService
             return new RepoBranches(repo, Array.Empty<TfsRef>(), null, warnings);
         }
         if (listing.Truncated)
+        {
             warnings.Add($"{repo.Name}: only the first {listing.Refs.Count} branches were listed.");
-        if (openPrBranches == null)
-            warnings.Add($"{repo.Name}: open pull requests could not be read ({prError}), so every branch here is locked.");
+        }
+        if (prWarning != null)
+        {
+            warnings.Add(prWarning);
+        }
 
         return new RepoBranches(repo, listing.Refs, openPrBranches, warnings);
+    }
+
+    /// <summary>
+    /// The branches the repository's active pull requests use, or null with the reason when they are not all
+    /// known (the read failed, or there were more active pull requests than are read), so every branch is kept.
+    /// </summary>
+    private async Task<(IReadOnlySet<string>? Branches, string? Warning)> ReadOpenPullRequestBranchesAsync(
+        TfsRepo repo, CancellationToken ct)
+    {
+        var (read, error) = await TryReadAsync(() => _tfs.GetActivePullRequestBranchesAsync(repo, ct), "open pull requests", repo, ct);
+        if (read == null)
+        {
+            return (null, $"{repo.Name}: open pull requests could not be read ({error}), so every branch here is locked.");
+        }
+        if (read.Truncated)
+        {
+            _logger.LogWarning("Read {Max} active pull requests in {Repo} without reaching the last, so every branch in it is kept",
+                TfsApiService.MaxActivePullRequests, repo.Name);
+            return (null,
+                $"{repo.Name}: only the first {TfsApiService.MaxActivePullRequests} active pull requests were read, so every branch here is locked.");
+        }
+        return (read.Branches, null);
     }
 
     private async Task<List<WorkItemBranches>> LoadSprintWorkItemsAsync(
@@ -173,8 +244,8 @@ public sealed class BranchCleanupService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogWarning(ex, "Delete request for {Count} branches in {Repo} failed", refs.Count, repo.Name);
-            return refs.Select(r => new BranchDeleteOutcome(repo.Id, repo.Name, r.Name, false, $"Not deleted — {ex.Message}")).ToList();
+            _logger.LogError(ex, "Delete request for {Count} branches in {Repo} failed", refs.Count, repo.Name);
+            return refs.Select(r => new BranchDeleteOutcome(repo.Id, repo.Name, r.Name, false, $"Not deleted: {ex.Message}")).ToList();
         }
     }
 
@@ -188,18 +259,18 @@ public sealed class BranchCleanupService
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
-            _logger.LogWarning(ex, "Branch cleanup could not read {What} for {Repo}", what, repo.Name);
+            _logger.LogError(ex, "Branch cleanup could not read {What} for {Repo}", what, repo.Name);
             return (null, ex.Message);
         }
     }
 }
 
-/// <summary>One repository's branches and the branches its open pull requests come from (null when unknown).</summary>
+/// <summary>One repository's branches and the branches its open pull requests merge from or into (null when not all are known).</summary>
 public sealed record RepoBranches(
     TfsRepo Repo, IReadOnlyList<TfsRef> Refs, IReadOnlySet<string>? OpenPrBranches, IReadOnlyList<string> Warnings);
 
 /// <summary>
-/// The rules of Branch Delete, free of TFS calls so each one is pinned by a test: which branches must be
+/// The rules of Branch Cleanup, free of TFS calls so each one is pinned by a test: which branches must be
 /// kept, which a work item links, and which carry the team prefix but are linked by nothing.
 /// </summary>
 public static class BranchCleanupClassifier
@@ -228,9 +299,8 @@ public static class BranchCleanupClassifier
         var rows = new List<BranchCleanupRow>();
         foreach (var repo in repos)
         {
-            var configured = query.ConfiguredBranchesByRepoId.TryGetValue(repo.Repo.Id, out var names)
-                ? names.Where(n => !string.IsNullOrWhiteSpace(n)).Select(GitRefName.Strip).ToHashSet(StringComparer.OrdinalIgnoreCase)
-                : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var configured = ConfiguredSet(
+                query.ConfiguredBranchesByRepoId.TryGetValue(repo.Repo.Id, out var names) ? names : Array.Empty<string>());
 
             foreach (var branch in repo.Refs)
             {
@@ -250,6 +320,17 @@ public static class BranchCleanupClassifier
         }
         return rows;
     }
+
+    /// <summary>The QA and merging branches Settings holds for one repository, blanks left out.</summary>
+    public static IReadOnlyList<string> ConfiguredNames(RepoBranchDefaults branches)
+    {
+        ArgumentNullException.ThrowIfNull(branches);
+        return new[] { branches.QaBranch, branches.MergingBranch }.Where(name => !string.IsNullOrWhiteSpace(name)).ToList();
+    }
+
+    /// <summary>Configured branch names the way <see cref="ProtectedReason"/> compares them: no refs/heads/, any case.</summary>
+    public static HashSet<string> ConfiguredSet(IEnumerable<string> names) =>
+        names.Where(n => !string.IsNullOrWhiteSpace(n)).Select(GitRefName.Strip).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Why a branch must be kept, or null when it may be deleted.</summary>
     public static string? ProtectedReason(string branch, IReadOnlySet<string> configured, IReadOnlySet<string>? openPrBranches)
@@ -281,7 +362,7 @@ public static class BranchCleanupClassifier
     }
 
     /// <summary>
-    /// Work items named by team branches that nothing has linked yet — their links still have to be read
+    /// Work items named by team branches that nothing has linked yet. Their links still have to be read
     /// before any of those branches can be called unattached. Ids already read are not asked for twice.
     /// </summary>
     public static List<int> UncheckedWorkItemIds(IEnumerable<BranchCleanupRow> rows, IEnumerable<WorkItemBranches> alreadyRead)

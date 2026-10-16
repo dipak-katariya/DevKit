@@ -18,9 +18,9 @@ public partial class BranchDelete : IDisposable
 
     private enum LinkFilter { All, Linked, Unattached }
 
-    private List<TfsArea> areas => PageState.TfsData.Areas;
-    private List<TfsIteration> iterations => PageState.TfsData.Iterations;
-    private List<TfsRepo> repos => PageState.TfsData.Repos;
+    private IReadOnlyList<TfsArea> areas => PageState.TfsData.Areas;
+    private IReadOnlyList<TfsIteration> iterations => PageState.TfsData.Iterations;
+    private IReadOnlyList<TfsRepo> repos => PageState.TfsData.Repos;
 
     private TfsArea? selectedArea;
     private readonly HashSet<string> selectedSprints = new(StringComparer.OrdinalIgnoreCase);
@@ -42,6 +42,12 @@ public partial class BranchDelete : IDisposable
     private string? error;
     private CancellationTokenSource? cts;
 
+    // Kept apart from the load and delete errors, which would otherwise wipe it on the next load.
+    private string? metadataError;
+
+    // Closing the page ends its wait for the shared metadata; that load goes on for the next page.
+    private readonly PageLifetime page = new();
+
     // Worked out once per load or delete rather than on every render of a grid that can hold thousands of rows.
     private int SprintCount { get; set; }
     private int LinkedCount { get; set; }
@@ -57,7 +63,7 @@ public partial class BranchDelete : IDisposable
     private bool CanDelete => selectedKeys.Count > 0 && !Busy;
     private int DeletedCount => deleteLog.Count(o => o.Deleted);
 
-    private List<TfsRepo> AvailableRepos => selectedArea == null
+    private IReadOnlyList<TfsRepo> AvailableRepos => selectedArea == null
         ? repos
         : repos.Where(r => string.Equals(r.Project, selectedArea.Project, StringComparison.OrdinalIgnoreCase)).ToList();
 
@@ -70,7 +76,12 @@ public partial class BranchDelete : IDisposable
         teamName = Settings.TeamName;
         if (!Settings.IsConfigured) return;
 
-        await EnsureTfsDataAsync();
+        var load = await PageState.TfsData.EnsureLoadedAsync(page.Token);
+        if (load.Cancelled)
+        {
+            return;
+        }
+        metadataError = load.ErrorMessage;
         selectedArea = AreaSprintSelect.Restore(Settings.DefaultAreaPath, areas);
 
         // No sprint is pre-selected: the default sprint is the current one, and cleaning that up is the
@@ -78,27 +89,6 @@ public partial class BranchDelete : IDisposable
         var defaultRepo = Settings.DefaultRepoId;
         if (!string.IsNullOrEmpty(defaultRepo) && AvailableRepos.Any(r => r.Id == defaultRepo))
             selectedRepoIds.Add(defaultRepo);
-    }
-
-    private async Task EnsureTfsDataAsync()
-    {
-        if (PageState.TfsData.IsLoaded) return;
-        try
-        {
-            PageState.TfsData.Projects = await TfsApi.GetProjectsAsync();
-            PageState.TfsData.Repos = await TfsApi.GetRepositoriesAsync();
-            foreach (var p in PageState.TfsData.Projects)
-            {
-                PageState.TfsData.Areas.AddRange(await TfsApi.GetAreasAsync(p.Name));
-                PageState.TfsData.Iterations.AddRange(await TfsApi.GetIterationsAsync(p.Name));
-            }
-            PageState.TfsData.IsLoaded = true;
-        }
-        catch (Exception ex)
-        {
-            Logger.LogWarning(ex, "Branch Delete could not load the TFS projects and repositories");
-            error = $"Could not load projects and repositories: {ex.Message}";
-        }
     }
 
     // ═══ SELECTION ═══
@@ -128,7 +118,7 @@ public partial class BranchDelete : IDisposable
         if (ids.Count > MaxSelectableRepos)
         {
             foreach (var extra in ids.Skip(MaxSelectableRepos).ToList()) ids.Remove(extra);
-            error = $"At most {MaxSelectableRepos} repositories can be loaded at once — the selection was trimmed.";
+            error = $"At most {MaxSelectableRepos} repositories can be loaded at once. The selection was trimmed.";
         }
         MarkStale();
     }
@@ -181,12 +171,12 @@ public partial class BranchDelete : IDisposable
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            Logger.LogDebug("Branch Delete load was superseded or the page was left");
+            Logger.LogDebug("Branch Cleanup load was superseded or the page was left");
         }
         catch (Exception ex)
         {
-            Logger.LogWarning(ex, "Branch Delete load failed");
-            error = $"Load failed: {ex.Message}";
+            Logger.LogError(ex, "Branch Cleanup load failed for {Repos} repositories", query.Repos.Count);
+            error = $"Load failed: {TfsErrors.Describe(ex)}";
         }
         finally
         {
@@ -199,17 +189,11 @@ public partial class BranchDelete : IDisposable
         }
     }
 
-    /// <summary>The QA and merging branches Settings holds for each selected repository — kept whatever they are called.</summary>
+    /// <summary>The QA and merging branches Settings holds for each selected repository, kept whatever they are called.</summary>
     private Dictionary<string, IReadOnlyList<string>> ConfiguredBranches() =>
         selectedRepoIds.ToDictionary(
             id => id,
-            id =>
-            {
-                var branches = Settings.GetRepoBranches(id);
-                return (IReadOnlyList<string>)new[] { branches.QaBranch, branches.MergingBranch }
-                    .Where(name => !string.IsNullOrWhiteSpace(name))
-                    .ToList();
-            },
+            id => BranchCleanupClassifier.ConfiguredNames(Settings.GetRepoBranches(id)),
             StringComparer.OrdinalIgnoreCase);
 
     private void OnProgress(BranchCleanupProgress update)
@@ -317,17 +301,19 @@ public partial class BranchDelete : IDisposable
                 .ToHashSet(StringComparer.Ordinal);
             result.Rows.RemoveAll(r => deleted.Contains(r.Key));
             selectedKeys.ExceptWith(deleted);
+            // Delete locks a row it found protected since the load; a locked row cannot stay selected.
+            selectedKeys.ExceptWith(rows.Where(r => !r.CanDelete).Select(r => r.Key));
             RefreshStats();
             Refilter();
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            Logger.LogDebug("Branch Delete was interrupted because the page was left");
+            Logger.LogDebug("Branch Cleanup delete was interrupted because the page was left");
         }
         catch (Exception ex)
         {
-            Logger.LogWarning(ex, "Branch Delete failed");
-            error = $"Delete failed: {ex.Message}";
+            Logger.LogError(ex, "Branch Cleanup delete failed for {Count} branches", rows.Count);
+            error = $"Delete failed: {TfsErrors.Describe(ex)}";
         }
         finally
         {
@@ -346,8 +332,12 @@ public partial class BranchDelete : IDisposable
         !row.CanDelete ? "bdel-row-locked" : selectedKeys.Contains(row.Key) ? "selected" : "";
 
     private static string UnattachedHint(BranchCleanupRow row) => row.Parsed != null
-        ? $"Named after work item #{row.Parsed.WorkItemId}, which does not link it (or no longer exists), and no work item in the selected sprints links it either."
+        ? $"Named after work item #{row.Parsed.WorkItemId}, which does not link it or no longer exists. No work item in the selected sprints links it either."
         : "Carries the team prefix but no work item id, and no work item in the selected sprints links it.";
 
-    public void Dispose() => CancelAndDispose(ref cts);
+    public void Dispose()
+    {
+        CancelAndDispose(ref cts);
+        page.Dispose();
+    }
 }

@@ -1,5 +1,5 @@
-using System.Net;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using DevKit.Web.Models;
 
 namespace DevKit.Web.Services;
@@ -44,7 +44,7 @@ public static class PrArtifactLink
 
 /// <summary>
 /// Parses the branch artifact links TFS attaches to a work item, which is how a work item
-/// records the branches created for it — including ones created outside this tool.
+/// records the branches created for it, including ones created outside this tool.
 /// </summary>
 public static class GitRefArtifactLink
 {
@@ -71,7 +71,7 @@ public static class GitRefArtifactLink
         // slash to split on. Unescaping once then recovers them.
         if (!tail.Contains('/')) tail = Uri.UnescapeDataString(tail);
 
-        // Limit of 3 keeps the whole remainder — separators included — as the ref segment, so a
+        // Limit of 3 keeps the whole remainder (separators included) as the ref segment, so a
         // branch name written with literal slashes survives intact.
         var parts = tail.Split('/', 3);
         if (parts.Length < 3) return null;
@@ -107,9 +107,59 @@ public static class GitRefName
 }
 
 /// <summary>
-/// A repository's branches, paged through the x-ms-continuationtoken response header under the shared
-/// TFS gate. One request for every ref timed out on repositories holding tens of thousands of them.
-/// The page cap keeps a pathological repository from hanging the page; hitting it is reported.
+/// The branches the merging sheet uses for a repository that has none saved in Settings. The merging target is the
+/// newest release branch by version (release/cp-26.5.10 is newer than release/cp-26.5.9), the QA branch is main, and
+/// each falls back to main, then to the repository's own default branch.
+/// </summary>
+public static partial class MergingBranchDefaults
+{
+    private const string ReleasePrefix = "release/";
+    private const string MainBranch = "main";
+
+    /// <summary>The merging target to start on: the newest release branch, else main, else the repository's default.</summary>
+    public static string MergingTarget(IReadOnlyCollection<string> branches, string? repoDefaultBranch) =>
+        NewestRelease(branches) ?? QaBranch(branches, repoDefaultBranch);
+
+    /// <summary>The QA branch to start on: main, else the repository's default branch; empty when the list has neither.</summary>
+    public static string QaBranch(IReadOnlyCollection<string> branches, string? repoDefaultBranch) =>
+        Find(branches, MainBranch) ?? Find(branches, repoDefaultBranch) ?? "";
+
+    /// <summary>
+    /// The release branch with the highest version, or null when no release branch ends in one. When two share the
+    /// version (release/APP_26.4.1.2 and release/CG/APP_26.4.1.2), the one directly under release/ is taken.
+    /// </summary>
+    public static string? NewestRelease(IEnumerable<string> branches) => branches
+        .Where(b => b.StartsWith(ReleasePrefix, StringComparison.OrdinalIgnoreCase))
+        .Select(b => (Branch: b, Version: VersionOf(b)))
+        .Where(x => x.Version is not null)
+        .OrderByDescending(x => x.Version)
+        .ThenBy(x => x.Branch.Count(c => c == '/'))
+        .ThenBy(x => x.Branch, StringComparer.OrdinalIgnoreCase)
+        .Select(x => x.Branch)
+        .FirstOrDefault();
+
+    private static Version? VersionOf(string branch)
+    {
+        var match = TrailingVersion().Match(branch);
+        return match.Success && Version.TryParse(match.Groups[1].Value, out var version) ? version : null;
+    }
+
+    /// <summary>The version a release branch ends with, such as 26.5.2 in release/cp-26.5.2.</summary>
+    [GeneratedRegex(@"(\d+(?:\.\d+){1,3})$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
+    private static partial Regex TrailingVersion();
+
+    /// <summary>The branch as the list spells it, so the picker shows it selected.</summary>
+    private static string? Find(IEnumerable<string> branches, string? wanted) =>
+        string.IsNullOrWhiteSpace(wanted)
+            ? null
+            : branches.FirstOrDefault(b => string.Equals(b, GitRefName.Strip(wanted), StringComparison.OrdinalIgnoreCase));
+}
+
+/// <summary>
+/// A repository's branches, paged through the x-ms-continuationtoken response header; each page waits its
+/// turn at the shared TFS gate in the transport. One request for every ref timed out on repositories
+/// holding tens of thousands of them. The page cap keeps a pathological repository from hanging the page;
+/// hitting it is reported.
 /// </summary>
 public static class GitRefListing
 {
@@ -118,7 +168,7 @@ public static class GitRefListing
 
     public sealed record Result(List<TfsRef> Refs, bool Truncated);
 
-    /// <summary>Throws on a failed page — the caller decides whether a partial answer is acceptable.</summary>
+    /// <summary>Throws on a failed page; the caller decides whether a partial answer is acceptable.</summary>
     public static async Task<Result> ListBranchesAsync(TfsRequestClient req, TfsRepo repo, CancellationToken ct)
     {
         var refs = new List<TfsRef>();
@@ -129,7 +179,7 @@ public static class GitRefListing
                 $"git/repositories/{Uri.EscapeDataString(repo.Id)}/refs?filter=heads&$top={PageSize}&api-version={req.Ver}" +
                 (token is null ? "" : $"&continuationToken={Uri.EscapeDataString(token)}"));
 
-            var (data, next) = await TfsThrottle.RunAsync(() => req.GetJsonPagedAsync(url, ct), ct);
+            var (data, next) = await req.GetJsonPagedAsync(url, ct);
             foreach (var entry in TfsJson.Values(data))
                 if (ParseRef(entry) is { } parsed) refs.Add(parsed);
 
@@ -155,22 +205,31 @@ public static class GitRefListing
 
 /// <summary>
 /// Reads TFS's answer to a ref update. TFS replies 200 even when it refuses a ref and reports on each
-/// one separately, so a branch counts as deleted only when its own entry says so.
+/// one separately, so a branch counts as created or deleted only when its own entry says so.
 /// </summary>
 public static class GitRefUpdate
 {
     private const string Succeeded = "succeeded";
     private const string AlreadyGone = "succeededNonExistentRef";
+    private const string NotCreated = "Branch not created: ";
+    private const string NotConfirmed = "TFS did not confirm the branch.";
+
+    private static readonly Dictionary<string, string> CreateRefusals = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["refNameConflict"] = "a branch with that name already exists.",
+        ["createBranchPermissionRequired"] = "your token may not create branches in this repository.",
+        ["rejectedByPolicy"] = "a branch policy rejected it."
+    };
 
     private static readonly Dictionary<string, string> Explanations = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["staleOldObjectId"] = "Not deleted — someone pushed to it since it was loaded. Reload and review it again.",
-        ["locked"] = "Not deleted — the branch is locked.",
-        ["forcePushRequired"] = "Not deleted — deleting branches in this repository needs the Force push permission.",
-        ["writePermissionRequired"] = "Not deleted — you do not have permission to change this repository.",
-        ["rejectedByPolicy"] = "Not deleted — a branch policy protects it.",
-        ["rejectedByPlugin"] = "Not deleted — a server plug-in rejected the change.",
-        [AlreadyGone] = "Already gone — the branch no longer existed."
+        ["staleOldObjectId"] = "Not deleted: someone pushed to it since it was loaded. Reload and review it again.",
+        ["locked"] = "Not deleted: the branch is locked.",
+        ["forcePushRequired"] = "Not deleted: deleting branches in this repository needs the Force push permission.",
+        ["writePermissionRequired"] = "Not deleted: you do not have permission to change this repository.",
+        ["rejectedByPolicy"] = "Not deleted: a branch policy protects it.",
+        ["rejectedByPlugin"] = "Not deleted: a server plug-in rejected the change.",
+        [AlreadyGone] = "Already gone: the branch no longer existed."
     };
 
     /// <summary>One outcome per requested branch, in request order; a branch TFS did not mention is not deleted.</summary>
@@ -186,23 +245,87 @@ public static class GitRefUpdate
         return requested
             .Select(r => answers.TryGetValue(r.Name, out var entry)
                 ? Describe(repo, r.Name, entry)
-                : new BranchDeleteOutcome(repo.Id, repo.Name, r.Name, false, "Not deleted — TFS did not report on this branch."))
+                : new BranchDeleteOutcome(repo.Id, repo.Name, r.Name, false, "Not deleted: TFS did not report on this branch."))
             .ToList();
     }
 
+    /// <summary>
+    /// Throws <see cref="TfsResponseException"/>, worded for the page, unless the reply's own entry for
+    /// <paramref name="branch"/> says it was created. A missing entry or an unreadable reply is no
+    /// confirmation either.
+    /// </summary>
+    public static void ConfirmCreated(string branch, JsonElement response)
+    {
+        if (EntryFor(branch, response) is not { } entry)
+        {
+            throw new TfsResponseException(NotCreated + NotConfirmed);
+        }
+
+        var status = TfsJson.Str(entry, "updateStatus");
+        if (Confirms(SaysSuccess(entry), status))
+        {
+            return;
+        }
+
+        var reason = CreateReason(status);
+        var custom = TfsJson.Str(entry, "customMessage");
+        throw new TfsResponseException(NotCreated + (custom.Length == 0 ? reason : $"{reason} TFS says: {custom}"));
+    }
+
+    private static JsonElement? EntryFor(string branch, JsonElement response)
+    {
+        if (response.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+        return TfsJson.Values(response)
+            .Where(e => e.ValueKind == JsonValueKind.Object && GitRefName.Matches(TfsJson.Str(e, "name"), branch))
+            .Select(e => (JsonElement?)e)
+            .FirstOrDefault();
+    }
+
+    private static string CreateReason(string status)
+    {
+        if (CreateRefusals.TryGetValue(status, out var known))
+        {
+            return known;
+        }
+        return status.Length == 0 ? NotConfirmed : $"TFS did not confirm the branch (it answered \"{status}\").";
+    }
+
+    private static bool SaysSuccess(JsonElement entry) =>
+        entry.TryGetProperty("success", out var flag) && flag.ValueKind == JsonValueKind.True;
+
+    /// <summary>Success with no status or "succeeded"; any other status leaves the outcome in doubt.</summary>
+    private static bool Confirms(bool success, string status) =>
+        success && (status.Length == 0 || status.Equals(Succeeded, StringComparison.OrdinalIgnoreCase));
+
     private static BranchDeleteOutcome Describe(TfsRepo repo, string branch, JsonElement entry)
     {
-        var success = entry.TryGetProperty("success", out var flag) && flag.ValueKind == JsonValueKind.True;
+        var success = SaysSuccess(entry);
         var status = TfsJson.Str(entry, "updateStatus");
 
-        if (success && (status.Length == 0 || status.Equals(Succeeded, StringComparison.OrdinalIgnoreCase)))
+        if (Confirms(success, status))
+        {
             return new BranchDeleteOutcome(repo.Id, repo.Name, branch, true, "Deleted");
+        }
 
-        var custom = TfsJson.Str(entry, "customMessage");
-        var message = Explanations.TryGetValue(status, out var known) ? known
-            : custom.Length > 0 ? $"Not deleted — {custom}"
-            : $"Not deleted — TFS answered \"{(status.Length > 0 ? status : "failed")}\".";
+        var message = Explanations.TryGetValue(status, out var known)
+            ? known
+            : Unexplained(TfsJson.Str(entry, "customMessage"), status);
         return new BranchDeleteOutcome(repo.Id, repo.Name, branch, success, message);
+    }
+
+    /// <summary>A refusal DevKit has no wording for: TFS's own message, or else the status TFS answered.</summary>
+    private static string Unexplained(string custom, string status)
+    {
+        if (custom.Length > 0)
+        {
+            return $"Not deleted: {custom}";
+        }
+
+        var answer = status.Length > 0 ? status : "failed";
+        return $"Not deleted: TFS answered \"{answer}\".";
     }
 }
 
@@ -220,65 +343,39 @@ public static class CancellationSources
     }
 }
 
-/// <summary>A TFS reply not shaped the way the API documents it, so nothing read from it can be trusted.</summary>
-public sealed class TfsResponseException : Exception
+/// <summary>
+/// How long a page or panel is open. The TFS reads it starts take <see cref="Token"/>, so closing it stops them;
+/// a write started by a click takes <see cref="CancellationToken.None"/> instead, so leaving cannot cut it in half.
+/// The token stays readable after <see cref="Dispose"/>, unlike a disposed source's, because a read already
+/// running finishes its awaits after the page has gone.
+/// </summary>
+public sealed class PageLifetime : IDisposable
 {
-    public TfsResponseException(string message) : base(message)
+    private readonly CancellationTokenSource _source = new();
+    private int _closed;
+
+    public PageLifetime()
     {
+        Token = _source.Token;
     }
-}
 
-/// <summary>
-/// What a failed TFS call means for the person looking at the page: what to do about it, never a stack
-/// trace or a parser's internals. The full exception still goes to the log.
-/// </summary>
-public static class TfsErrors
-{
-    private const int FirstServerError = 500;
+    /// <summary>Cancelled once the page closes.</summary>
+    public CancellationToken Token { get; }
 
-    public static string Describe(Exception ex) => ex switch
+    /// <summary>
+    /// A token source for one operation of the page, cancelled when the page closes or when the operation is
+    /// superseded. Already cancelled when the page has closed.
+    /// </summary>
+    public CancellationTokenSource CreateLinked() => CancellationTokenSource.CreateLinkedTokenSource(Token);
+
+    /// <summary>Closes the page: every read holding the token is cancelled. Later calls do nothing.</summary>
+    public void Dispose()
     {
-        HttpRequestException { StatusCode: HttpStatusCode.Unauthorized } =>
-            "TFS refused the request (401) — check the personal access token in Settings.",
-        HttpRequestException { StatusCode: HttpStatusCode.Forbidden } =>
-            "TFS says this token may not read it (403) — check the token's permissions.",
-        HttpRequestException { StatusCode: HttpStatusCode.NotFound } =>
-            "TFS could not find it (404) — it may have been deleted or renamed.",
-        HttpRequestException { StatusCode: { } code } when (int)code >= FirstServerError =>
-            $"TFS failed on its side ({(int)code}) — try again in a moment.",
-        // Any other status carries TFS's own explanation, which is worth showing as it is.
-        HttpRequestException { StatusCode: not null } => ex.Message,
-        HttpRequestException => "Couldn't reach TFS — check the server address and the network.",
-        // Callers only describe cancellations they did not ask for, so any left here are timeouts.
-        OperationCanceledException or TimeoutException => "TFS took too long to answer — try again.",
-        TfsResponseException => ex.Message,
-        JsonException => "TFS sent a reply DevKit couldn't read.",
-        _ => "Something unexpected went wrong — the DevKit log has the details."
-    };
-}
-
-/// <summary>
-/// Process-wide cap on concurrent TFS calls — the code merging sheet, and the Insight Hub's
-/// parallel team and work-item reads. Static, not per request: TFS throttles aggressively and a
-/// large sprint would otherwise open hundreds of parallel calls. A second user loading a page
-/// shares the same slots by design.
-/// </summary>
-public static class TfsThrottle
-{
-    private const int MaxParallelRequests = 5;
-
-    private static readonly SemaphoreSlim Gate = new(MaxParallelRequests, MaxParallelRequests);
-
-    public static async Task<T> RunAsync<T>(Func<Task<T>> work, CancellationToken ct = default)
-    {
-        await Gate.WaitAsync(ct);
-        try
+        if (Interlocked.Exchange(ref _closed, 1) == 1)
         {
-            return await work();
+            return;
         }
-        finally
-        {
-            Gate.Release();
-        }
+        _source.Cancel();
+        _source.Dispose();
     }
 }

@@ -1,0 +1,215 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>DevKit Phase 3 Plan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: the same audit ledger as Phases 1 and 2. Themes as numbered decisions, then the task table the work follows. */
+:root{
+  --bg:#f4f6f5; --panel:#ffffff; --fg:#1b2321; --muted:#5b6763; --line:#d6dedb; --soft:#e9eeec;
+  --accent:#1d6b66; --accent-soft:#dcefed; --ok:#2c7a4b; --ok-soft:#ddf1e4; --warn:#9a6413; --warn-soft:#f8ecd6; --bad:#b42318; --bad-soft:#fbe3e0;
+  --display:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,"Cascadia Code",Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#111614; --panel:#171e1c; --fg:#e3eae7; --muted:#95a39e; --line:#2b3633; --soft:#1e2725; --accent:#5bb8b0; --accent-soft:#183331;
+  --ok:#62c48d; --ok-soft:#173326; --warn:#e2a948; --warn-soft:#3a2d14; --bad:#f07a6f; --bad-soft:#3d1c19; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#111614; --panel:#171e1c; --fg:#e3eae7; --muted:#95a39e; --line:#2b3633; --soft:#1e2725; --accent:#5bb8b0; --accent-soft:#183331;
+  --ok:#62c48d; --ok-soft:#173326; --warn:#e2a948; --warn-soft:#3a2d14; --bad:#f07a6f; --bad-soft:#3d1c19; color-scheme:dark }
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:15px;line-height:1.55;margin:0;padding-inline:16px;padding-block:28px 64px}
+.page{max-width:1180px;margin:0 auto;display:grid;grid-template-columns:200px minmax(0,1fr);gap:40px}
+@media (max-width:980px){.page{grid-template-columns:minmax(0,1fr)} .toc{display:none}}
+.toc{position:sticky;top:calc(env(safe-area-inset-top,0px) + 20px);align-self:start;font-size:13px;display:flex;flex-direction:column;gap:2px}
+.toc a{color:var(--muted);text-decoration:none;padding:4px 8px;border-radius:6px}
+.toc a:hover,.toc a:focus-visible{background:var(--soft);color:var(--fg);outline:none}
+.toc b{font-family:var(--display);font-weight:600;letter-spacing:.06em;text-transform:uppercase;font-size:11px;color:var(--muted);padding:4px 8px 8px}
+main{min-width:0;display:flex;flex-direction:column;gap:44px}
+header{display:flex;flex-direction:column;gap:10px;border-bottom:1px solid var(--line);padding-bottom:24px}
+.eyebrow{font-family:var(--mono);font-size:12px;color:var(--muted)}
+h1{font-family:var(--display);font-weight:600;font-size:34px;line-height:1.1;margin:0;text-wrap:balance}
+h2{font-family:var(--display);font-weight:600;font-size:23px;margin:0 0 4px;text-wrap:balance}
+h3{font-family:var(--display);font-weight:600;font-size:17px;margin:0}
+p{margin:0;max-width:78ch}
+.lede{color:var(--muted);max-width:78ch}
+section{display:flex;flex-direction:column;gap:14px;scroll-margin-top:20px}
+code{font-family:var(--mono);font-size:.86em}
+.status{display:inline-flex;align-items:center;gap:8px;align-self:flex-start;font-size:13px;font-weight:600;color:var(--ok);background:var(--ok-soft);border-radius:999px;padding:4px 12px}
+.status::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--ok)}
+.theme{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;display:grid;grid-template-columns:46px minmax(0,1fr);gap:4px 14px}
+.theme .num{font-family:var(--display);font-weight:600;font-size:30px;color:var(--accent);line-height:1}
+.theme dl{grid-column:2;display:grid;grid-template-columns:150px minmax(0,1fr);gap:6px 12px;margin:8px 0 0;font-size:14px}
+.theme dt{color:var(--muted);font-size:12.5px;padding-top:2px}
+.theme dd{margin:0;min-width:0}
+@media (max-width:620px){.theme{grid-template-columns:minmax(0,1fr)} .theme dl{grid-column:1;grid-template-columns:minmax(0,1fr)}}
+pre{margin:0;font-family:var(--mono);font-size:12.5px;line-height:1.5;overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.box{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th{background:var(--soft);text-align:left;font-weight:600;font-size:12px;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td.id{font-family:var(--mono);white-space:nowrap;color:var(--muted)}
+.tag{display:inline-block;font-size:11px;font-weight:600;padding:1px 8px;border-radius:999px;background:var(--soft);color:var(--muted);white-space:nowrap}
+.tag.now{background:var(--accent-soft);color:var(--accent)} .tag.High{background:var(--bad-soft);color:var(--bad)} .tag.Medium{background:var(--warn-soft);color:var(--warn)} .tag.Low{background:var(--ok-soft);color:var(--ok)}
+ul.plain{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;max-width:92ch}
+footer{color:var(--muted);font-size:12.5px;border-top:1px solid var(--line);padding-top:14px}
+</style>
+
+<div class="page">
+  <nav class="toc" aria-label="Sections">
+    <b>Phases 3 and 4</b>
+    <a href="#decisions">Your decisions</a>
+    <a href="#themes">Root-cause themes</a>
+    <a href="#architecture">Target architecture</a>
+    <a href="#notfixing">Not fixing now</a>
+    <a href="#plan">Task plan</a>
+    <a href="#quickwins">Quick wins</a>
+    <a href="#rollback">Rollback</a>
+    <a href="#open">Still open</a>
+  </nav>
+  <main>
+    <header>
+      <div class="eyebrow">DevKit · base f9bc06f · work branch fix/devkit-hardening (local, not pushed) · 4 Oct 2026</div>
+      <h1>Phase 3: improvement strategy, and the plan in progress</h1>
+      <p class="lede">You approved fast-tracking the "act now" fixes, removing Merge Tool and all local-git code, resolving the three Phase 2 risks and implementing the three top opportunities. This page records the strategy those changes follow, the task plan, what is deliberately left out, and what still needs your decision.</p>
+      <span class="status">Approved: implementation under way</span>
+    </header>
+
+    <section id="decisions">
+      <h2>Your decisions this round</h2>
+      <ul class="plain">
+        <li><b>Fast-track</b> the exposure fixes ahead of the full safety net. Each still gets tests pinning today's behaviour first, and its own commit.</li>
+        <li><b>Remove Merge Tool entirely</b>, together with every piece of code that runs <code>git.exe</code> on your machine: the cherry-pick service, the local-clone scan and mapping in Settings, and their settings keys. Git features will be designed again in a later phase. Features that use TFS's own Git API over REST stay: Code Merging Sheet, Branch Creator, Branch Delete.</li>
+        <li><b>Resolve the three Phase 2 risks</b>: wrong data written to shared systems; PAT exposure and settings loss; organisation-specific values blocking an open-source release.</li>
+        <li><b>Implement the three top opportunities</b>: one shared TFS transport, tests and a CI gate before fixes, and a per-user secure settings store with organisation values moved out of code.</li>
+      </ul>
+    </section>
+
+    <section id="themes">
+      <h2>Root-cause themes</h2>
+      <p class="lede">Five causes behind most of the 84 findings and 119 confirmed or plausible bugs. Each has a measurable target.</p>
+
+      <div class="theme"><div class="num">1</div><div><h3>A trust model that does not match the machine</h3>
+        <p>DevKit assumes one person on a private machine. It actually runs on a shared Remote Desktop server, with no login, the PAT in the page, and settings in a folder other users can modify.</p></div>
+        <dl><dt>Explains</dt><dd>B001, B002, SEC-01, SEC-02, SEC-12, B110, B113, B114, B116, B112, ARC-12</dd>
+        <dt>Direction</dt><dd>Loopback only plus a per-user session cookie obtained through a one-time launch link. Host and Origin checks. The PAT never sent to the browser. Settings in an owner-only per-user folder, written atomically with a backup, and the PAT encrypted with the server URL as extra DPAPI entropy.</dd>
+        <dt>Trade-off</dt><dd>Opening DevKit now needs its launch link once per browser profile. The settings file moves, with an automatic one-time migration.</dd>
+        <dt>Done when</dt><dd>A request without the session cookie gets 401; a foreign Host gets 400; /settings HTML contains no PAT; killing a save leaves a readable file or a recoverable backup; tests prove each.</dd></dl></div>
+
+      <div class="theme"><div class="num">2</div><div><h3>No safety net and no quality gate</h3>
+        <p>Every TFS, git and settings write was at 0% coverage. The test project isn't in the solution, and there is no CI or analyzer, so nothing stops regressions.</p></div>
+        <dl><dt>Explains</dt><dd>TST-01 to TST-04, TST-15, TST-17, DX-01 to DX-03, MET-01 to MET-06</dd>
+        <dt>Direction</dt><dd>Characterization tests with recording fakes before each change. One solution that builds and tests everything. A Windows CI job: build with warnings as errors, test with coverage, a guard against company names and committed settings files. SonarAnalyzer reports on every build, and rules are tightened by ratchet.</dd>
+        <dt>Trade-off</dt><dd>Sonar starts non-blocking: making all of its rules blocking at once would mean hundreds of unrelated edits.</dd>
+        <dt>Done when</dt><dd>Every write path has a test; changed code is at 80% line coverage or more; CI is green on the branch.</dd></dl></div>
+
+      <div class="theme"><div class="num">3</div><div><h3>No shared TFS transport, and failures that look like success</h3>
+        <p>Four services each build their own request client. Each call site decides on its own about throttling, cancellation, paging, errors and logging, and many catch-all blocks turn failures into empty results.</p></div>
+        <dl><dt>Explains</dt><dd>ARC-05, ARC-06, ARC-07, ARC-10, CQ-05, CQ-06, CQ-12, DX-05, SEC-11, B030, B033, B051, B075, B103, B104</dd>
+        <dt>Direction</dt><dd>One DI-registered transport with a delegating handler for the shared gate, timeouts, structured request logging (never the PAT) and consistent error text. Cancellation is passed through, failures are reported, and the UI shows <code>TfsErrors.Describe</code> instead of raw exception text.</dd>
+        <dt>Trade-off</dt><dd>Touches every service; done behind the write-payload characterization tests so request shapes stay identical.</dd>
+        <dt>Done when</dt><dd>Zero call sites create their own client; zero ungated requests; zero raw <code>ex.Message</code> in the UI; payload tests unchanged.</dd></dl></div>
+
+      <div class="theme"><div class="num">4</div><div><h3>Logic and state inside pages, copied between pages</h3>
+        <p>Six pages each copy the shared metadata loader, and the copies have drifted (B074). Badge rules, area/sprint rules and click-outside handling are copied too. Verification state has several writers and no run id.</p></div>
+        <dl><dt>Explains</dt><dd>ARC-04, ARC-09, ARC-13, ARC-14, CQ-01 to CQ-04, B036, B037, B040, B074, B078</dd>
+        <dt>Direction</dt><dd>Move shared plumbing into named services and components: one metadata loader, one set of badge rules, one click-outside lifecycle. Give verification writes a bundle generation so a stale run cannot overwrite a newer one.</dd>
+        <dt>Trade-off</dt><dd>Some badge colours change where the copies had drifted; one rule set wins.</dd>
+        <dt>Done when</dt><dd>One copy of each; the B036, B037 and B040 tests pass with the fixed behaviour.</dd></dl></div>
+
+      <div class="theme"><div class="num">5</div><div><h3>Built for one organisation</h3>
+        <p>Company names, a custom TFS field, team areas and a repository-specific branch are hard-coded. Fixtures use real names, and there is no LICENSE.</p></div>
+        <dl><dt>Explains</dt><dd>ARC-23, SEC-10</dd>
+        <dt>Direction</dt><dd>An Organization section in settings: hidden areas, the task execution-type field, revised-estimate fields. Your own settings keep today's values, and the code ships neutral defaults. Neutral test fixtures, and a CI guard so the names cannot come back.</dd>
+        <dt>Trade-off</dt><dd>Until your settings hold the organisation values, task creation would stop setting the custom field and hidden areas would reappear. Your own settings are filled before you switch over.</dd>
+        <dt>Done when</dt><dd>Zero tracked lines contain the company name or internal host; behaviour on your server unchanged.</dd></dl></div>
+    </section>
+
+    <section id="architecture">
+      <h2>Target architecture</h2>
+      <p class="lede">One folder per feature, plus shared code named after what it does. Shared code is extracted only where two or more features use it. This round puts new shared code where it belongs; moving the existing files into this layout is a separate, move-only change (not this round).</p>
+      <pre>DevKit.Web/
+  Features/
+    CodeMerging/        sheet page, rows, insights strip, verification, unlinked search
+    CodeCompare/        compare engine, git object reader, line diff
+    BranchCreator/      page, naming
+    BranchDelete/       page, cleanup classifier and service
+    InsightHub/         capacity, burndown, size check, task creation, audits
+    Workday/  Markdown/ small single-page tools
+    Settings/           page, settings store, organisation profile
+  Tfs/                  transport, handler, JSON readers, errors, paging   (used by every feature)
+  Security/             local session authentication, host and origin checks, secret protection
+  Shell/                layout, navigation, command search, shared controls
+DevKit.Tests/           mirrors the same folders</pre>
+    </section>
+
+    <section id="notfixing">
+      <h2>What we are not fixing now, and why</h2>
+      <ul class="plain">
+        <li><b>Moving every file into the folder layout above.</b> It is pure churn while behaviour is changing; it follows as a move-only commit once these fixes are in.</li>
+        <li><b>Splitting all 109 extra public types into their own files.</b> It conflicts with your rule against small fragment files (Q2, still open). Applied only where a file is being changed anyway.</li>
+        <li><b>bUnit component tests.</b> They need a new package download. Decision logic is moved into services instead, where plain unit tests reach it.</li>
+        <li><b>Rewriting git history and choosing a LICENSE.</b> Both are your call: a history rewrite changes every commit id and needs a force-push; the licence is a legal choice.</li>
+        <li><b>The meaning of "Merged" (B028, B056) and the by-design items B024 and B125.</b> These need your decision; behaviour stays as it is until then.</li>
+        <li><b>Generalising the Task Creation catalog</b> (task names, execution types). It is your delivery process rather than a company name; scope question still open.</li>
+        <li><b>The Sonar warning backlog</b> beyond the touched files, and low-severity cosmetic bugs (for example B083 sidebar on narrow screens, B086 focus target, B098 SVG culture). Logged in the Phase 2 report, scheduled after this round.</li>
+        <li><b>The hosted multi-user login</b> in <code>docs/analysis/hosted-login-analysis.md</code>. A separate track; this round only secures the local mode.</li>
+      </ul>
+    </section>
+
+    <section id="plan">
+      <h2>Task plan</h2>
+      <p class="lede">Rows tagged "this round" are being implemented now, in this order, each as its own commit with tests. The rest is the backlog for after your review.</p>
+      <div class="box"><table>
+        <thead><tr><th>ID</th><th>Task</th><th>Effort</th><th>Risk</th><th>Depends on</th><th>Verification</th><th></th></tr></thead>
+        <tbody>
+          <tr><td class="id">M0-1</td><td>Characterization tests: TFS write payloads, organisation-specific lines, settings persistence, branch listing, verification state, Branch Delete safety</td><td>M</td><td><span class="tag Low">Low</span></td><td>none</td><td>All pass on unmodified code, then on every later commit</td><td><span class="tag now">this round</span></td></tr>
+          <tr><td class="id">M0-2</td><td>One solution with both projects, root SDK pin, test command in README, scripts that return failure codes</td><td>S</td><td><span class="tag Low">Low</span></td><td>none</td><td><code>dotnet test DevKit.sln</code> runs every test</td><td><span class="tag now">this round</span></td></tr>
+          <tr><td class="id">M0-3</td><td>CI workflow: build warnings-as-errors, tests with coverage, company-name and settings-file guard; SonarAnalyzer reporting</td><td>S</td><td><span class="tag Low">Low</span></td><td>M0-2</td><td>Workflow file validated; same commands pass locally</td><td><span class="tag now">this round</span></td></tr>
+          <tr><td class="id">M1-1</td><td>Remove Merge Tool and all local-git code, settings keys, UI, docs and tests</td><td>M</td><td><span class="tag Medium">Medium</span></td><td>M0-1</td><td>Build, full tests, no reference to the removed types, nav and command search updated</td><td><span class="tag now">this round</span></td></tr>
+          <tr><td class="id">M1-2</td><td>Never send the PAT to the browser; Test Connection tests without saving; real error on Save &amp; Connect</td><td>S</td><td><span class="tag Medium">Medium</span></td><td>M0-1</td><td>Test: /settings HTML has no PAT; failed test leaves the stored PAT</td><td><span class="tag now">this round</span></td></tr>
+          <tr><td class="id">M1-3</td><td>Local session authentication (launch link, HttpOnly SameSite=Strict cookie), loopback-only binding, Host and Origin checks</td><td>M</td><td><span class="tag High">High</span></td><td>M1-2</td><td>Tests: no cookie 401, foreign Host 400, foreign Origin on /_blazor 403, launch link sets cookie; live check on a spare port</td><td><span class="tag now">this round</span></td></tr>
+          <tr><td class="id">M1-4</td><td>Settings store: per-user owner-only folder with migration, atomic write and backup, recovery from a bad file, no PAT loss on decrypt failure, PAT bound to server URL, one lock, save result surfaced</td><td>L</td><td><span class="tag High">High</span></td><td>M0-1, M1-1</td><td>Settings tests updated deliberately (B112, B113, B114, B116 now fixed); kill-during-save test</td><td><span class="tag now">this round</span></td></tr>
+          <tr><td class="id">M2-1</td><td>Shared TFS transport via DI with gate, timeout, structured logging; services stop creating their own client; UI errors through TfsErrors</td><td>L</td><td><span class="tag Medium">Medium</span></td><td>M0-1</td><td>Payload tests unchanged; zero ungated sites; zero raw <code>ex.Message</code> in the UI</td><td><span class="tag now">this round</span></td></tr>
+          <tr><td class="id">M2-2</td><td>Organisation values into settings; neutral UI text, comments and fixtures; CI guard turned on</td><td>M</td><td><span class="tag Medium">Medium</span></td><td>M1-4</td><td>Organisation tests: configured values give today's behaviour; guard finds zero hits</td><td><span class="tag now">this round</span></td></tr>
+          <tr><td class="id">M2-3</td><td>Risk 1 fixes: Branch Delete re-checks protection and PR targets at delete time (B022, B023); Size Check Enter saves the typed value (B092); verification reset and stale-run guards (B036, B037, B040, ARC-09); discovery failures shown (B033)</td><td>M</td><td><span class="tag Medium">Medium</span></td><td>M0-1</td><td>The pinning tests flip to the fixed behaviour; new regression tests</td><td><span class="tag now">this round</span></td></tr>
+          <tr><td class="id">M2-4</td><td>Shared page plumbing: one metadata loader (fixes B074), one badge rule set, one click-outside lifecycle (fixes B078)</td><td>M</td><td><span class="tag Medium">Medium</span></td><td>M2-1</td><td>Unit tests for the loader and badge rules; pages build and render</td><td><span class="tag now">this round</span></td></tr>
+          <tr><td class="id">M2-5</td><td>Move files into the feature-folder layout (move only)</td><td>L</td><td><span class="tag Low">Low</span></td><td>M2-4</td><td>Build and tests unchanged; no logic diff</td><td>backlog</td></tr>
+          <tr><td class="id">M2-6</td><td>Remaining High bugs from Phase 2 triage (B064, B103, B112 follow-ups and others) and the Medium list</td><td>L</td><td><span class="tag Medium">Medium</span></td><td>M2-1</td><td>Per bug: reproduction test first</td><td>backlog</td></tr>
+          <tr><td class="id">M3-1</td><td>Contributor guide: architecture, where features live, how fakes and tests work, settings location</td><td>S</td><td><span class="tag Low">Low</span></td><td>M2-5</td><td>A newcomer finds each of five sample features in under two minutes</td><td>backlog</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="quickwins">
+      <h2>Quick wins (high impact, small, no behaviour risk)</h2>
+      <ul class="plain">
+        <li>Put the test project in the solution and document the test command (M0-2).</li>
+        <li>Neutral placeholders and sidebar text (part of M2-2).</li>
+        <li>Dispose the Workday timer and the process handles (CQ-09).</li>
+        <li>Unit tests for the pure audit and capacity functions (TST-15).</li>
+      </ul>
+    </section>
+
+    <section id="rollback">
+      <h2>Rollback</h2>
+      <p>Every task is one commit on <code>fix/devkit-hardening</code>, starting from <code>f9bc06f</code>. To undo one task: <code>git revert &lt;commit&gt;</code>. To drop the whole round: <code>git switch new_ui_v1</code>, which leaves the work branch untouched. The commit list with ids is added to this page as work lands.</p>
+    </section>
+
+    <section id="open">
+      <h2>Still open for you</h2>
+      <ul class="plain">
+        <li>What "Merged" should mean when a PR is still active or unchecked, and when QA reverted a PR (B028, B056).</li>
+        <li>Git history: rewrite (changes every commit id) or publish a fresh repository. Which LICENSE.</li>
+        <li>Whether the Task Creation catalog and the tag names count as organisation-specific.</li>
+        <li>Which size and structure rules win (Q2), and a SonarQube server and token if you want server-side analysis on top of the build analyzer.</li>
+      </ul>
+    </section>
+
+    <footer>No uzera tools or commands were used. Reports for Phases 1 and 2 are separate pages.</footer>
+  </main>
+</div>
+
+</body></html>

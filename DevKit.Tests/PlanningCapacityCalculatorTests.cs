@@ -6,11 +6,11 @@ namespace DevKit.Tests;
 
 /// <summary>
 /// The capacity formula decides how every member's sprint is judged, so it is pinned against
-/// the figures the team already sees — the screenshot of the tab and the sprint Excel sheet.
+/// the figures the team already sees: the screenshot of the tab and the sprint Excel sheet.
 /// </summary>
 public partial class PlanningCapacityCalculatorTests
 {
-    // Monday 14 – Friday 25 September 2026: a two-week, ten-working-day sprint.
+    // Monday 14 to Friday 25 September 2026: a two-week, ten-working-day sprint.
     private static readonly DateTime SprintStart = new(2026, 9, 14);
     private static readonly DateTime SprintFinish = new(2026, 9, 25);
     private static readonly DateTime AfterSprint = new(2026, 9, 28);
@@ -188,7 +188,7 @@ public partial class PlanningCapacityCalculatorTests
     {
         const string who = "A";
         var saturday = new DateTime(2026, 9, 19);
-        var sixDay = new CapacityPlanningSettings { WorkingDays = { DayOfWeek.Saturday } };   // added to Mon–Fri
+        var sixDay = new CapacityPlanningSettings { WorkingDays = { DayOfWeek.Saturday } };   // added to Monday to Friday
         var data = Data(new[] { Task(who, 10) }, Capacity((who, 8, new[] { Off(saturday) })));
 
         var fiveDayRow = Only(Build(data));
@@ -196,7 +196,7 @@ public partial class PlanningCapacityCalculatorTests
 
         Assert.Equal(10, fiveDayRow.SprintDays);
         Assert.Equal(0, fiveDayRow.LeaveDays);       // Saturday is not a working day
-        Assert.Equal(11, sixDayRow.SprintDays);      // 14–25 Sep contains one Saturday
+        Assert.Equal(11, sixDayRow.SprintDays);      // 14 to 25 Sep contains one Saturday
         Assert.Equal(1, sixDayRow.LeaveDays);
     }
 

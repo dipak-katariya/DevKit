@@ -1,4 +1,4 @@
-// DevKit — resilient Blazor circuit startup.
+// DevKit: Blazor circuit startup that survives dropped connections.
 //
 // The stock reconnection policy retries a handful of times over a few seconds and then
 // parks the tab on "Connection lost", which is why a window left open would stop responding
@@ -80,7 +80,7 @@
             if (!up) sawServerDown = true;
 
             // While the server still answers, the circuit is merely resuming and the retry
-            // policy will rejoin on its own — showing the overlay here would be a false alarm.
+            // policy will rejoin on its own. Showing the overlay here would be a false alarm.
             setModalState(up ? null : 'components-reconnect-show');
             probeTimer = setTimeout(evaluate, PROBE_INTERVAL_MS);
         });

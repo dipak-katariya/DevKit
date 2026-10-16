@@ -1,0 +1,11 @@
+<Project>
+  <!--
+    Shared by every project; DevKit.Web/Directory.Build.props imports it. SonarAnalyzer runs only when asked:
+    dotnet build DevKit.sln -p:DevKitSonarAnalyzer=true. A normal build therefore stays free of packages, and
+    the warnings-as-errors build in CI measures the compiler alone while Sonar reports on its own.
+  -->
+  <ItemGroup Condition="'$(DevKitSonarAnalyzer)' == 'true'">
+    <PackageReference Include="SonarAnalyzer.CSharp" Version="10.13.0.120203" PrivateAssets="all"
+                      IncludeAssets="runtime; build; native; contentfiles; analyzers; buildtransitive" />
+  </ItemGroup>
+</Project>

@@ -8,7 +8,7 @@
     <Trigger>
         <button type="button" class="cm-bsetup-head @(Expanded && Rows.Count > 0 ? "open" : "")" @onclick="Toggle"
                 disabled="@(Rows.Count == 0)" aria-expanded="@(Expanded && Rows.Count > 0 ? "true" : "false")"
-                title="@(Rows.Count == 0 ? "Select at least one repository" : $"Verified against: {TargetsText} — click to change the branches")">
+                title="@(Rows.Count == 0 ? "Select at least one repository" : $"Verified against: {TargetsText}. Click to change the branches.")">
             <Icon Inner="@Icons.GitBranch" />
             <span class="cm-bsetup-sum">
                 @if (Rows.Count == 0)
@@ -28,7 +28,7 @@
             }
             @if (AnyChanged)
             {
-                <span class="cm-bsetup-dot" title="Edited in this session — not saved as the defaults"></span>
+                <span class="cm-bsetup-dot" title="Edited in this session. Not saved as the defaults."></span>
             }
             <span class="gdd-arrow">▾</span>
         </button>
@@ -44,18 +44,18 @@
         @foreach (var row in Rows)
         {
             <div class="cm-bsetup-grid cm-bsetup-row" @key="row.Repo.Id">
-                <span class="cm-bsetup-repo" title="@($"{row.Repo.Project} — {row.Repo.Name}")">
+                <span class="cm-bsetup-repo" title="@($"{row.Repo.Project} · {row.Repo.Name}")">
                     @row.Repo.Name
                     <em>@row.Repo.Project</em>
                 </span>
                 <BranchPicker Branches="@row.Branches" Value="@row.QaBranch"
                               ValueChanged="@(b => Set(row, qa: true, b))"
                               Disabled="@Loading"
-                              Placeholder="@(Loading ? "loading…" : "— All branches —")" />
+                              Placeholder="@(Loading ? "loading…" : "All branches")" />
                 <BranchPicker Branches="@row.Branches" Value="@row.MergingBranch"
                               ValueChanged="@(b => Set(row, qa: false, b))"
                               Disabled="@Loading"
-                              Placeholder="@(Loading ? "loading…" : "— Select target —")" />
+                              Placeholder="@(Loading ? "loading…" : "Select target")" />
                 <span class="cm-bsetup-tag @(row.MatchesSaved ? "" : "changed")">
                     @(row.MatchesSaved ? "default" : "changed")
                 </span>
@@ -82,13 +82,40 @@
         public string QaBranch { get; set; } = "";
         public string MergingBranch { get; set; } = "";
 
-        /// <summary>What Settings holds, so an edited row can be flagged before it is saved.</summary>
+        /// <summary>What Settings holds, so an edited row can be flagged before it is saved; empty means automatic.</summary>
         public string SavedQaBranch { get; set; } = "";
         public string SavedMergingBranch { get; set; } = "";
 
+        /// <summary>The automatic branches (<see cref="MergingBranchDefaults"/>) once the branch list is known.</summary>
+        public string AutoQaBranch { get; set; } = "";
+        public string AutoMergingBranch { get; set; } = "";
+
+        /// <summary>What the row starts on: the branch saved in Settings, or the automatic one.</summary>
+        public string DefaultQaBranch => SavedQaBranch.Length > 0 ? SavedQaBranch : AutoQaBranch;
+        public string DefaultMergingBranch => SavedMergingBranch.Length > 0 ? SavedMergingBranch : AutoMergingBranch;
+
         public bool MatchesSaved =>
-            string.Equals(QaBranch, SavedQaBranch, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(MergingBranch, SavedMergingBranch, StringComparison.OrdinalIgnoreCase);
+            string.Equals(QaBranch, DefaultQaBranch, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(MergingBranch, DefaultMergingBranch, StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Works out the automatic branches from the loaded list, and starts an empty pick on them. A pick left empty
+        /// on purpose stays empty only until the next list load.
+        /// </summary>
+        public void ApplyAutomaticDefaults()
+        {
+            AutoQaBranch = MergingBranchDefaults.QaBranch(Branches, Repo.DefaultBranch);
+            AutoMergingBranch = MergingBranchDefaults.MergingTarget(Branches, Repo.DefaultBranch);
+            if (QaBranch.Length == 0)
+            {
+                QaBranch = DefaultQaBranch;
+            }
+
+            if (MergingBranch.Length == 0)
+            {
+                MergingBranch = DefaultMergingBranch;
+            }
+        }
     }
 
     [Parameter, EditorRequired] public List<RepoBranchRow> Rows { get; set; } = new();

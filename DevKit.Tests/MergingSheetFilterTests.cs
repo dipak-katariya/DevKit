@@ -66,7 +66,7 @@ public class MergingSheetFilterTests
     [Fact]
     public void Revealed_pull_requests_are_ordered_with_the_rest_not_appended_after_them()
     {
-        // 92598 was raised first, so it leads once it is shown — the table is read chronologically.
+        // 92598 was raised first, so it leads once it is shown: the table is read chronologically.
         var visible = new MergingSheetFilter { ShowAllPrs = true }.VisiblePrs(Row());
 
         Assert.Equal(92598, visible[0].PullRequestId);

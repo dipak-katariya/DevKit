@@ -40,7 +40,7 @@ public sealed class PlanningTagRule
 
     /// <summary>
     /// Hours on work carrying this tag are taken out of the base the AI over-plan percentage is
-    /// applied to — ceremony and support work AI tooling does not speed up.
+    /// applied to: ceremony and support work AI tooling does not speed up.
     /// </summary>
     public bool ExcludeFromOverPlan { get; set; }
 
@@ -49,9 +49,9 @@ public sealed class PlanningTagRule
 
 /// <summary>
 /// Everything the Capacity Planning tab's formula depends on, configured once and persisted.
-/// The defaults reproduce the formula that was previously hard-coded — 40% AI over-plan,
+/// The defaults reproduce the formula that was previously hard-coded (40% AI over-plan,
 /// 8.5 h a day, Monday to Friday, ALM / Team B Support / Engineering Operations &amp; Support
-/// carved out of the over-plan base — so an existing setup reads the same numbers after upgrading.
+/// carved out of the over-plan base), so an existing setup reads the same numbers after upgrading.
 /// </summary>
 public sealed class CapacityPlanningSettings
 {
@@ -63,7 +63,7 @@ public sealed class CapacityPlanningSettings
     private const string DefaultDevDiscipline = "Development";
     private const string DefaultQaDiscipline = "Test";
 
-    // Bounds keep a hand-edited settings file from producing nonsense — or a UI that renders
+    // Bounds keep a hand-edited settings file from producing nonsense, or a UI that renders
     // thousands of chips. They are generous enough never to get in a real team's way.
     public const double MaxOverPlanPercent = 200;
     public const double MaxHoursPerDay = 24;
@@ -110,7 +110,7 @@ public sealed class CapacityPlanningSettings
     /// <summary>Sprint length when <see cref="SprintLength"/> is Fixed, or the iteration has no dates.</summary>
     public int SprintWeeks { get; set; } = DefaultSprintWeeks;
 
-    /// <summary>Weekdays that count as working days — for sprint length and for leave alike.</summary>
+    /// <summary>Weekdays that count as working days, for sprint length and for leave alike.</summary>
     public List<DayOfWeek> WorkingDays { get; set; } = DefaultWorkingDays();
 
     /// <summary>
@@ -202,7 +202,7 @@ public sealed class CapacityPlanningSettings
     private static double Bounded(double value, double min, double max, double fallback) =>
         double.IsFinite(value) ? Math.Clamp(value, min, max) : fallback;
 
-    /// <summary>Defined weekdays only, deduplicated, Monday first; an empty list falls back to Mon–Fri.</summary>
+    /// <summary>Defined weekdays only, deduplicated, Monday first; an empty list falls back to Monday to Friday.</summary>
     private static List<DayOfWeek> NormalizeWorkingDays(IEnumerable<DayOfWeek>? days)
     {
         var valid = (days ?? Enumerable.Empty<DayOfWeek>())
@@ -213,7 +213,7 @@ public sealed class CapacityPlanningSettings
         return valid.Count > 0 ? valid : DefaultWorkingDays();
     }
 
-    /// <summary>Trimmed, non-blank, bounded and unique by tag — the first rule for a tag wins.</summary>
+    /// <summary>Trimmed, non-blank, bounded and unique by tag. The first rule for a tag wins.</summary>
     private static List<PlanningTagRule> NormalizeTagRules(IEnumerable<PlanningTagRule?>? rules)
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

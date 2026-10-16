@@ -10,7 +10,7 @@ namespace DevKit.Tests;
 
 /// <summary>
 /// The commit check's fallback, used when a pull request's commits are not loaded or the branch history
-/// cannot be read. It must ask "is the merge commit reachable from the branch" — not "does it exist",
+/// cannot be read. It must ask "is the merge commit reachable from the branch", not "does it exist",
 /// which a commit search ignoring the branch would answer, reading every pull request as merged.
 /// </summary>
 [Collection(SettingsFileCollection.Name)]

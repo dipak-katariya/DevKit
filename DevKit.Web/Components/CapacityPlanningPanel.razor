@@ -3,7 +3,7 @@
 @inject ILogger<CapacityPlanningPanel> Logger
 @implements IDisposable
 
-@* Capacity Planning tab of the Insight Hub. TFS is read once per Load; every change of mode,
+@* Capacity Planning tab of Sprint Insights. TFS is read once per Load; every change of mode,
    scope, view, tag or setting after that is recomputed in memory from what was loaded. *@
 
 <div class="cfg-bar">
@@ -101,7 +101,7 @@
                     }
                     @if (settings.TagRules.Count == 0)
                     {
-                        <span style="font-size:.64rem;color:var(--muted);">No tag rules — add them under ⚙ Settings.</span>
+                        <span style="font-size:.64rem;color:var(--muted);">No tag rules. Add them under ⚙ Settings.</span>
                     }
                 </div>
                 @if (Summary.Split.Total > 0)
@@ -160,22 +160,22 @@
             <div class="cp-formula-body">
                 <div><span>Sprint days</span><code>@SprintDaysExplanation</code></div>
                 <div><span>Leave</span><code>member days off + team days off, on working days inside the sprint</code></div>
-                <div><span>Actual</span><code>(sprint days − leave) × capacity per day — @CapacityPerDayExplanation</code></div>
+                <div><span>Actual</span><code>(sprint days − leave) × capacity per day (@CapacityPerDayExplanation)</code></div>
                 @if (IsAi)
                 {
-                    <div><span>AI hours</span><code>max(0, Actual − carved-out hours) × @OverPlanLabel — carved out: @ExcludedTagsLabel</code></div>
+                    <div><span>AI hours</span><code>max(0, Actual − carved-out hours) × @OverPlanLabel (carved out: @ExcludedTagsLabel)</code></div>
                     <div><span>Target</span><code>Actual + AI hours</code></div>
                 }
                 else
                 {
-                    <div><span>Target</span><code>Actual — Regular mode plans to capacity, so no over-plan is added</code></div>
+                    <div><span>Target</span><code>Actual (Regular mode plans to capacity, so no over-plan is added)</code></div>
                 }
                 <div><span>Planning %</span><code>Planned (revised estimate, else original) ÷ Target</code></div>
-                <div><span>Deliverable %</span><code>Deliverable hours ÷ planned hours — first matching tag rule, else the parent's "@settings.DeliverableMarkerTag" tag</code></div>
-                <div><span>Completed %</span><code>Completed Work on non-bug tasks ÷ planned hours — bug resolution is never counted as progress</code></div>
+                <div><span>Deliverable %</span><code>Deliverable hours ÷ planned hours (first matching tag rule, else the parent's "@settings.DeliverableMarkerTag" tag)</code></div>
+                <div><span>Completed %</span><code>Completed Work on non-bug tasks ÷ planned hours (bug resolution never counts as progress)</code></div>
                 <div><span>Remaining %</span><code>Remaining Work on non-bug tasks ÷ planned hours</code></div>
-                <div><span>Bugs %</span><code>Completed Work on bug work ÷ all Completed Work — bug work is a Bug, a task under a Bug, or a task tagged "@BugWork.MaintenanceTag"</code></div>
-                <div><span>Expected</span><code>available days already elapsed ÷ available days — today counts once it is over; leave comes off both sides</code></div>
+                <div><span>Bugs %</span><code>Completed Work on bug work ÷ all Completed Work. Bug work is a Bug, a task under a Bug, or a task tagged "@BugWork.MaintenanceTag".</code></div>
+                <div><span>Expected</span><code>available days already elapsed ÷ available days. Today counts once it is over; leave comes off both sides.</code></div>
                 <div><span>Teams</span><code>Development = @string.Join(", ", settings.DevDisciplines) · QA = @string.Join(", ", settings.QaDisciplines) · Entire = every discipline</code></div>
             </div>
         </details>
@@ -186,7 +186,7 @@
 {
     <div class="modal-overlay" @onclick="() => breakdown = null">
         <div class="modal" style="max-width:460px;" @onclick:stopPropagation>
-            <h3>Capacity breakdown — @breakdown.DisplayName</h3>
+            <h3>Capacity breakdown · @breakdown.DisplayName</h3>
             <div class="modal-body">
                 <div class="modal-row"><span class="label">Cap / day</span><span>@breakdown.CapacityPerDay.ToString("0.##") h @(breakdown.CapacityFromTfs ? "(TFS)" : "(default)")</span></div>
                 <div class="modal-row"><span class="label">Sprint days</span><span>@breakdown.SprintDays − @breakdown.LeaveDays.ToString("0.##") leave = @breakdown.AvailableDays.ToString("0.##")</span></div>
@@ -293,14 +293,14 @@
             Recompute();
             if (work.Tasks.Count == 0) loadError = "No tasks found for this area and sprint.";
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (OperationCanceledException ex) when (ct.IsCancellationRequested)
         {
-            // Superseded by a newer Load, or the tab was left — either way nothing to show.
+            Logger.LogDebug(ex, "Capacity planning load for {Area} / {Sprint} was superseded or the tab was left", area.Path, sprint);
         }
         catch (Exception ex)
         {
-            Logger.LogWarning(ex, "Capacity planning load failed for {Area} / {Sprint}", area.Path, sprint);
-            loadError = $"Load failed: {ex.Message}";
+            Logger.LogError(ex, "Capacity planning load failed for {Area} / {Sprint}", area.Path, sprint);
+            loadError = $"Load failed: {TfsErrors.Describe(ex)}";
         }
         finally
         {
@@ -363,11 +363,27 @@
     {
         get
         {
-            if (work.Tasks.Count == 0 || loading) return null;
-            if (work.Capacity.Members.Count == 0)
+            var capacity = work.Capacity;
+            if (work.Tasks.Count == 0 || loading)
+            {
+                return null;
+            }
+            if (capacity.ReadFailed)
+            {
+                return $"Team capacity could not be read, so everyone uses the default {settings.HoursPerDay:0.##} h a day and personal leave can't be deducted. {capacity.Error}";
+            }
+            if (capacity.TeamsUnread > 0)
+            {
+                return $"{capacity.TeamsUnread} of {capacity.TeamsScanned} teams could not be fully read, so some members use the default {settings.HoursPerDay:0.##} h a day or keep leave that should be deducted.";
+            }
+            if (capacity.Members.Count == 0)
+            {
                 return $"No member capacity is configured in TFS for this sprint, so everyone uses the default {settings.HoursPerDay:0.##} h a day and personal leave can't be deducted.";
+            }
             if (settings.SprintLength == SprintLengthSource.IterationDates && !plan.SprintDaysFromIteration)
-                return $"This iteration has no start/finish dates in TFS, so the sprint is taken as {settings.SprintWeeks} week(s) — {plan.SprintDays} working days, and progress can't be compared with elapsed time.";
+            {
+                return $"This iteration has no start or finish dates in TFS, so the sprint is taken as {settings.SprintWeeks} week(s) ({plan.SprintDays} working days). Progress can't be compared with elapsed time.";
+            }
             return null;
         }
     }
@@ -391,8 +407,8 @@
         {
             var days = string.Join(", ", settings.WorkingDays.Select(d => d.ToString()[..3]));
             if (plan.SprintDaysFromIteration && work.Capacity.Start is { } start && work.Capacity.Finish is { } finish)
-                return $"{plan.SprintDays} — working days ({days}) from {start:dd MMM yyyy} to {finish:dd MMM yyyy}, from the TFS iteration";
-            return $"{plan.SprintDays} — {settings.SprintWeeks} week(s) × {settings.DaysPerWeek} working days ({days})";
+                return $"{plan.SprintDays} working days ({days}) from {start:dd MMM yyyy} to {finish:dd MMM yyyy}, from the TFS iteration";
+            return $"{plan.SprintDays} = {settings.SprintWeeks} week(s) × {settings.DaysPerWeek} working days ({days})";
         }
     }
 
@@ -418,9 +434,9 @@
 
     private string ScopeTitle(PlanningScope s) => s switch
     {
-        PlanningScope.Development => $"Tasks with discipline {string.Join(" / ", settings.DevDisciplines)} — click to show this team",
-        PlanningScope.Qa => $"Tasks with discipline {string.Join(" / ", settings.QaDisciplines)} — click to show this team",
-        _ => "Every task in the sprint — click to show everyone"
+        PlanningScope.Development => $"Tasks with discipline {string.Join(" / ", settings.DevDisciplines)}. Click to show this team.",
+        PlanningScope.Qa => $"Tasks with discipline {string.Join(" / ", settings.QaDisciplines)}. Click to show this team.",
+        _ => "Every task in the sprint. Click to show everyone."
     };
 
     private static string ExpectedSuffix(double? expected) => expected is { } e ? $" · expected {e:0.#}%" : "";

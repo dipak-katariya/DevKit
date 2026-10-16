@@ -5,7 +5,7 @@ using Xunit;
 namespace DevKit.Tests;
 
 /// <summary>
-/// The pinned list and its cap have to agree at all times — a list longer than the cap leaks
+/// The pinned list and its cap have to agree at all times: a list longer than the cap leaks
 /// extra repositories into every picker in the app. These run sequentially within the class,
 /// which matters because SettingsService persists to a single file beside the test assembly.
 /// </summary>

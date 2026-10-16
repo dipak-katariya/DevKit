@@ -10,13 +10,13 @@ public sealed record CodeCompareRequest(
     CodeCompareScope Scope);
 
 /// <summary>
-/// Compares pull requests' code with their repositories' merging branches — the answer to "is this work
+/// Compares pull requests' code with their repositories' merging branches: the answer to "is this work
 /// actually on the release branch" that does not depend on commit SHAs or messages. A cherry-pick under
 /// another message, a squash, or a conflict fixed and committed by hand all read correctly, and code
 /// lost while resolving a conflict reads as missing even when every commit is on the branch.
 ///
 /// A pull request's change is the diff of its merge commit against the QA commit it merged onto. For
-/// each file, the git object ids of four versions — QA before, QA after, the branch now and QA now —
+/// each file, the git object ids of four versions (QA before, QA after, the branch now and QA now)
 /// settle most files without downloading anything; the rest are compared line by line by
 /// <see cref="CodePresenceAnalyzer"/>. Each pull request's <see cref="MergingPullRequest.CodeCheck"/> is
 /// replaced as soon as it finishes, so the sheet fills in while the run continues.
@@ -31,14 +31,20 @@ public sealed partial class CodeCompareService
     private readonly TfsRequestClient _req;
     private readonly ILogger<CodeCompareService> _logger;
 
-    public CodeCompareService(HttpClient http, SettingsService settings, ILogger<CodeCompareService> logger)
+    public CodeCompareService(TfsRequestClient req, ILogger<CodeCompareService> logger)
     {
-        _req = new TfsRequestClient(http, settings);
+        _req = req;
         _logger = logger;
     }
 
+    /// <summary>Over a client of the caller's own, as tests use it; DI only sees the public constructor.</summary>
+    internal CodeCompareService(HttpClient http, SettingsService settings, ILogger<CodeCompareService> logger)
+        : this(new TfsRequestClient(http, settings), logger)
+    {
+    }
+
     /// <summary>
-    /// Compares every pull request in the request. Never throws for a pull request that fails — that
+    /// Compares every pull request in the request. Never throws for a pull request that fails: that
     /// one is marked <see cref="CodeVerdict.Failed"/> and the rest carry on. Cancelling stops the run
     /// and puts back whatever the unfinished pull requests showed before it started.
     /// </summary>
@@ -72,8 +78,8 @@ public sealed partial class CodeCompareService
         }
         catch (Exception ex) when (ct.IsCancellationRequested)
         {
-            // Whatever surfaced after Stop — the cancellation itself, or a TFS error from a request that
-            // was already on its way — the run was stopped, and nothing unfinished may keep a half answer.
+            // Whatever surfaced after Stop (the cancellation itself, or a TFS error from a request that
+            // was already on its way), the run was stopped, and nothing unfinished may keep a half answer.
             stopped = true;
             _logger.LogError(ex, "Code compare {RunId} stopped by the user after {Done} of {Total} pull requests",
                 runId, run.Done, prs.Count);
@@ -127,7 +133,7 @@ public sealed partial class CodeCompareService
                 HunkCount = analysis.HunkCount,
                 HunksPresent = analysis.HunksPresent,
                 Approximate = analysis.Approximate,
-                DetailError = analysis.Problems.Count == 0 ? "There are no changed lines to show — only whitespace differs." : ""
+                DetailError = analysis.Problems.Count == 0 ? "There are no changed lines to show. Only whitespace differs." : ""
             };
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
@@ -140,7 +146,7 @@ public sealed partial class CodeCompareService
 
     /// <summary>
     /// Marks each pull request this run will compare with a marker only this run holds, and adds it to
-    /// <paramref name="work"/> as it goes — so if this throws half-way, the caller still knows which
+    /// <paramref name="work"/> as it goes, so if this throws half-way, the caller still knows which
     /// pull requests to put back.
     /// </summary>
     private static void Prepare(List<MergingPullRequest> prs, CodeCompareRequest request, RunTracker run, List<WorkItem> work)
@@ -200,7 +206,7 @@ public sealed partial class CodeCompareService
         return resolved.ToDictionary(r => r.Key, r => r.Tip);
     }
 
-    /// <summary>The branch's commit, or why it could not be had — the two failures call for different fixes.</summary>
+    /// <summary>The branch's commit, or why it could not be had. The two failures call for different fixes.</summary>
     private async Task<BranchTip> TryBranchTipAsync(GitObjectReader reader, TipKey key, string runId, CancellationToken ct)
     {
         try
@@ -218,7 +224,7 @@ public sealed partial class CodeCompareService
         }
     }
 
-    /// <summary>Puts back what each unfinished pull request showed before — unless something newer replaced this run's marker.</summary>
+    /// <summary>Puts back what each unfinished pull request showed before, unless something newer replaced this run's marker.</summary>
     private static void RestoreUnfinished(List<WorkItem> work, Dictionary<MergingPullRequest, PrCodeCheck?> previous)
     {
         foreach (var item in work)
@@ -332,13 +338,13 @@ public sealed partial class CodeCompareService
         var count = $"Changes more than {limits.MaxFilesPerPullRequest:N0} files";
         return scope switch
         {
-            CodeCompareScope.Sprint => $"{count} — too many for the sprint-wide run. Use Check code on this pull request.",
-            CodeCompareScope.WorkItem => $"{count} — too many for a work item check. Use Check code on this pull request.",
-            _ => $"{count} — too many to compare here. Compare its branches in TFS instead."
+            CodeCompareScope.Sprint => $"{count}, which is too many for the sprint-wide run. Use Check code on this pull request.",
+            CodeCompareScope.WorkItem => $"{count}, which is too many for a work item check. Use Check code on this pull request.",
+            _ => $"{count}, which is too many to compare here. Compare its branches in TFS instead."
         };
     }
 
-    /// <param name="Marker">The in-progress check this run put on the pull request — proof it still owns it.</param>
+    /// <param name="Marker">The in-progress check this run put on the pull request, proof it still owns it.</param>
     private sealed record WorkItem(MergingPullRequest Pr, string Branch, PrCodeCheck Marker);
 
     /// <summary>A branch's commit, or why there is none: the branch does not exist, or TFS could not be read.</summary>

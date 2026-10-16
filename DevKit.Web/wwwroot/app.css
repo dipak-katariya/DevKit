@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════
-   DevKit — Dark SaaS Dashboard
+   DevKit: dark dashboard theme
    Near-black surfaces, ambient purple→red glow, blue accent
    ═══════════════════════════════════════════════════════ */
 
@@ -130,6 +130,10 @@ body>*{position:relative;z-index:1;}
 .tb-btn:hover{background:var(--surface2);color:var(--text);border-color:var(--border2);}
 .tb-spacer{flex:1;}
 .tb-actions{display:flex;align-items:center;gap:8px;flex-shrink:0;}
+/* Shared mode: who is signed in, and the way out for the next person. */
+.tb-user{display:flex;align-items:center;gap:8px;}
+.tb-user-name{font-size:.7rem;color:var(--muted2);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tb-btn.tb-signout{width:auto;padding:0 12px;font:inherit;font-size:.7rem;}
 
 /* ─── COMMAND SEARCH ─── */
 .topbar-search{position:relative;flex:1;max-width:460px;}
@@ -178,4 +182,4 @@ body>*{position:relative;z-index:1;}
 .setup-card p{font-size:.8rem;color:var(--muted2);line-height:1.6;}
 
 /* The rest of the stylesheet is split across components.css, tools.css and merging.css,
-   linked in that order after this file — the cascade depends on it. */
+   linked in that order after this file. The cascade depends on that order. */

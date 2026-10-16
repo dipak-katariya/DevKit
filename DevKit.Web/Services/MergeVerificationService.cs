@@ -7,8 +7,8 @@ namespace DevKit.Web.Services;
 ///
 /// Code often reaches a release branch by cherry-pick rather than by merge, which produces a different
 /// SHA for the same change. The target branch's history is therefore indexed by SHA, by the author's
-/// email and time (kept through a cherry-pick, even a reworded one) and by distinctive messages — see
-/// <see cref="BranchHistoryIndex"/>.
+/// email and time (kept through a cherry-pick, even a reworded one) and by distinctive messages (see
+/// <see cref="BranchHistoryIndex"/>).
 ///
 /// Commits being on a branch does not prove their code is: a conflict resolved by dropping lines leaves
 /// every commit in place. <see cref="CodeCompareService"/> answers that; this check is the fast first pass.
@@ -16,7 +16,7 @@ namespace DevKit.Web.Services;
 /// are read (still-missing commits past it are then asked about directly), and a commit whose only match
 /// is a common message is not counted.
 /// </summary>
-public class MergeVerificationService
+public partial class MergeVerificationService
 {
     private const int TargetBranchCommitWindow = 20_000;
 
@@ -45,10 +45,16 @@ public class MergeVerificationService
     private readonly TfsRequestClient _req;
     private readonly ILogger<MergeVerificationService> _logger;
 
-    public MergeVerificationService(HttpClient http, SettingsService settings, ILogger<MergeVerificationService> logger)
+    public MergeVerificationService(TfsRequestClient req, ILogger<MergeVerificationService> logger)
     {
-        _req = new TfsRequestClient(http, settings);
+        _req = req;
         _logger = logger;
+    }
+
+    /// <summary>Over a client of the caller's own, as tests use it; DI only sees the public constructor.</summary>
+    internal MergeVerificationService(HttpClient http, SettingsService settings, ILogger<MergeVerificationService> logger)
+        : this(new TfsRequestClient(http, settings), logger)
+    {
     }
 
     /// <summary>Most commits looked up one by one after a capped scan, for the accuracy note.</summary>
@@ -60,88 +66,133 @@ public class MergeVerificationService
     /// <summary>
     /// Verifies every completed pull request in the bundle, each against the merging branch
     /// configured for its own repository. Repositories with no branch configured are skipped
-    /// rather than verified against someone else's branch.
+    /// rather than verified against someone else's branch. Sets the sheet-wide scan figures the
+    /// accuracy note quotes.
     /// </summary>
-    public Task VerifyAsync(
+    public async Task VerifyAsync(
         CodeMergingBundle bundle, IReadOnlyDictionary<string, string> mergingBranchByRepoId,
-        DateTime? since = null, CancellationToken ct = default) =>
-        VerifyPullRequestsAsync(bundle, bundle.AllPullRequests, mergingBranchByRepoId, since, ct);
+        DateTime? since = null, CancellationToken ct = default)
+    {
+        var check = new CommitCheck(bundle, bundle.AllPullRequests.ToList(), mergingBranchByRepoId, since);
+        var indexes = await VerifyPullRequestsAsync(check, ct);
+        if (indexes is not null)
+        {
+            bundle.TryWriteResults(check.Generation, () => RecordScanFigures(bundle, indexes));
+        }
+    }
 
     /// <summary>
     /// Re-verifies a single requirement. Lets someone who has just pushed a cherry-pick
-    /// refresh one row instead of re-verifying the whole sprint.
+    /// refresh one row instead of re-verifying the whole sprint. The sheet-wide scan figures stay as
+    /// Verify All set them: they describe that scan, and a row's re-check reads only its own part of
+    /// the history. Written over, they dropped the cap warning and quoted one row's date for the sheet.
     /// </summary>
-    public Task VerifyRequirementAsync(
+    public async Task VerifyRequirementAsync(
         CodeMergingBundle bundle, int workItemId,
         IReadOnlyDictionary<string, string> mergingBranchByRepoId,
         DateTime? since = null, CancellationToken ct = default)
     {
         var row = bundle.Requirements.FirstOrDefault(r => r.WorkItemId == workItemId);
-        return row is null
-            ? Task.CompletedTask
-            : VerifyPullRequestsAsync(bundle, row.PullRequests, mergingBranchByRepoId, since, ct);
+        if (row is not null)
+        {
+            await VerifyPullRequestsAsync(new CommitCheck(bundle, row.PullRequests.ToList(), mergingBranchByRepoId, since), ct);
+        }
     }
 
-    /// <summary>Drops all verification state — commit and code alike — so the Merged column disappears cleanly.</summary>
-    public static void ClearVerification(CodeMergingBundle bundle)
-    {
-        bundle.VerifiedBranchByRepoId.Clear();
-        bundle.LastCodeCompare = null;
-        foreach (var pr in bundle.AllPullRequests)
+    /// <summary>
+    /// Drops all verification state (commit and code alike, scan figures included) from every pull
+    /// request found for every row, whether or not it targeted QA, so the Merged column disappears cleanly.
+    /// It also moves the sheet to a new generation, so a commit check still running writes nothing; a code
+    /// comparison still running cannot either, because its in-progress marker is cleared with the rest.
+    /// </summary>
+    public static void ClearVerification(CodeMergingBundle bundle) =>
+        bundle.AdvanceVerificationGeneration(() =>
         {
-            pr.IsMergedToTargetBranch = null;
-            pr.CodeCheck = null;
-            foreach (var c in pr.Commits)
+            bundle.VerifiedBranchByRepoId.Clear();
+            bundle.LastCodeCompare = null;
+            bundle.ScannedCommitCount = 0;
+            bundle.CommitWindowCapped = false;
+            bundle.ScannedFrom = null;
+            foreach (var pr in bundle.Requirements.SelectMany(r => r.AllPullRequests))
             {
-                c.IsMergedToTargetBranch = null;
-                c.IsRolledBack = false;
-                c.RollbackReason = "";
-                c.MatchKind = CommitMatch.None;
+                ClearPullRequest(pr);
             }
+        });
+
+    private static void ClearPullRequest(MergingPullRequest pr)
+    {
+        pr.IsMergedToTargetBranch = null;
+        pr.CodeCheck = null;
+        foreach (var c in pr.Commits)
+        {
+            c.IsMergedToTargetBranch = null;
+            c.IsRolledBack = false;
+            c.RollbackReason = "";
+            c.MatchKind = CommitMatch.None;
         }
     }
 
-    private async Task VerifyPullRequestsAsync(
-        CodeMergingBundle bundle, IEnumerable<MergingPullRequest> candidates,
-        IReadOnlyDictionary<string, string> mergingBranchByRepoId, DateTime? since, CancellationToken ct)
+    /// <summary>
+    /// Judges the candidates and writes their verdicts in one step, only if the sheet is still at the
+    /// generation the check started in: one reset or replaced meanwhile gets nothing, not even part of a
+    /// verdict. Returns the branch histories read, or null when nothing was checked or written.
+    /// </summary>
+    private async Task<IReadOnlyCollection<BranchHistoryIndex>?> VerifyPullRequestsAsync(CommitCheck check, CancellationToken ct)
     {
-        if (mergingBranchByRepoId.Count == 0)
+        var (bundle, branches) = (check.Bundle, check.Branches);
+        if (branches.Count == 0)
         {
-            return;
+            return null;
         }
 
-        var completed = candidates
-            .Where(p => p.IsCompleted && BranchFor(mergingBranchByRepoId, p.RepositoryId).Length > 0)
+        var completed = check.Candidates
+            .Where(p => p.IsCompleted && BranchFor(branches, p.RepositoryId).Length > 0)
             .Distinct()
             .ToList();
         if (completed.Count == 0)
         {
-            return;
+            return null;
         }
 
-        foreach (var pr in completed)
+        // Written before the first await, so still inside the generation the check started in.
+        foreach (var repoId in completed.Select(pr => pr.RepositoryId))
         {
-            bundle.VerifiedBranchByRepoId[pr.RepositoryId] = BranchFor(mergingBranchByRepoId, pr.RepositoryId);
+            bundle.VerifiedBranchByRepoId[repoId] = BranchFor(branches, repoId);
         }
 
-        var targetKeys = await LoadTargetKeysAsync(completed, mergingBranchByRepoId, since, ct);
-        WarnAboutUnreadHistory(bundle, completed, targetKeys);
+        var targetKeys = await LoadTargetKeysAsync(completed, branches, check.Since, ct);
         MarkSharedMessages(bundle, targetKeys.Values);
-        await Task.WhenAll(completed.Select(pr =>
-            EvaluateAsync(pr, BranchFor(mergingBranchByRepoId, pr.RepositoryId), targetKeys, ct)));
-        await ProbeBeyondWindowAsync(completed, mergingBranchByRepoId, targetKeys, ct);
+        var verdicts = await Task.WhenAll(completed.Select(pr =>
+            EvaluateAsync(pr, BranchFor(branches, pr.RepositoryId), targetKeys, ct)));
+        await ProbeBeyondWindowAsync(verdicts, branches, targetKeys, ct);
 
-        // The note quotes what was actually read, which varies by how much history the branch
-        // has in range — claiming a fixed number would overstate a short branch.
-        bundle.ScannedCommitCount = targetKeys.Values.Count > 0 ? targetKeys.Values.Max(i => i.ScannedCommits) : 0;
-        bundle.CommitWindowCapped = targetKeys.Values.Any(i => i.HitWindowCap);
-        bundle.ScannedFrom = targetKeys.Values.Count > 0
-            ? targetKeys.Values.Where(i => i.ScannedFrom.HasValue).Select(i => i.ScannedFrom!.Value).DefaultIfEmpty().Min()
-            : null;
-        if (bundle.ScannedFrom == default)
+        var written = bundle.TryWriteResults(check.Generation, () =>
         {
-            bundle.ScannedFrom = null;
+            foreach (var verdict in verdicts)
+            {
+                verdict.Write();
+            }
+            WarnAboutUnreadHistory(bundle, completed, targetKeys);
+        });
+        if (!written)
+        {
+            _logger.LogInformation(
+                "Commit check of {PullRequests} pull requests discarded: the sheet was reset or reloaded while it ran",
+                completed.Count);
+            return null;
         }
+        return targetKeys.Values;
+    }
+
+    /// <summary>
+    /// The note quotes what was actually read, which varies by how much history the branch has in
+    /// range. Claiming a fixed number would overstate a short branch.
+    /// </summary>
+    private static void RecordScanFigures(CodeMergingBundle bundle, IReadOnlyCollection<BranchHistoryIndex> indexes)
+    {
+        bundle.ScannedCommitCount = indexes.Count > 0 ? indexes.Max(i => i.ScannedCommits) : 0;
+        bundle.CommitWindowCapped = indexes.Any(i => i.HitWindowCap);
+        bundle.ScannedFrom = indexes.Min(i => i.ScannedFrom);
     }
 
     /// <summary>
@@ -165,7 +216,7 @@ public class MergeVerificationService
     }
 
     /// <summary>
-    /// A message two commits of the sheet share cannot tell them apart, so it is taken out of play —
+    /// A message two commits of the sheet share cannot tell them apart, so it is taken out of play
     /// across the whole sheet, so re-checking one row judges messages the same way the full run does.
     /// </summary>
     private static void MarkSharedMessages(CodeMergingBundle bundle, IEnumerable<BranchHistoryIndex> indexes)
@@ -185,61 +236,6 @@ public class MergeVerificationService
                 index.MarkShared(subject);
             }
         }
-    }
-
-    /// <summary>
-    /// A capped scan cannot see commits merged before its window, which would then read as missing.
-    /// In those repositories each still-missing commit is asked about directly instead.
-    /// </summary>
-    private async Task ProbeBeyondWindowAsync(
-        IReadOnlyList<MergingPullRequest> prs, IReadOnlyDictionary<string, string> branches,
-        IReadOnlyDictionary<string, BranchHistoryIndex> indexes, CancellationToken ct)
-    {
-        var targets = prs
-            .Where(pr => indexes.TryGetValue(pr.RepositoryId, out var index) && index.HitWindowCap)
-            .SelectMany(pr => pr.RequiredCommits
-                .Where(c => c.IsMergedToTargetBranch == false && !c.IsRolledBack)
-                .Select(c => (Pr: pr, Commit: c)))
-            .Take(MaxBeyondWindowProbes)
-            .ToList();
-        if (targets.Count == 0)
-        {
-            return;
-        }
-
-        await Task.WhenAll(targets.Select(async t =>
-        {
-            var onBranch = await DiffBehindCountZeroAsync(t.Pr, t.Commit.CommitId, BranchFor(branches, t.Pr.RepositoryId), ct);
-            if (onBranch == true)
-            {
-                t.Commit.IsMergedToTargetBranch = true;
-                t.Commit.MatchKind = CommitMatch.Sha;
-            }
-        }));
-
-        foreach (var pr in targets.Select(t => t.Pr).Distinct())
-        {
-            RecomputePrState(pr);
-        }
-    }
-
-    /// <summary>Re-derives the pull-request verdict after commits below it changed.</summary>
-    private static void RecomputePrState(MergingPullRequest pr)
-    {
-        if (pr.IsMergedToTargetBranch is null)
-        {
-            return;
-        }
-
-        var required = pr.RequiredCommits.ToList();
-        // No commits loaded means the verdict came from the fallback probe, not from these
-        // commits; an empty All() would otherwise flip it to merged.
-        if (required.Count == 0)
-        {
-            return;
-        }
-
-        pr.IsMergedToTargetBranch = required.All(c => c.IsMergedToTargetBranch == true);
     }
 
     private static string BranchFor(IReadOnlyDictionary<string, string> branches, string repoId) =>
@@ -281,7 +277,7 @@ public class MergeVerificationService
     /// How far back this repository's branch has to be read to be certain about these pull
     /// requests: the earliest commit among them, less a skew allowance. Code cannot reach a
     /// branch before it was written, so everything that could carry this work lies inside that
-    /// range — which is what makes the answer exact rather than "the most recent N commits".
+    /// range, which is what makes the answer exact rather than "the most recent N commits".
     /// Falls back to the sprint floor when no commit carries a date.
     /// </summary>
     private static DateTime? ScanFloor(IEnumerable<MergingPullRequest> prs, DateTime? sprintFloor)
@@ -321,8 +317,8 @@ public class MergeVerificationService
                 }
             }
 
-            // TFS returns newest first; the index needs oldest first so a later revert — or a
-            // revert of that revert — overwrites the earlier verdict rather than losing to it.
+            // TFS returns newest first; the index needs oldest first so a later revert (or a
+            // revert of that revert) overwrites the earlier verdict rather than losing to it.
             var index = new BranchHistoryIndex();
             for (var i = newestFirst.Count - 1; i >= 0; i--)
             {
@@ -355,7 +351,7 @@ public class MergeVerificationService
                 : "") +
             $"&api-version={_req.Ver}");
 
-        var data = await TfsThrottle.RunAsync(() => _req.GetJsonAsync(url, ct), ct);
+        var data = await _req.GetJsonAsync(url, ct);
         return TfsJson.Values(data)
             .Select(c => new BranchCommit(
                 TfsJson.Str(c, "commitId"),
@@ -371,85 +367,15 @@ public class MergeVerificationService
     public static DateTime? LookbackFrom(DateTime? earliestSprintStart) =>
         earliestSprintStart?.Subtract(SprintLookbackBuffer);
 
-    private async Task EvaluateAsync(
-        MergingPullRequest pr, string branch, IReadOnlyDictionary<string, BranchHistoryIndex> targetKeys, CancellationToken ct)
-    {
-        // A pull request that merged into this very branch put its commits there. That is no
-        // longer the whole story — they can have been reverted off it since — so it is used
-        // as the floor for a missing verdict rather than as a shortcut past the check.
-        var mergedIntoThisBranch = GitRefName.Matches(pr.TargetBranch, branch);
-
-        if (pr.Commits.Count == 0 || !targetKeys.TryGetValue(pr.RepositoryId, out var index))
-        {
-            pr.IsMergedToTargetBranch = mergedIntoThisBranch ? true : await FallbackMergedAsync(pr, branch, ct);
-            return;
-        }
-
-        var allRequiredMerged = true;
-        foreach (var c in pr.Commits)
-        {
-            var lookup = index.Classify(c.CommitId, c.Message, BranchHistoryIndex.AuthorKey(c.AuthorEmail, c.AuthorDate));
-            var presence = lookup.Presence;
-
-            // Not finding a commit of a pull request that merged here means it fell out of the
-            // commit window, not that it never landed. Only an actual revert overrides that.
-            if (mergedIntoThisBranch && presence == CommitPresence.Absent)
-            {
-                presence = CommitPresence.Present;
-                lookup = lookup with { Match = CommitMatch.Sha };
-            }
-
-            c.IsMergedToTargetBranch = presence == CommitPresence.Present;
-            c.MatchKind = lookup.Match;
-            c.IsRolledBack = presence == CommitPresence.Reverted;
-            c.RollbackReason = c.IsRolledBack
-                ? $"A revert commit on {branch} undoes this change."
-                : "";
-
-            // Merge-tracking commits can never reach a release branch, so they never block.
-            if (presence != CommitPresence.Present && !c.IsBranchMergeCommit)
-            {
-                allRequiredMerged = false;
-            }
-        }
-        pr.IsMergedToTargetBranch = allRequiredMerged;
-    }
-
-    /// <summary>
-    /// Used when a pull request has no commits loaded, or the repository's branch history could not be
-    /// read: is the merge commit reachable from the branch tip? Asked through the diff's behind count,
-    /// which answers exactly that. A commit search by id and branch is not used: the ids criterion is not
-    /// documented to combine with a branch, and a server that ignores the branch would answer "it exists"
-    /// — reading every pull request as merged.
-    /// </summary>
-    private Task<bool?> FallbackMergedAsync(MergingPullRequest pr, string branch, CancellationToken ct)
-    {
-        var sha = !string.IsNullOrEmpty(pr.LastMergeCommitId) ? pr.LastMergeCommitId : pr.LastMergeSourceCommitId;
-        return string.IsNullOrEmpty(sha)
-            ? Task.FromResult<bool?>(null)
-            : DiffBehindCountZeroAsync(pr, sha, branch, ct);
-    }
-
-    private async Task<bool?> DiffBehindCountZeroAsync(MergingPullRequest pr, string sha, string branch, CancellationToken ct)
-    {
-        var url = _req.ProjectApi(pr.Project,
-            $"git/repositories/{pr.RepositoryId}/diffs/commits?baseVersion={sha}&baseVersionType=commit" +
-            $"&targetVersion={Uri.EscapeDataString(branch)}&targetVersionType=branch&$top=1&api-version={_req.Ver}");
-        try
-        {
-            var data = await TfsThrottle.RunAsync(() => _req.GetJsonAsync(url, ct), ct);
-            // behindCount == 0 means the commit is reachable from the branch tip.
-            return data.TryGetProperty("behindCount", out var behind)
-                   && behind.TryGetInt32(out var count)
-                   && count == 0;
-        }
-        catch (Exception ex) when (!ct.IsCancellationRequested)
-        {
-            _logger.LogError(ex, "Diff probe failed for commit {Sha} of PR {PrId} on {Branch}", sha, pr.PullRequestId, branch);
-            return null;
-        }
-    }
-
     /// <param name="AuthorKey">See <see cref="BranchHistoryIndex.AuthorKey"/>; null when the commit carries no author.</param>
     private sealed record BranchCommit(string Sha, string Message, string? AuthorKey);
+
+    /// <summary>One run of the commit check: the sheet, the pull requests to judge, and what against.</summary>
+    private sealed record CommitCheck(
+        CodeMergingBundle Bundle, IReadOnlyList<MergingPullRequest> Candidates,
+        IReadOnlyDictionary<string, string> Branches, DateTime? Since)
+    {
+        /// <summary>The sheet's generation when the check started; its verdicts are written only while it holds.</summary>
+        public long Generation { get; } = Bundle.VerificationGeneration;
+    }
 }

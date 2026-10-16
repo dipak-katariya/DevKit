@@ -1,4 +1,4 @@
-// DevKit — Markdown rendering: the syntax highlighter and the parser behind it.
+// DevKit Markdown rendering: the syntax highlighter and the parser behind it.
 // Pairs with markdown-viewer.js, which drives the page.
 
 (function () {

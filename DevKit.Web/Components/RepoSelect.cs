@@ -12,12 +12,12 @@ public static class RepoSelect
     public const string MostUsedGroupLabel = "⭐ Most used";
     private const string ProjectGroupPrefix = "\U0001F4C1 ";
 
-    /// <summary>"Project — Name". Unchanged from the per-page lists this replaces.</summary>
-    public static string Label(TfsRepo repo) => $"{repo.Project} — {repo.Name}";
+    /// <summary>"Project · Name", the same format on every page.</summary>
+    public static string Label(TfsRepo repo) => $"{repo.Project} · {repo.Name}";
 
     /// <summary>
     /// A "most used" group first, then one group per project holding everything else. Pinned
-    /// repositories are not repeated in their project group — a value appearing twice would
+    /// repositories are not repeated in their project group: a value appearing twice would
     /// highlight two rows as selected.
     /// </summary>
     public static List<GlassDropdown.DropdownGroup> Groups(IEnumerable<TfsRepo>? repos, IEnumerable<string>? pinnedIds)

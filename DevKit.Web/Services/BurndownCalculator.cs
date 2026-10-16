@@ -63,8 +63,8 @@ public static class BurndownCalculator
     }
 
     /// <summary>
-    /// What the Total is measured against — the sprint's elapsed working days, so the Total is not
-    /// judged on days still to come — and how many the whole sprint holds. Without sprint dates,
+    /// What the Total is measured against (the sprint's elapsed working days, so the Total is not
+    /// judged on days still to come), and how many the whole sprint holds. Without sprint dates,
     /// both are what the columns themselves cover.
     /// </summary>
     private static (int Elapsed, int Sprint) TotalWorkingDays(List<BurndownColumn> columns, BurndownScope window,
@@ -80,7 +80,7 @@ public static class BurndownCalculator
     }
 
     /// <summary>
-    /// Working days of [from, to] that the sprint covers and that have already finished — zero for
+    /// Working days of [from, to] that the sprint covers and that have already finished. Zero for
     /// a period nobody owes this sprint hours in yet, rather than one they are behind on.
     /// </summary>
     private static int WorkingDaysIn(DateTime from, DateTime to, BurndownScope window, IReadOnlySet<DayOfWeek> workingDays)

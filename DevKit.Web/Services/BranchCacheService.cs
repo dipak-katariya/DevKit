@@ -6,7 +6,7 @@ namespace DevKit.Web.Services;
 /// Per-repository branch lists, fetched once and shared for the lifetime of a circuit.
 ///
 /// Three properties matter here. Listings go through <see cref="CodeMergingService"/>, which pages
-/// the refs endpoint behind a process-wide concurrency gate — a repository with tens of thousands
+/// the refs endpoint behind a process-wide concurrency gate. A repository with tens of thousands
 /// of refs would otherwise be one unbounded request that times out. Concurrent callers for the
 /// same repository share a single in-flight task, so re-rendering a picker or opening two of them
 /// cannot stampede TFS. And that shared task is never bound to a caller's cancellation token: one
@@ -18,12 +18,13 @@ public sealed class BranchCacheService : IDisposable
     private static readonly TimeSpan Ttl = TimeSpan.FromMinutes(5);
 
     /// <summary>Ceiling for one listing: well above a normal load, short of hanging a picker forever.</summary>
-    private static readonly TimeSpan FetchTimeout = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan DefaultFetchTimeout = TimeSpan.FromMinutes(2);
 
     private static readonly IReadOnlyList<string> Empty = Array.Empty<string>();
 
     private readonly CodeMergingService _merging;
     private readonly ILogger<BranchCacheService> _logger;
+    private readonly TimeSpan _fetchTimeout;
 
     // Guards _entries only. The critical section creates a task, it never awaits one, so the lock
     // is held for microseconds and no TFS call ever runs under it.
@@ -34,9 +35,16 @@ public sealed class BranchCacheService : IDisposable
     private bool _disposed;
 
     public BranchCacheService(CodeMergingService merging, ILogger<BranchCacheService> logger)
+        : this(merging, logger, DefaultFetchTimeout)
+    {
+    }
+
+    /// <summary>With a ceiling of the caller's own, as tests use it; DI only sees the public constructor.</summary>
+    internal BranchCacheService(CodeMergingService merging, ILogger<BranchCacheService> logger, TimeSpan fetchTimeout)
     {
         _merging = merging;
         _logger = logger;
+        _fetchTimeout = fetchTimeout;
     }
 
     /// <summary>
@@ -97,33 +105,38 @@ public sealed class BranchCacheService : IDisposable
         lock (_sync) { _entries.Remove(repoId); }
     }
 
+    /// <summary>
+    /// One listing under its own ceiling. The listing answers empty when it is cancelled, so an empty answer
+    /// with the attempt cancelled is a cancellation: the circuit closing gives its waiters an empty list,
+    /// and running out of time is reported as a timeout rather than as a repository without branches.
+    /// </summary>
     private async Task<IReadOnlyList<string>> FetchAsync(TfsRepo repo)
     {
         using var attempt = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
-        attempt.CancelAfter(FetchTimeout);
+        attempt.CancelAfter(_fetchTimeout);
 
         var started = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             var branches = await _merging.GetBranchesAsync(new[] { repo }, attempt.Token).ConfigureAwait(false);
+            if (branches.Count == 0)
+            {
+                attempt.Token.ThrowIfCancellationRequested();
+            }
             _logger.LogDebug("Loaded {Count} branches for {Repo} in {Elapsed}ms",
                 branches.Count, repo.Name, started.ElapsedMilliseconds);
             return branches;
         }
-        catch (OperationCanceledException) when (_cts.IsCancellationRequested)
+        catch (OperationCanceledException ex) when (_cts.IsCancellationRequested)
         {
+            _logger.LogDebug(ex, "Branch listing for {Repo} stopped because the circuit closed", repo.Name);
             return Empty;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException ex)
         {
-            _logger.LogWarning("Branch listing for {Repo} exceeded {Seconds}s and was abandoned",
-                repo.Name, FetchTimeout.TotalSeconds);
-            throw new TimeoutException($"Loading branches for \"{repo.Name}\" timed out.");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Branch listing failed for {Repo}", repo.Name);
-            throw;
+            _logger.LogError(ex, "Branch listing for {Repo} exceeded {Seconds}s and was abandoned",
+                repo.Name, _fetchTimeout.TotalSeconds);
+            throw TfsErrors.MarkLogged(new TimeoutException($"Loading branches for \"{repo.Name}\" timed out.", ex));
         }
     }
 

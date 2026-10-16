@@ -12,25 +12,52 @@ public partial class CodeMergingService
 {
     // ═══ PULL REQUEST DISCOVERY ═══
 
+    private const string ReplyWithoutRepository = "TFS sent it without its repository, so it could not be placed.";
+
+    /// <summary>The pull requests prefetched per selected repository, and the repositories whose list failed.</summary>
+    /// <param name="ByRepo">
+    /// Keyed by every selected repository, a failed one included: the keys are what lets a link into a
+    /// repository be read by id when its list did not cover it.
+    /// </param>
+    private sealed record PrefetchedPullRequests(
+        Dictionary<string, List<MergingPullRequest>> ByRepo, List<DiscoveryWarning> Failures);
+
+    /// <summary>One read of a repository's pull requests, or the failure that stopped it.</summary>
+    private readonly record struct RepoPullRequestsRead(List<MergingPullRequest> PullRequests, DiscoveryWarning? Failure);
+
+    /// <summary>A work item's linked pull requests that were found, and the reads that failed on the way.</summary>
+    private sealed record LinkedPullRequests(List<MergingPullRequest> Found, List<DiscoveryWarning> Failures)
+    {
+        public static LinkedPullRequests Failed(DiscoveryWarning failure) =>
+            new(new List<MergingPullRequest>(), new List<DiscoveryWarning> { failure });
+    }
+
+    /// <summary>One link resolved to its pull request, or the failure that stopped the read.</summary>
+    private readonly record struct LinkRead(MergingPullRequest? PullRequest, DiscoveryWarning? Failure);
+
     /// <summary>
-    /// Fetches every candidate pull request per repository once. Matching then happens in
-    /// memory, which is what makes the branch/title fallback affordable — the alternative
-    /// is one API call per requirement per repository.
+    /// Fetches every candidate pull request per repository once, up to <paramref name="top"/> per status.
+    /// Matching then happens in memory, which is what makes the branch/title fallback affordable; the
+    /// alternative is one API call per requirement per repository.
     /// </summary>
-    private async Task<Dictionary<string, List<MergingPullRequest>>> PrefetchPullRequestsAsync(
-        IReadOnlyList<TfsRepo> repos, CancellationToken ct)
+    private async Task<PrefetchedPullRequests> PrefetchPullRequestsAsync(IReadOnlyList<TfsRepo> repos, int top, CancellationToken ct)
     {
         var loaded = await Task.WhenAll(repos.Select(async repo =>
         {
             var perStatus = await Task.WhenAll(
-                PullRequestStatuses.Select(status => FetchRepoPullRequestsAsync(repo, status, PullRequestsPerRepo, ct)));
-            return (repo.Id, Prs: perStatus.SelectMany(x => x).ToList());
+                PullRequestStatuses.Select(status => FetchRepoPullRequestsAsync(repo, status, top, ct)));
+
+            // Both of a repository's lists failing is one problem for the reader, so it is named once.
+            var failure = perStatus.Select(read => read.Failure).FirstOrDefault(f => f is not null);
+            return (repo.Id, Prs: perStatus.SelectMany(read => read.PullRequests).ToList(), Failure: failure);
         }));
 
-        return loaded.ToDictionary(x => x.Id, x => x.Prs, StringComparer.OrdinalIgnoreCase);
+        return new PrefetchedPullRequests(
+            loaded.ToDictionary(x => x.Id, x => x.Prs, StringComparer.OrdinalIgnoreCase),
+            loaded.Select(x => x.Failure).OfType<DiscoveryWarning>().ToList());
     }
 
-    private async Task<List<MergingPullRequest>> FetchRepoPullRequestsAsync(
+    private async Task<RepoPullRequestsRead> FetchRepoPullRequestsAsync(
         TfsRepo repo, string status, int top, CancellationToken ct)
     {
         var url = _req.ProjectApi(repo.Project,
@@ -38,13 +65,15 @@ public partial class CodeMergingService
             $"?searchCriteria.status={status}&$top={top}&api-version={_req.Ver}");
         try
         {
-            var data = await TfsThrottle.RunAsync(() => _req.GetJsonAsync(url, ct), ct);
-            return TfsJson.Values(data).Select(pr => ParsePullRequest(pr, repo)).ToList();
+            var data = await _req.GetJsonAsync(url, ct);
+            return new RepoPullRequestsRead(TfsJson.Values(data).Select(pr => ParsePullRequest(pr, repo)).ToList(), null);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
-            _logger.LogWarning(ex, "Failed to load {Status} pull requests for repo {Repo}", status, repo.Name);
-            return new List<MergingPullRequest>();
+            _logger.LogError(ex, "Failed to load {Status} pull requests for repo {Repo}", status, repo.Name);
+            return new RepoPullRequestsRead(
+                new List<MergingPullRequest>(),
+                new DiscoveryWarning($"Pull request list of {repo.Name}", TfsErrors.Describe(ex)));
         }
     }
 
@@ -103,8 +132,11 @@ public partial class CodeMergingService
         // QA branch", so the configured branch now decides for linked and matched pull requests
         // alike. The ones held back are kept aside rather than dropped, so "All PRs" can show
         // them for cross-checking without a reload.
-        foreach (var pr in await FetchLinkedPullRequestsAsync(query.Project, row.WorkItemId, prsByRepo, ct))
+        var linked = await FetchLinkedPullRequestsAsync(query.Project, row.WorkItemId, prsByRepo, ct);
+        foreach (var pr in linked.Found)
+        {
             Sort(pr);
+        }
 
         if (query.MatchByBranchOrTitle)
         {
@@ -116,6 +148,28 @@ public partial class CodeMergingService
         // Assigned, not accumulated: a row can be resolved again on a re-load.
         row.PullRequests = Ordered(onQa.Values);
         row.OffQaBranchPullRequests = Ordered(offQa.Values);
+        row.DiscoveryGaps = linked.Failures;
+    }
+
+    /// <summary>
+    /// Puts every failed read on the bundle for the page, and a failed pull-request list on the rows it
+    /// could have cost. The rule for a list: with branch/title matching on, every row is held back, because
+    /// any work item could have had a pull request there that only its branch or title tied to it. With links
+    /// only, the list failing loses nothing: a linked pull request it did not cover is read on its own, and a
+    /// failure there marks that work item's row.
+    /// </summary>
+    private static void RecordDiscoveryGaps(
+        CodeMergingBundle bundle, IReadOnlyList<DiscoveryWarning> listFailures, bool matchByBranchOrTitle)
+    {
+        bundle.DiscoveryWarnings = listFailures.Concat(bundle.Requirements.SelectMany(r => r.DiscoveryGaps)).ToList();
+        if (!matchByBranchOrTitle)
+        {
+            return;
+        }
+        foreach (var row in bundle.Requirements)
+        {
+            row.DiscoveryGaps.AddRange(listFailures);
+        }
     }
 
     private static List<MergingPullRequest> Ordered(IEnumerable<MergingPullRequest> prs) => prs
@@ -124,67 +178,87 @@ public partial class CodeMergingService
         .ToList();
 
     /// <summary>
-    /// The pull requests the work item links to, in the selected repositories only — the keys of
-    /// <paramref name="prsByRepo"/>. A work item often links pull requests in several repositories,
-    /// and the sheet answers for the ones the user picked.
+    /// The pull requests the work item links to, in the selected repositories only (the keys of
+    /// <paramref name="prsByRepo"/>). A work item often links pull requests in several repositories,
+    /// and the sheet answers for the ones the user picked. A read that fails is handed back rather
+    /// than dropped, so the row can say it may be missing pull requests.
     /// </summary>
-    private async Task<List<MergingPullRequest>> FetchLinkedPullRequestsAsync(
+    private async Task<LinkedPullRequests> FetchLinkedPullRequestsAsync(
         string project, int workItemId,
         IReadOnlyDictionary<string, List<MergingPullRequest>> prsByRepo, CancellationToken ct)
     {
         var url = _req.ProjectApi(project, $"wit/workitems/{workItemId}?$expand=relations&api-version={_req.Ver}");
-        var matches = new List<MergingPullRequest>();
+        List<PullRequestArtifactRef> links;
         try
         {
-            var data = await TfsThrottle.RunAsync(() => _req.GetJsonAsync(url, ct), ct);
-            if (!data.TryGetProperty("relations", out var rels) || rels.ValueKind != JsonValueKind.Array)
-            {
-                return matches;
-            }
-
-            // A link into a repository that is not selected is not even fetched: it could only be
-            // dropped afterwards, at the cost of a request.
-            var links = rels.EnumerateArray()
-                .Select(rel => PrArtifactLink.TryParse(TfsJson.Str(rel, "url")))
-                .Where(l => l is not null)
-                .Select(l => l!.Value)
-                .Where(l => l.RepositoryId is null || prsByRepo.ContainsKey(l.RepositoryId))
-                .ToList();
-
-            // The prefetch only covers each repository's most recent pull requests, so a link to an
-            // older one misses. The work item named it explicitly, so fetch it by id rather than
-            // dropping it. A link that carries no repository resolves to wherever the pull request
-            // lives, which is checked against the selection once it is known.
-            var resolved = await Task.WhenAll(links.Select(async link =>
-                FindPrefetched(prsByRepo, link) ?? await FetchPullRequestByIdAsync(project, link, ct)));
-
-            matches.AddRange(resolved.OfType<MergingPullRequest>().Where(pr => prsByRepo.ContainsKey(pr.RepositoryId)));
+            var data = await _req.GetJsonAsync(url, ct);
+            links = SelectedPullRequestLinks(data, prsByRepo);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             _logger.LogError(ex, "Failed to read pull-request links for work item {Id}", workItemId);
+            return LinkedPullRequests.Failed(new DiscoveryWarning($"Links of work item #{workItemId}", TfsErrors.Describe(ex)));
         }
-        return matches;
+
+        // The prefetch only covers each repository's most recent pull requests, so a link to an
+        // older one misses. The work item named it explicitly, so fetch it by id rather than
+        // dropping it. A link that carries no repository resolves to wherever the pull request
+        // lives, which is checked against the selection once it is known.
+        var resolved = await Task.WhenAll(links.Select(async link =>
+            FindPrefetched(prsByRepo, link) is { } prefetched
+                ? new LinkRead(prefetched, null)
+                : await FetchPullRequestByIdAsync(project, workItemId, link, ct)));
+
+        var found = resolved
+            .Select(r => r.PullRequest)
+            .OfType<MergingPullRequest>()
+            .Where(pr => prsByRepo.ContainsKey(pr.RepositoryId))
+            .ToList();
+        return new LinkedPullRequests(found, resolved.Select(r => r.Failure).OfType<DiscoveryWarning>().ToList());
     }
 
     /// <summary>
-    /// Reads one pull request the prefetch never covered — an older one in a selected repository, or
-    /// one linked without its repository. The repository comes back on the response, so the caller
-    /// can tell whether it is one of the selected ones.
+    /// The work item's pull-request links. One into a repository that is not selected is left out: it
+    /// could only be dropped after fetching it, at the cost of a request.
     /// </summary>
-    private async Task<MergingPullRequest?> FetchPullRequestByIdAsync(
-        string project, PullRequestArtifactRef link, CancellationToken ct)
+    private static List<PullRequestArtifactRef> SelectedPullRequestLinks(
+        JsonElement workItem, IReadOnlyDictionary<string, List<MergingPullRequest>> prsByRepo)
+    {
+        if (!workItem.TryGetProperty("relations", out var rels) || rels.ValueKind != JsonValueKind.Array)
+        {
+            return new List<PullRequestArtifactRef>();
+        }
+        return rels.EnumerateArray()
+            .Select(rel => PrArtifactLink.TryParse(TfsJson.Str(rel, "url")))
+            .Where(l => l is not null)
+            .Select(l => l!.Value)
+            .Where(l => l.RepositoryId is null || prsByRepo.ContainsKey(l.RepositoryId))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Reads one pull request the prefetch never covered: an older one in a selected repository, or
+    /// one linked without its repository. The repository comes back on the response, so the caller
+    /// can tell whether it is one of the selected ones; a reply without it cannot be placed, so it
+    /// counts as a failed read rather than as no pull request.
+    /// </summary>
+    private async Task<LinkRead> FetchPullRequestByIdAsync(
+        string project, int workItemId, PullRequestArtifactRef link, CancellationToken ct)
     {
         var path = link.RepositoryId is null
             ? $"git/pullrequests/{link.PullRequestId}"
             : $"git/repositories/{link.RepositoryId}/pullrequests/{link.PullRequestId}";
+        var subject = $"Pull request !{link.PullRequestId} linked from #{workItemId}";
         try
         {
-            var data = await TfsThrottle.RunAsync(
-                () => _req.GetJsonAsync(_req.ProjectApi(project, $"{path}?api-version={_req.Ver}"), ct), ct);
+            var data = await _req.GetJsonAsync(_req.ProjectApi(project, $"{path}?api-version={_req.Ver}"), ct);
 
             if (!data.TryGetProperty("repository", out var repoEl) || repoEl.ValueKind != JsonValueKind.Object)
-                return null;
+            {
+                _logger.LogError("TFS sent pull request {PrId}, linked from work item {Id}, without its repository",
+                    link.PullRequestId, workItemId);
+                return new LinkRead(null, new DiscoveryWarning(subject, ReplyWithoutRepository));
+            }
 
             var repo = new TfsRepo
             {
@@ -194,12 +268,12 @@ public partial class CodeMergingService
                     ? TfsJson.Str(projEl, "name")
                     : project
             };
-            return ParsePullRequest(data, repo);
+            return new LinkRead(ParsePullRequest(data, repo), null);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
-            _logger.LogError(ex, "Failed to read linked pull request {PrId}", link.PullRequestId);
-            return null;
+            _logger.LogError(ex, "Failed to read pull request {PrId} linked from work item {Id}", link.PullRequestId, workItemId);
+            return new LinkRead(null, new DiscoveryWarning(subject, TfsErrors.Describe(ex)));
         }
     }
 

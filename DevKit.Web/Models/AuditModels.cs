@@ -2,7 +2,7 @@ namespace DevKit.Web.Models;
 
 public enum AuditSeverity { Critical, Warning, Info }
 
-/// <summary>One row in an audit check — the work item plus optional "expected/fix" columns.</summary>
+/// <summary>One row in an audit check: the work item plus optional "expected/fix" columns.</summary>
 public class AuditRow
 {
     public WorkItem Item { get; set; } = new();
@@ -36,4 +36,10 @@ public class AuditData
 
     /// <summary>Bug id → its child Task work items.</summary>
     public Dictionary<string, List<WorkItem>> BugChildren { get; set; } = new();
+
+    /// <summary>
+    /// Work items the audit asked for that TFS did not return (deleted, moved, or not readable with this token),
+    /// so the checks could not look at them. Includes linked parents and bug children.
+    /// </summary>
+    public List<int> UnreadWorkItemIds { get; set; } = new();
 }

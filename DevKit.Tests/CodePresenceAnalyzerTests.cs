@@ -209,7 +209,7 @@ public class CodePresenceAnalyzerTests
     [InlineData(FileChangeKind.Delete, "b", null, "x", null, FileCodeStatus.Missing)]
     // new file: not on the branch
     [InlineData(FileChangeKind.Add, null, "a", null, "a", FileCodeStatus.Missing)]
-    // edit: gone from QA and the branch (deleted or moved — left for a person) / branch lacks it / matches QA now / reverted on QA
+    // edit: gone from QA and the branch (deleted or moved, left for a person) / branch lacks it / matches QA now / reverted on QA
     [InlineData(FileChangeKind.Edit, "b", "a", null, null, FileCodeStatus.Unverified)]
     [InlineData(FileChangeKind.Edit, "b", "a", null, "a", FileCodeStatus.Missing)]
     [InlineData(FileChangeKind.Edit, "b", "a", "q", "q", FileCodeStatus.MatchesQa)]

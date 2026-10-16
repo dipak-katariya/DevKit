@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace DevKit.Web.Models;
 
 public class TfsProject
@@ -11,7 +13,9 @@ public class TfsRepo
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
     public string Project { get; set; } = "";
-    public string RemoteUrl { get; set; } = "";
+
+    /// <summary>The branch TFS marks as the repository's default (main, develop, ...); empty when TFS names none.</summary>
+    public string DefaultBranch { get; set; } = "";
 }
 
 public class TfsArea
@@ -63,7 +67,7 @@ public class WorkItem
     /// <summary>The instance-specific Revised Estimate field value (distinct from Completed+Remaining), when present.</summary>
     public double? RevisedEstimateField { get; set; }
 
-    // ─── Audit fields (Insight Hub Tasks/Bugs tabs) ───
+    // ─── Audit fields (Sprint Insights Tasks/Bugs tabs) ───
     public string TaskExecutionType { get; set; } = "";
     public string Reason { get; set; } = "";
     public string RootCause { get; set; } = "";
@@ -93,6 +97,8 @@ public class WorkItem
 
 public class PlanningItem
 {
+    private const string SizeEditFormat = "0.##";
+
     public WorkItem WorkItem { get; set; } = new();
     public List<WorkItem> Tasks { get; set; } = new();
 
@@ -128,8 +134,25 @@ public class PlanningItem
     public bool CalcDiffersFromCurrent =>
         CalculatedSize > 0 && Math.Abs(CalculatedSize - (WorkItem.Effort ?? 0)) > 0.01;
 
+    /// <summary>Text in the inline size editor, kept current on every keystroke; null while the editor is closed.</summary>
     public string? EditingSize { get; set; }
+
     public bool Saving { get; set; }
+
+    /// <summary>Opens the size editor on the current size, written the way a number input reads it.</summary>
+    public void BeginSizeEdit() =>
+        EditingSize = WorkItem.Effort?.ToString(SizeEditFormat, CultureInfo.InvariantCulture) ?? "";
+
+    /// <summary>
+    /// The size typed in the editor, or null when it is not a finite number of zero or more. A number input hands
+    /// its value over in invariant format whatever the locale, so it is read that way: on a server whose culture
+    /// uses a decimal comma, "2.5" would otherwise read as 25.
+    /// </summary>
+    public double? EditedSize =>
+        double.TryParse(EditingSize, NumberStyles.Float, CultureInfo.InvariantCulture, out var size)
+        && double.IsFinite(size) && size >= 0
+            ? size
+            : null;
 }
 
 public class TfsRef
@@ -157,7 +180,7 @@ public class WorkItemBranchLink
     /// <summary>
     /// Set when the branch could actually be checked and is no longer in its repository. TFS keeps
     /// a link after the branch is deleted, so a link alone is no proof the branch exists. False
-    /// also covers "not checked" — a repository whose branches have not been loaded is not judged.
+    /// also covers "not checked": a repository whose branches have not been loaded is not judged.
     /// </summary>
     public bool BranchMissing { get; set; }
 
@@ -203,6 +226,24 @@ public readonly record struct WorkItemLinkResult(WorkItemLinkOutcome Outcome, st
     public static WorkItemLinkResult Unlinked() => new(WorkItemLinkOutcome.Unlinked, "");
     public static WorkItemLinkResult NotLinked() => new(WorkItemLinkOutcome.NotLinked, "");
     public static WorkItemLinkResult Failed(string detail) => new(WorkItemLinkOutcome.Failed, detail);
+}
+
+/// <summary>
+/// One child Task to create under a Requirement, Change Request or Bug: the parent, the task's title and
+/// discipline, and the area and sprint it inherits. The tag defaults to the product tag
+/// (see <see cref="PlanningTaskCatalog.TagFor"/>); the execution type is written only when one is given.
+/// </summary>
+public sealed record ChildTaskRequest(
+    string Project,
+    string ParentId,
+    string Title,
+    string Discipline,
+    string AreaPath,
+    string IterationPath)
+{
+    public string? ExecutionType { get; init; }
+
+    public string Tag { get; init; } = PlanningTaskCatalog.ProductTag;
 }
 
 public class ClassificationNode

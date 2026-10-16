@@ -4,7 +4,7 @@ using Xunit;
 namespace DevKit.Tests;
 
 /// <summary>
-/// Once a pull request's code has been compared, the code decides whether it counts as merged — not its
+/// Once a pull request's code has been compared, the code decides whether it counts as merged, not its
 /// commits. These pin that down at every level the sheet shows: the pull request, the work item's
 /// roll-up, the summary counts and the "Code differs" filter.
 /// </summary>

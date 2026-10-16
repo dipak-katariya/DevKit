@@ -29,14 +29,14 @@ public partial class BranchCreator
     }
 
     /// <summary>
-    /// Reads the branches the work item is already linked to. One request against the work item,
-    /// covering every repository — rather than listing refs in each repository and matching on the
-    /// id, which was ~50 paged listings per click and missed branches not named after the id.
+    /// Reads the branches the work item is already linked to. One request against the work item
+    /// covers every repository. Listing refs in each repository and matching on the id took
+    /// ~50 paged listings per click and missed branches not named after the id.
     /// </summary>
     private async Task LoadExistingBranches(WorkItem item)
     {
         CancelAndDispose(ref linkLoadCts);
-        linkLoadCts = new CancellationTokenSource();
+        linkLoadCts = page.CreateLinked();
         var ct = linkLoadCts.Token;
 
         loadingExisting = true; existingErr = ""; StateHasChanged();
@@ -56,14 +56,14 @@ public partial class BranchCreator
                 .ToList();
             MarkMissingBranches();
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException ex) when (ct.IsCancellationRequested)
         {
-            return;
+            Logger.LogDebug(ex, "Branch links of work item {Id} were superseded by a newer selection or the page was left", item.Id);
         }
         catch (Exception ex)
         {
-            Logger.LogWarning(ex, "Could not read branch links for work item {Id}", item.Id);
-            existingErr = ex.Message;
+            Logger.LogError(ex, "Could not read branch links for work item {Id}", item.Id);
+            existingErr = TfsErrors.Describe(ex);
         }
         finally
         {
@@ -90,7 +90,7 @@ public partial class BranchCreator
         try
         {
             var result = await TfsApi.UnlinkWorkItemBranchAsync(
-                item.Project, item.Id, link.RepositoryId, link.BranchName);
+                item.Project, item.Id, link.RepositoryId, link.BranchName, CancellationToken.None);
 
             resultOk = result.IsUnlinked;
             resultMsg = result.Outcome switch
@@ -107,8 +107,8 @@ public partial class BranchCreator
         }
         catch (Exception ex)
         {
-            Logger.LogWarning(ex, "Removing stale link {Branch} from work item {Id} failed", link.BranchName, item.Id);
-            resultMsg = $"<span style='color:var(--red);'>✕ Could not remove the link: {Enc(ex.Message)}</span>";
+            Logger.LogError(ex, "Removing stale link {Branch} from work item {Id} failed", link.BranchName, item.Id);
+            resultMsg = $"<span style='color:var(--red);'>✕ Could not remove the link: {Enc(TfsErrors.Describe(ex))}</span>";
             resultOk = false;
         }
         finally
@@ -141,7 +141,7 @@ public partial class BranchCreator
     /// branch list changes rather than during render, so a repository with tens of thousands of
     /// branches is scanned once instead of on every keystroke.
     ///
-    /// Only repositories whose branches are already in hand are judged — the selected one, plus
+    /// Only repositories whose branches are already in hand are judged: the selected one, plus
     /// any the cache happens to hold. Nothing is fetched here, so a link in a repository nobody
     /// has opened stays unflagged rather than being guessed at and offered for deletion.
     /// </summary>
@@ -183,8 +183,8 @@ public partial class BranchCreator
 
     private string ExistingBranchTitle(WorkItemBranchLink link) =>
         string.IsNullOrEmpty(link.RepositoryName)
-            ? $"{link.BranchName} — repository not in this collection"
-            : $"{link.RepositoryName} — {link.BranchName}";
+            ? $"{link.BranchName} (repository not in this collection)"
+            : $"{link.RepositoryName} · {link.BranchName}";
 
     // ─── Validation ───
     private string? BranchNameError => ValidateBranchName(branchName);
@@ -216,7 +216,7 @@ public partial class BranchCreator
         try
         {
             var name = branchName.Trim();
-            var existing = await TfsApi.GetRefAsync(selectedRepo!.Project, selectedRepo.Id, $"refs/heads/{name}");
+            var existing = await TfsApi.GetRefAsync(selectedRepo!.Project, selectedRepo.Id, $"refs/heads/{name}", page.Token);
             if (existing != null)
             {
                 resultMsg = $"<span style='color:var(--amber);'>⚠ Branch <code>{Enc(name)}</code> already exists (SHA: {Enc(WorkItemBadges.ShortSha(existing.ObjectId))})</span>";
@@ -228,10 +228,14 @@ public partial class BranchCreator
                 resultOk = true;
             }
         }
+        catch (OperationCanceledException ex) when (page.Token.IsCancellationRequested)
+        {
+            Logger.LogDebug(ex, "Branch availability check in {Repo} stopped because the page was left", selectedRepo?.Name);
+        }
         catch (Exception ex)
         {
-            Logger.LogWarning(ex, "Branch availability check failed in {Repo}", selectedRepo?.Name);
-            resultMsg = $"<span style='color:var(--red);'>✕ Check failed: {Enc(ex.Message)}</span>";
+            Logger.LogError(ex, "Branch availability check failed in {Repo}", selectedRepo?.Name);
+            resultMsg = $"<span style='color:var(--red);'>✕ Check failed: {Enc(TfsErrors.Describe(ex))}</span>";
             resultOk = false;
         }
         checking = false;
@@ -260,14 +264,17 @@ public partial class BranchCreator
         creating = true; resultMsg = ""; StateHasChanged();
         try
         {
-            var baseRef = await TfsApi.GetRefAsync(repo.Project, repo.Id, $"refs/heads/{baseBranch}");
-            if (baseRef == null) throw new InvalidOperationException($"Base branch \"{baseBranch}\" not found in {repo.Name}.");
+            var (baseRef, refusal) = await ResolveBaseRefAsync(repo, name);
+            if (baseRef == null)
+            {
+                Logger.LogWarning("Branch {Branch} was not created in {Repo}: {Reason}", name, repo.Name, refusal);
+                ShowCreateFailure(refusal);
+                return;
+            }
 
-            var existing = await TfsApi.GetRefAsync(repo.Project, repo.Id, $"refs/heads/{name}");
-            if (existing != null)
-                throw new InvalidOperationException($"Branch \"{name}\" already exists ({WorkItemBadges.ShortSha(existing.ObjectId)}).");
-
-            await TfsApi.CreateBranchAsync(repo.Project, repo.Id, name, baseRef.ObjectId);
+            // Throws when TFS refuses the ref inside its 200 reply, so a refused branch is never adopted,
+            // linked to the work item or reported as created.
+            await TfsApi.CreateBranchAsync(repo.Project, repo.Id, name, baseRef.ObjectId, CancellationToken.None);
             AdoptCreatedBranch(repo, name);
 
             resultMsg = BuildSuccessMessage(repo, item, name, baseRef.ObjectId, await LinkWorkItemAsync(repo, item, name));
@@ -278,16 +285,43 @@ public partial class BranchCreator
         catch (Exception ex)
         {
             Logger.LogError(ex, "Branch creation failed: {Branch} in {Repo}", name, repo.Name);
-            resultMsg = $"<span style='color:var(--red);font-weight:700;'>✕ {Enc(ex.Message)}</span>";
-            resultOk = false;
+            ShowCreateFailure(TfsErrors.Describe(ex));
         }
-        creating = false;
+        finally
+        {
+            creating = false;
+        }
+    }
+
+    /// <summary>
+    /// The base branch's ref, or why the branch cannot be made from it: the base is gone or the name is
+    /// taken. Both are answers for the person to act on, so neither is thrown. These reads open the create
+    /// the person clicked, so like the create they are not cancelled when the page closes.
+    /// </summary>
+    private async Task<(TfsRef? BaseRef, string Refusal)> ResolveBaseRefAsync(TfsRepo repo, string name)
+    {
+        var baseRef = await TfsApi.GetRefAsync(repo.Project, repo.Id, $"refs/heads/{baseBranch}", CancellationToken.None);
+        if (baseRef == null)
+        {
+            return (null, $"Base branch \"{baseBranch}\" not found in {repo.Name}.");
+        }
+
+        var existing = await TfsApi.GetRefAsync(repo.Project, repo.Id, $"refs/heads/{name}", CancellationToken.None);
+        return existing == null
+            ? (baseRef, "")
+            : (null, $"Branch \"{name}\" already exists ({WorkItemBadges.ShortSha(existing.ObjectId)}).");
+    }
+
+    private void ShowCreateFailure(string message)
+    {
+        resultMsg = $"<span style='color:var(--red);font-weight:700;'>✕ {Enc(message)}</span>";
+        resultOk = false;
     }
 
     /// <summary>
     /// Folds the new branch into the list the picker is showing and drops the cached copy, so the
-    /// next read comes from TFS. Re-listing here instead would cost a full paged fetch — seconds on
-    /// a large repository — to learn one branch name we already know.
+    /// next read comes from TFS. Re-listing here instead would cost a full paged fetch (seconds on
+    /// a large repository) to learn one branch name we already know.
     /// </summary>
     private void AdoptCreatedBranch(TfsRepo repo, string branch)
     {
@@ -309,25 +343,25 @@ public partial class BranchCreator
         {
             Logger.LogWarning("Project {Project} was not in the loaded list, so {Branch} could not be linked",
                 repo.Project, branch);
-            return LinkRow("var(--amber)", $"⚠ Link skipped — project &quot;{Enc(repo.Project)}&quot; was not found. Reconnect in Settings and link it from the work item.");
+            return LinkRow("var(--amber)", $"⚠ Link skipped: project &quot;{Enc(repo.Project)}&quot; was not found. Reconnect in Settings, then link the branch from the work item.");
         }
 
         try
         {
-            var result = await TfsApi.LinkWorkItemAsync(item.Project, item.Id, repoProjectId, repo.Id, branch);
+            var result = await TfsApi.LinkWorkItemAsync(item.Project, item.Id, repoProjectId, repo.Id, branch, CancellationToken.None);
             return result.Outcome switch
             {
                 WorkItemLinkOutcome.Linked =>
                     LinkRow("var(--green)", $"✓ Branch linked to #{Enc(item.Id)} ({Enc(item.Type)})"),
                 WorkItemLinkOutcome.AlreadyLinked =>
-                    LinkRow("var(--green)", $"✓ Already linked to #{Enc(item.Id)} — the work item kept this branch's link"),
+                    LinkRow("var(--green)", $"✓ Already linked to #{Enc(item.Id)}. The work item kept its link to this branch."),
                 _ => LinkRow("var(--amber)", $"⚠ Link failed: {Enc(result.Detail)}")
             };
         }
         catch (Exception ex)
         {
-            Logger.LogWarning(ex, "Could not link branch {Branch} to work item {Id}", branch, item.Id);
-            return LinkRow("var(--amber)", $"⚠ Link failed: {Enc(ex.Message)}");
+            Logger.LogError(ex, "Could not link branch {Branch} to work item {Id}", branch, item.Id);
+            return LinkRow("var(--amber)", $"⚠ Link failed: {Enc(TfsErrors.Describe(ex))}");
         }
     }
 
@@ -346,7 +380,7 @@ public partial class BranchCreator
             : "";
 
         return $@"
-<div style='font-size:.78rem;font-weight:700;color:var(--green);margin-bottom:8px;'>✅ Branch created successfully!</div>
+<div style='font-size:.78rem;font-weight:700;color:var(--green);margin-bottom:8px;'>✅ Branch created.</div>
 <div class='modal-row'><span class='label'>Branch</span><span style='font-family:var(--mono);font-size:.68rem;'>{Enc(branch)}</span></div>
 <div class='modal-row'><span class='label'>Repo</span><span>{Enc(repo.Project)} → {Enc(repo.Name)}</span></div>
 <div class='modal-row'><span class='label'>Area</span><span>{Enc(areaDisp)}</span></div>

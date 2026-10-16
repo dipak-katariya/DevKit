@@ -1,17 +1,28 @@
-using Microsoft.AspNetCore.Components;
+using System.Globalization;
+using System.Text;
 using DevKit.Web.Models;
 using DevKit.Web.Services;
+using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.Forms;
+using Microsoft.JSInterop;
 
 namespace DevKit.Web.Components.Pages;
 
-/// <summary>The settings form: connection, defaults, repositories and the local repository scan.</summary>
-public partial class Settings
+/// <summary>The settings form: connection, defaults and repositories.</summary>
+public sealed partial class Settings : IDisposable
 {
+    // The connection checks and branch lists stop when the page closes. Closing only ends the page's wait for the
+    // shared metadata: that load goes on for the next page.
+    private readonly PageLifetime page = new();
+
     private string tfsUrl = "";
+    private TfsAuthMode tfsAuth;
+    // Only ever what the user types: the stored PAT is never sent to the browser.
     private string tfsPat = "";
-    private string defaultProjectPath = "";
+    private bool hasStoredPat;
     private string defaultAreaPath = "";
     private string defaultSprint = "";
+    private bool defaultSprintIsCurrent;
     private string defaultRepoId = "";
     private string teamName = "";
     private int mostUsedCount;
@@ -21,151 +32,222 @@ public partial class Settings
     private bool saving, testing;
     private string statusMsg = "";
     private bool statusOk;
-    private string scanMsg = "";
-    private bool scanOk;
-    private List<TfsRepo> repos = new();
-    private List<TfsArea> areas = new();
-    private List<TfsIteration> iterations = new();
-    private List<LocalRepoInfo> localRepos = new();
+
+    // The circuit's shared lists, so what Settings reloads every other page sees too.
+    private IReadOnlyList<TfsRepo> repos => PageState.TfsData.Repos;
+    private IReadOnlyList<TfsArea> areas => PageState.TfsData.Areas;
+    private IReadOnlyList<TfsIteration> iterations => PageState.TfsData.Iterations;
+
+    // Why the pickers below are short; the lists that did load stay usable.
+    private string? metadataError;
 
     protected override async Task OnInitializedAsync()
     {
-        tfsUrl = SettingsSvc.Tfs.Url;
-        tfsPat = SettingsSvc.Tfs.Pat;
-        defaultProjectPath = SettingsSvc.DefaultProjectPath;
+        tfsUrl = SettingsSvc.FixedTfsUrl ?? SettingsSvc.Tfs.Url;
+        tfsAuth = SettingsSvc.IsConfigured ? SettingsSvc.Tfs.Auth : FirstSignIn;
+        hasStoredPat = SettingsSvc.HasStoredPat;
+        ReadPreferences();
+
+        if (!SettingsSvc.IsConfigured)
+        {
+            return;
+        }
+
+        // Every visit refreshes the lists, so newly created areas and sprints show up; a refresh that fails keeps
+        // the complete lists already loaded.
+        var load = await PageState.TfsData.ReloadAsync(page.Token);
+        if (!load.Cancelled)
+        {
+            metadataError = load.ErrorMessage;
+        }
+    }
+
+    /// <summary>Fills the form's preferences from Settings, at start and after an import.</summary>
+    private void ReadPreferences()
+    {
         defaultAreaPath = SettingsSvc.DefaultAreaPath;
         defaultSprint = SettingsSvc.DefaultSprint;
+        defaultSprintIsCurrent = SettingsSvc.DefaultSprintIsCurrent;
         defaultRepoId = SettingsSvc.DefaultRepoId;
         teamName = SettingsSvc.TeamName;
         mostUsedCount = SettingsSvc.MostUsedRepoCount;
         SyncMostUsedFromSettings();
-
-        if (SettingsSvc.IsConfigured)
-        {
-            try
-            {
-                var projects = await TfsApi.GetProjectsAsync();
-                repos = await TfsApi.GetRepositoriesAsync();
-                foreach (var p in projects)
-                {
-                    areas.AddRange(await TfsApi.GetAreasAsync(p.Name));
-                    iterations.AddRange(await TfsApi.GetIterationsAsync(p.Name));
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.LogWarning(ex, "Could not load TFS metadata for the settings page");
-            }
-        }
-
-        // Scan local repos (after TFS repos loaded for matching)
-        localRepos = SettingsSvc.ScanLocalRepos(repos.Count > 0 ? repos : null);
     }
 
+    // ─── Export and import ───
+    private string transferMsg = "";
+    private bool transferOk;
+
+    /// <summary>Hands the settings file to the browser to save; it holds no TFS connection or token.</summary>
+    private async Task ExportSettings()
+    {
+        var file = Encoding.UTF8.GetBytes(SettingsSvc.ExportSettings());
+        try
+        {
+            await JS.InvokeVoidAsync("devKit.downloadFile",
+                $"devkit-settings-{DateTime.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}.json",
+                "application/json", Convert.ToBase64String(file));
+            ShowTransfer("Settings exported. The file does not include your TFS connection or token.", ok: true);
+        }
+        catch (JSDisconnectedException ex)
+        {
+            Logger.LogDebug(ex, "The page closed before the exported settings reached the browser");
+        }
+        catch (JSException ex)
+        {
+            Logger.LogError(ex, "The browser could not save the exported settings file");
+            ShowTransfer("The browser could not save the file. Try again.", ok: false);
+        }
+    }
+
+    /// <summary>Loads a settings file the person picked; the TFS connection is never part of it.</summary>
+    private async Task ImportSettings(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            await using var stream = e.File.OpenReadStream(SettingsService.MaxImportBytes, page.Token);
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            var result = SettingsSvc.ImportSettings(await reader.ReadToEndAsync(page.Token));
+            if (result.Imported)
+            {
+                ReadPreferences();
+            }
+
+            ShowTransfer(result.Message, result.Imported);
+        }
+        catch (OperationCanceledException ex) when (page.Token.IsCancellationRequested)
+        {
+            Logger.LogDebug(ex, "The page was left while a settings file was being read");
+        }
+        catch (Exception ex) when (ex is IOException or JSException)
+        {
+            Logger.LogError(ex, "A settings file chosen for import could not be read");
+            ShowTransfer($"The file could not be read. A DevKit settings file is at most {SettingsService.MaxImportBytes / 1024} KB.", ok: false);
+        }
+    }
+
+    private void ShowTransfer(string message, bool ok)
+    {
+        transferMsg = message;
+        transferOk = ok;
+    }
+
+    /// <summary>A connection not set up yet starts on Windows sign-in where it is allowed, since it needs no token.</summary>
+    private TfsAuthMode FirstSignIn => SettingsSvc.AllowsWindowsSignIn ? TfsAuthMode.Windows : TfsAuthMode.Pat;
+
+    /// <summary>The Windows account DevKit runs as, which is the one Windows sign-in presents to TFS.</summary>
+    private static string WindowsAccount => $@"{Environment.UserDomainName}\{Environment.UserName}";
+
+    /// <summary>Switches how the form signs in. A token typed for the other sign-in is not kept.</summary>
+    private void SetSignIn(TfsAuthMode auth)
+    {
+        tfsAuth = auth;
+        tfsPat = "";
+        ShowStatus("", ok: false);
+    }
+
+    /// <summary>What the form asks TFS with, for the sign-in chosen above it.</summary>
+    private TfsConnectionForm.Candidate FormCandidate() => tfsAuth == TfsAuthMode.Windows
+        ? TfsConnectionForm.ChooseWindowsSignIn(tfsUrl)
+        : TfsConnectionForm.Choose(tfsUrl, tfsPat, SettingsSvc);
+
+    /// <summary>Names the account TFS ran the check as, when TFS said, so the status shows who DevKit signed in as.</summary>
+    private static string SignedInAs(TfsConnectionCheck check) =>
+        check.Account.Length == 0 ? "" : $" as {check.Account}";
+
+    /// <summary>
+    /// Checks the server and sign-in first and saves them only when TFS accepts them, so a mistyped token never
+    /// replaces a working one. The status says what TFS answered, or why the settings were not saved.
+    /// </summary>
     private async Task SaveAndConnect()
     {
-        if (!TryValidateTfsUrl(tfsUrl, out var url, out var urlError))
-        { statusMsg = $"✕ {urlError}"; statusOk = false; return; }
-        if (string.IsNullOrWhiteSpace(tfsPat))
-        { statusMsg = "✕ Personal Access Token is required."; statusOk = false; return; }
+        var (url, pat, error, auth) = FormCandidate();
+        if (error.Length > 0)
+        {
+            ShowStatus($"✕ {error}", ok: false);
+            return;
+        }
 
         saving = true;
-        statusMsg = "";
+        ShowStatus("", ok: false);
         StateHasChanged();
         try
         {
-            SettingsSvc.SaveTfs(url, tfsPat.Trim());
-            await LoadRepos();
-            statusMsg = $"✓ Saved & connected — {repos.Count} repositories found.{InsecureUrlWarning(url)}";
-            statusOk = true;
+            // Nothing is saved until TFS has answered, so leaving before then saves nothing.
+            var check = await TfsApi.TestConnectionAsync(url, auth, pat, page.Token);
+            if (!SettingsSvc.SaveTfs(url, pat, auth))
+            {
+                ShowStatus($"✕ TFS accepted the sign-in, but it was not saved. {SettingsSvc.LastSaveError}", ok: false);
+                return;
+            }
+
+            Logger.LogInformation("TFS connection saved; DevKit signs in with {SignIn}", auth);
+            tfsPat = "";
+            hasStoredPat = SettingsSvc.HasStoredPat;
+
+            // The lists belonged to the server just replaced, so every page of the circuit now reads the new one's.
+            // A list that fails to load is shown in the notice: the settings are saved either way.
+            PageState.TfsData.Invalidate();
+            var load = await PageState.TfsData.EnsureLoadedAsync(page.Token);
+            if (load.Cancelled)
+            {
+                return;
+            }
+            metadataError = load.ErrorMessage;
+            ShowStatus($"✓ Saved and connected{SignedInAs(check)}. Found {check.ProjectCount} project(s) and {repos.Count} repositories.{TfsConnectionForm.InsecureUrlWarning(url, auth)}", ok: true);
+        }
+        catch (OperationCanceledException ex) when (page.Token.IsCancellationRequested)
+        {
+            Logger.LogDebug(ex, "Save & Connect stopped because the page was left before TFS answered; nothing was saved");
         }
         catch (Exception ex)
         {
-            statusMsg = $"✕ {ex.Message}";
-            statusOk = false;
+            Logger.LogError(ex, "The TFS connection check with {SignIn} sign-in failed, so the connection was not saved", auth);
+            ShowStatus($"✕ Not saved: {TfsErrors.Describe(ex)}", ok: false);
         }
-        saving = false;
+        finally
+        {
+            saving = false;
+        }
     }
 
+    /// <summary>Tries the server and sign-in in the form without saving anything.</summary>
     private async Task TestConnection()
     {
-        if (!TryValidateTfsUrl(tfsUrl, out var url, out var urlError))
-        { statusMsg = $"✕ {urlError}"; statusOk = false; return; }
-        if (string.IsNullOrWhiteSpace(tfsPat))
-        { statusMsg = "✕ Personal Access Token is required."; statusOk = false; return; }
+        var (url, pat, error, auth) = FormCandidate();
+        if (error.Length > 0)
+        {
+            ShowStatus($"✕ {error}", ok: false);
+            return;
+        }
 
         testing = true;
-        statusMsg = "";
+        ShowStatus("", ok: false);
         StateHasChanged();
         try
         {
-            // Temporarily apply settings for the test
-            SettingsSvc.SaveTfs(url, tfsPat.Trim());
-            var projects = await TfsApi.GetProjectsAsync();
-            repos = await TfsApi.GetRepositoriesAsync();
-            statusMsg = $"✓ Connected — {projects.Count} project(s), {repos.Count} repo(s).{InsecureUrlWarning(url)}";
-            statusOk = true;
+            var check = await TfsApi.TestConnectionAsync(url, auth, pat, page.Token);
+            ShowStatus($"✓ Connected{SignedInAs(check)}. Found {check.ProjectCount} project(s). Nothing was saved.{TfsConnectionForm.InsecureUrlWarning(url, auth)}", ok: true);
+        }
+        catch (OperationCanceledException ex) when (page.Token.IsCancellationRequested)
+        {
+            Logger.LogDebug(ex, "The connection test stopped because the page was left");
         }
         catch (Exception ex)
         {
-            statusMsg = $"✕ Connection failed: {ex.Message}";
-            statusOk = false;
+            Logger.LogError(ex, "The TFS connection test with {SignIn} sign-in failed", auth);
+            ShowStatus($"✕ Connection failed: {TfsErrors.Describe(ex)}", ok: false);
         }
-        testing = false;
+        finally
+        {
+            testing = false;
+        }
     }
 
-    private static bool TryValidateTfsUrl(string raw, out string normalized, out string error)
+    private void ShowStatus(string message, bool ok)
     {
-        normalized = (raw ?? "").Trim();
-        error = "";
-        if (string.IsNullOrWhiteSpace(normalized))
-        {
-            error = "Server URL is required.";
-            return false;
-        }
-        if (!Uri.TryCreate(normalized, UriKind.Absolute, out var uri)
-            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
-        {
-            error = "Enter a valid http(s) URL, e.g. https://tfs.example.com/tfs/Collection.";
-            return false;
-        }
-        return true;
-    }
-
-    // PAT is sent as HTTP Basic auth; over plain http to a remote host it travels unencrypted.
-    private static string InsecureUrlWarning(string url)
-        => Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttp && !uri.IsLoopback
-            ? "  ⚠ http detected — your PAT is sent unencrypted; prefer https."
-            : "";
-
-    private async Task LoadRepos()
-    {
-        repos = await TfsApi.GetRepositoriesAsync();
-    }
-
-    private void ScanAndApply()
-    {
-        var basePath = defaultProjectPath.Trim().TrimEnd('\\');
-        SettingsSvc.DefaultProjectPath = basePath;
-
-        // Scan for .git folders and read remote URLs
-        localRepos = SettingsSvc.ScanLocalRepos(repos.Count > 0 ? repos : null);
-
-        if (localRepos.Count == 0)
-        {
-            scanMsg = $"⚠ No git repositories found in {basePath}";
-            scanOk = false;
-        }
-        else
-        {
-            var matched = localRepos.Count(r => r.IsMapped);
-            var unmatched = localRepos.Count - matched;
-            // Auto-save mapped paths
-            if (repos.Count > 0) SettingsSvc.AutoMapLocalRepos(repos);
-            scanMsg = $"✓ Found {localRepos.Count} local repo(s) — {matched} mapped to TFS" + (unmatched > 0 ? $", {unmatched} unmatched." : ".");
-            scanOk = true;
-        }
-        StateHasChanged();
+        statusMsg = message;
+        statusOk = ok;
     }
 
     // ─── Team Name ───
@@ -188,21 +270,51 @@ public partial class Settings
         SettingsSvc.DefaultSprint = defaultSprint;
     }
 
+    private void SetDefaultSprintMode(bool current)
+    {
+        defaultSprintIsCurrent = current;
+        SettingsSvc.DefaultSprintIsCurrent = current;
+    }
+
+    /// <summary>The sprint "current sprint" means today, in the default area's project.</summary>
+    private string CurrentSprintLabel
+    {
+        get
+        {
+            if (iterations.Count == 0)
+            {
+                return "Shown once the sprints have loaded";
+            }
+
+            var sprint = AreaSprintSelect.CurrentSprint(iterations, AreaSprintSelect.Parse(defaultAreaPath)?.Project, DateTime.Today);
+            return sprint is null
+                ? "No sprint in TFS has dates that include today"
+                : $"{sprint.Name} ({sprint.StartDate:d MMM} to {sprint.FinishDate:d MMM})";
+        }
+    }
+
     // ─── Code merging branch defaults ───
 
     private string repoBranchFilter = "";
 
     /// <summary>
-    /// Repositories shown in the branch table. Unfiltered it is every repository across every
-    /// project, which is long enough to need the filter rather than a scroll.
+    /// Repositories shown in the branch table: the most-used ones first, in the order they were pinned, then the rest
+    /// by project and name. Unfiltered it is every repository across every project, long enough to need the filter.
     /// </summary>
-    private List<TfsRepo> BranchRepos => repos
-        .Where(r => string.IsNullOrWhiteSpace(repoBranchFilter)
-                    || r.Name.Contains(repoBranchFilter, StringComparison.OrdinalIgnoreCase)
-                    || r.Project.Contains(repoBranchFilter, StringComparison.OrdinalIgnoreCase))
-        .OrderBy(r => r.Project, StringComparer.OrdinalIgnoreCase)
-        .ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
-        .ToList();
+    private List<TfsRepo> BranchRepos => RepoOrdering.Prioritize(
+        repos.Where(r => string.IsNullOrWhiteSpace(repoBranchFilter)
+                         || r.Name.Contains(repoBranchFilter, StringComparison.OrdinalIgnoreCase)
+                         || r.Project.Contains(repoBranchFilter, StringComparison.OrdinalIgnoreCase)),
+        mostUsedRepoIds);
+
+    /// <summary>
+    /// What an empty picker means: the automatic branch, named once the repository's branches have loaded.
+    /// </summary>
+    private string AutomaticBranch(TfsRepo repo, Func<IReadOnlyCollection<string>, string?, string> rule, string beforeLoad)
+    {
+        var branches = BranchesFor(repo.Id);
+        return branches.Count == 0 ? $"Automatic ({beforeLoad})" : $"Automatic: {rule(branches, repo.DefaultBranch)}";
+    }
 
     private int ConfiguredBranchCount => repos.Count(r => !SettingsSvc.GetRepoBranches(r.Id).IsEmpty);
 
@@ -231,11 +343,19 @@ public partial class Settings
         StateHasChanged();
         try
         {
-            await BranchCache.GetAsync(repo);
+            // Only this page's wait stops when it closes; the shared listing goes on for any other page.
+            await BranchCache.GetAsync(repo, page.Token);
+        }
+        catch (OperationCanceledException ex) when (page.Token.IsCancellationRequested)
+        {
+            Logger.LogDebug(ex, "The page was left while the branches of {Repo} were loading", repo.Name);
         }
         catch (Exception ex)
         {
-            Logger.LogWarning(ex, "Could not load branches for repo {Repo}", repo.Name);
+            if (!TfsErrors.IsLogged(ex))
+            {
+                Logger.LogError(ex, "Could not load branches for repo {Repo}", repo.Name);
+            }
         }
         finally
         {
@@ -258,7 +378,7 @@ public partial class Settings
         .Select(n => new GlassDropdown.DropdownOption
         {
             Value = n.ToString(),
-            Label = n == 0 ? "— Off —" : $"Top {n}"
+            Label = n == 0 ? "Off" : $"Top {n}"
         }).ToList();
 
     private void OnMostUsedCountChange(ChangeEventArgs e)
@@ -320,11 +440,5 @@ public partial class Settings
 
     private List<GlassDropdown.DropdownGroup> RepoGroups => RepoSelect.Groups(repos, mostUsedRepoIds);
 
-    private static string ExtractShortRemote(string url)
-    {
-        var idx = url.LastIndexOf("/_git/", StringComparison.OrdinalIgnoreCase);
-        if (idx >= 0) return "…/_git/" + url[(idx + 6)..];
-        var lastSlash = url.LastIndexOf('/');
-        return lastSlash >= 0 ? "…/" + url[(lastSlash + 1)..] : url;
-    }
+    public void Dispose() => page.Dispose();
 }

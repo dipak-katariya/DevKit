@@ -1,5 +1,4 @@
 @page "/code-merging"
-@inject TfsApiService TfsApi
 @inject CodeMergingService Merging
 @inject MergeVerificationService Verifier
 @inject CodeCompareService CodeCompare
@@ -14,7 +13,7 @@
             <div class="cm-fld" style="flex:1 1 200px;">
                 <label class="cfg-label">📂 Area Path</label>
                 <GlassDropdown Value="@(selectedArea != null ? AreaSprintSelect.Serialize(selectedArea) : "")"
-                               Placeholder="— Select area —" Disabled="@(areas.Count == 0)"
+                               Placeholder="Select area" Disabled="@(areas.Count == 0)"
                                Groups="@AreaGroups" OnChange="OnAreaChange" />
             </div>
             <div class="cm-fld" style="flex:1 1 170px;">
@@ -25,7 +24,7 @@
                 <MultiSelectDropdown Options="@SprintOptions" Selected="@selectedSprints"
                                      SelectedChanged="OnSprintsChanged" ItemNoun="sprint"
                                      Disabled="@(iterations.Count == 0)"
-                                     Placeholder="— Select sprint —" SearchPlaceholder="Search sprints…" />
+                                     Placeholder="Select sprint" SearchPlaceholder="Search sprints…" />
             </div>
             <div class="cm-fld" style="flex:1 1 190px;">
                 <label class="cfg-label">
@@ -35,7 +34,7 @@
                 <MultiSelectDropdown Options="@RepoOptions" Selected="@selectedRepoIds"
                                      SelectedChanged="OnReposChanged" ItemNoun="repository"
                                      Disabled="@(AvailableRepos.Count == 0)"
-                                     Placeholder="— Select repositories —" SearchPlaceholder="Search repositories…" />
+                                     Placeholder="Select repositories" SearchPlaceholder="Search repositories…" />
             </div>
             <div class="cm-fld" style="flex:0 0 auto;">
                 <label class="cfg-label">🏷 Scope</label>
@@ -54,7 +53,7 @@
                 </button>
             </div>
             <div class="cm-fld cm-fld-btn">
-                <button class="cfg-load-btn" @onclick="Load" disabled="@(!CanLoad)">
+                <button class="cfg-load-btn" @onclick="Load" disabled="@(!CanLoad)" title="@(Activity.IsIdle ? null : BusyReason)">
                     @if (loading) { <span class="spin spin-sm" style="color:#fff;"></span> } else { <Icon Inner="@Icons.Refresh" /> }
                     Load Data
                 </button>
@@ -64,17 +63,17 @@
         <div class="cm-tb-row">
             <div class="cm-fld cm-fld-filter">
                 <label class="cfg-label @(Marked(filter.Member))">👤 Assigned To</label>
-                <GlassDropdown Value="@filter.Member" Placeholder="— All members —" EmptyLabel="— All members —"
+                <GlassDropdown Value="@filter.Member" Placeholder="All members" EmptyLabel="All members"
                                EmptyValue="" Options="@MemberOptions" OnChange="OnMemberChange" />
             </div>
             <div class="cm-fld cm-fld-filter">
                 <label class="cfg-label @(Marked(filter.Author))">✍ Created By</label>
-                <GlassDropdown Value="@filter.Author" Placeholder="— All creators —" EmptyLabel="— All creators —"
+                <GlassDropdown Value="@filter.Author" Placeholder="All creators" EmptyLabel="All creators"
                                EmptyValue="" Options="@AuthorOptions" OnChange="OnAuthorChange" />
             </div>
             <div class="cm-fld cm-fld-filter cm-fld-state">
                 <label class="cfg-label @(Marked(filter.MergeState))">✅ Merge State</label>
-                <GlassDropdown Value="@filter.MergeState" Placeholder="— All —" EmptyLabel="— All —" EmptyValue=""
+                <GlassDropdown Value="@filter.MergeState" Placeholder="All" EmptyLabel="All" EmptyValue=""
                                Disabled="@(bundle.TargetBranchName is null)" Options="@MergedOptions" OnChange="OnMergedChange" />
             </div>
             <div class="cm-fld cm-fld-branch">
@@ -116,6 +115,7 @@
     </div>
 
     <div class="cm-body">
+        @if (!string.IsNullOrEmpty(metadataError)) { <div class="notice warn">⚠ @metadataError</div> }
         @if (!string.IsNullOrEmpty(bundle.ErrorMessage)) { <div class="notice warn">⚠ @bundle.ErrorMessage</div> }
         @if (!string.IsNullOrEmpty(bundle.TruncationNotice)) { <div class="notice info">@bundle.TruncationNotice</div> }
 
@@ -148,6 +148,10 @@
                                 <Icon Inner="@Icons.Clock" />
                             }
                             <span>Commits for <b>@LoadedRowCount</b>/@bundle.Requirements.Count work items</span>
+                            @if (FailedRowCount > 0)
+                            {
+                                <span class="cm-pending-err">@FailedRowCount failed</span>
+                            }
                             <span class="cm-pending-act">Load all @PendingRowCount</span>
                         </button>
                     }
@@ -174,12 +178,12 @@
                             <Icon Inner="@Icons.Search" />
                             <input placeholder="Filter by ID or title…" @oninput="OnSearchInput" />
                         </div>
-                        <label class="cm-check" title="Order by when work started — each pull request's earliest commit, or its creation until its commits are read — so the work item started first comes first. Follows All PRs and Created By.">
+                        <label class="cm-check" title="Order work items by when work started: the earliest commit of their pull requests, or the creation date until the commits are read. Follows All PRs and Created By.">
                             <input type="checkbox" checked="@filter.CommitWise" @onchange="OnCommitWiseChanged" />
                             <span>Commit-wise</span>
                         </label>
                         <label class="cm-check @(filter.ShowAllPrs ? "cm-check-on" : "")"
-                               title="Also list pull requests that did not target the repository's QA branch — intermediate feature-branch ones. Off by default because they cannot reach the release branch; turn it on to cross-check that no pull request for a work item has been missed.">
+                               title="Also list pull requests that did not target the repository's QA branch, such as intermediate feature-branch ones. They cannot reach the release branch, so they are hidden by default. Turn this on to check that no pull request was missed.">
                             <input type="checkbox" checked="@filter.ShowAllPrs" @onchange="OnShowAllPrsChanged" />
                             <span>All PRs@(OffQaPrTotal > 0 ? $" (+{OffQaPrTotal})" : "")</span>
                         </label>
@@ -221,7 +225,7 @@
                                 <th class="cm-c-num" title="Commits across those pull requests">Commits</th>
                                 @if (ShowMergeColumns)
                                 {
-                                    <th class="cm-c-merged" title="Whether this work item's work reached @(bundle.TargetBranchName ?? "its merging branch") — by its code once compared, by its commits until then">Merged</th>
+                                    <th class="cm-c-merged" title="Whether this work item's work reached @(bundle.TargetBranchName ?? "its merging branch"). Decided by its code once compared, and by its commits until then.">Merged</th>
                                     <th class="cm-c-act"></th>
                                 }
                             </tr>
@@ -232,7 +236,7 @@
                                 <tr>
                                     <td colspan="10" class="tbl-empty">
                                         @(bundle.Requirements.Count == 0
-                                            ? "Nothing loaded yet — press Load Data to see work items."
+                                            ? "Nothing loaded yet. Press Load Data to see work items."
                                             : "No work items match the filters.")
                                     </td>
                                 </tr>

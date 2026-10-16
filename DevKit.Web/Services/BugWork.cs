@@ -3,7 +3,7 @@ using DevKit.Web.Models;
 namespace DevKit.Web.Services;
 
 /// <summary>
-/// What counts as bug work, in one place for the whole Insight Hub. The Burndown's split of
+/// What counts as bug work, in one place for the whole of Sprint Insights. The Burndown's split of
 /// regular vs. bug hours and the capacity tab's bug column both read this, so a task can never
 /// be bug time on one tab and planned work on the other.
 /// </summary>
@@ -19,7 +19,7 @@ public static class BugWork
 
     /// <summary>
     /// A Bug itself, anything tagged <see cref="MaintenanceTag"/>, or a task whose parent is a Bug
-    /// — which is where "Bug Resolution" tasks live.
+    /// (which is where "Bug Resolution" tasks live).
     /// </summary>
     public static bool Is(WorkItem item, bool parentIsBug) =>
         IsBugType(item.Type) || item.HasTag(MaintenanceTag) || parentIsBug;

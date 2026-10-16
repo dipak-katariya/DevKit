@@ -1,13 +1,15 @@
 # ============================================================================
-#  DevKit — .gitignore
+#  DevKit .gitignore
 #  .NET 9 / Blazor Server / Visual Studio
 # ============================================================================
 
 # ── Secrets & local user settings ──────────────────────────────────────────
-# usersettings.json holds the TFS Personal Access Token (plaintext) and is
-# written next to the binary at runtime — NEVER commit it.
+# usersettings.json holds the TFS Personal Access Token (encrypted) and lives in
+# the user's local app data, but older builds and the tests write it beside the
+# binary, with its .bak, .tmp and .corrupt-* companions. NEVER commit any of them.
 usersettings.json
 **/usersettings.json
+**/usersettings.json.*
 # Local-only app config overrides (the tracked appsettings*.json stay in repo)
 appsettings.*.local.json
 secrets.json

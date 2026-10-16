@@ -5,8 +5,8 @@ using Xunit;
 namespace DevKit.Tests;
 
 /// <summary>
-/// Branch Creator names branches with this formula and Branch Delete reads them back, so the formula
-/// must produce exactly what Branch Creator always produced — pinned here against the code it replaced.
+/// Branch Creator names branches with this formula and Branch Cleanup reads them back, so the formula
+/// must produce exactly what Branch Creator always produced. It is pinned here against the code it replaced.
 /// </summary>
 public class BranchNamingTests
 {
@@ -50,7 +50,7 @@ public class BranchNamingTests
         new object[] { "FX to CPFOIA Migration", "PI 2026.5_2", "1561246", "FOIA request folders are not rolled back" },
         new object[] { "team", "", "42", "No sprint yet" },
         new object[] { "", "PI-2026-5_1", "7", "Empty team" },
-        new object[] { "SUPERLONGTEAMNAME", "Sprint 12", "99", "A title with — dashes, commas & symbols!" },
+        new object[] { "SUPERLONGTEAMNAME", "Sprint 12", "99", "A title with \u2014 dashes, commas & symbols!" },
         new object[] { "FXCPMGR", "PI-2026-3_3", "123456789", new string('x', 120) },
         new object[] { "a-b_c d", "pi_2026-1", "5", "   leading and trailing   " },
         new object[] { "FXCPMGR", "PI-2026-3_3", "1", "" }

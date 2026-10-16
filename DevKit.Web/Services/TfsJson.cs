@@ -33,6 +33,20 @@ public static class TfsJson
             ? arr.EnumerateArray()
             : Enumerable.Empty<JsonElement>();
 
+    /// <summary>
+    /// The object items of a TFS list response. A batch read with errorPolicy=omit answers null in place of
+    /// each item it could not return, and every property read throws on a null element, so those are skipped.
+    /// </summary>
+    public static IEnumerable<JsonElement> ObjectValues(JsonElement el) =>
+        Values(el).Where(item => item.ValueKind == JsonValueKind.Object);
+
+    /// <summary>The requested ids that did not come back, in the order they were asked for.</summary>
+    public static List<int> MissingIds(IEnumerable<int> requested, IEnumerable<int> returned)
+    {
+        var found = returned.ToHashSet();
+        return requested.Where(id => !found.Contains(id)).Distinct().ToList();
+    }
+
     /// <summary>A nested commit identity: { name, email, date }.</summary>
     public static (string Name, DateTime? Date) CommitPerson(JsonElement el, string prop) =>
         el.TryGetProperty(prop, out var p) && p.ValueKind == JsonValueKind.Object

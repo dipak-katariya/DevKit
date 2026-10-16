@@ -11,7 +11,7 @@
             <div class="cm-fld" style="flex:1 1 230px;">
                 <label class="cfg-label">📂 Area Path <span class="cm-hint">for sprint work items</span></label>
                 <GlassDropdown Value="@(selectedArea != null ? AreaSprintSelect.Serialize(selectedArea) : "")"
-                               Placeholder="— Any area —" EmptyLabel="— Any area —" EmptyValue=""
+                               Placeholder="Any area" EmptyLabel="Any area" EmptyValue=""
                                Disabled="@(areas.Count == 0 || Busy)" Groups="@AreaGroups" OnChange="OnAreaChange" />
             </div>
             <div class="cm-fld" style="flex:1 1 200px;">
@@ -22,7 +22,7 @@
                 <MultiSelectDropdown Options="@SprintOptions" Selected="@selectedSprints"
                                      SelectedChanged="OnSprintsChanged" ItemNoun="sprint"
                                      Disabled="@(selectedArea == null || Busy)"
-                                     Placeholder="@(selectedArea == null ? "— Pick an area first —" : "— Sprints to clean up —")"
+                                     Placeholder="@(selectedArea == null ? "Pick an area first" : "Sprints to clean up")"
                                      SearchPlaceholder="Search sprints…" />
             </div>
             <div class="cm-fld" style="flex:1 1 210px;">
@@ -33,10 +33,10 @@
                 <MultiSelectDropdown Options="@RepoOptions" Selected="@selectedRepoIds"
                                      SelectedChanged="OnReposChanged" ItemNoun="repository"
                                      Disabled="@(AvailableRepos.Count == 0 || Busy)"
-                                     Placeholder="— Select repositories —" SearchPlaceholder="Search repositories…" />
+                                     Placeholder="Select repositories" SearchPlaceholder="Search repositories…" />
             </div>
             <div class="cm-fld" style="flex:0 1 150px;">
-                <label class="cfg-label" title="The team name Branch Creator puts at the front of every branch. Shared with Branch Creator.">👥 Team</label>
+                <label class="cfg-label" title="The team prefix Branch Creator puts at the start of every branch name. Shared with Branch Creator.">👥 Team</label>
                 <input class="cfg-fi" value="@teamName" @onchange="OnTeamNameChange" placeholder="e.g. FXCPMGR"
                        maxlength="@MaxTeamNameLength" disabled="@Busy" />
             </div>
@@ -45,7 +45,7 @@
                     @if (loading) { <span class="spin spin-sm" style="color:#fff;"></span> } else { <Icon Inner="@Icons.Refresh" /> }
                     Load Branches
                 </button>
-                @if (stale) { <span class="cm-hint bdel-stale" title="The grid still shows the last load">changed — load again</span> }
+                @if (stale) { <span class="cm-hint bdel-stale" title="The grid still shows the last load. Load again to apply the changes.">changed, load again</span> }
             </div>
         </div>
 
@@ -72,7 +72,7 @@
                 </div>
                 <div class="cm-fld" style="flex:1 1 180px;">
                     <label class="cfg-label">👤 Created by</label>
-                    <GlassDropdown Value="@creatorFilter" Placeholder="— Anyone —" EmptyLabel="— Anyone —" EmptyValue=""
+                    <GlassDropdown Value="@creatorFilter" Placeholder="Anyone" EmptyLabel="Anyone" EmptyValue=""
                                    Options="@CreatorOptions" OnChange="OnCreatorChange" />
                 </div>
                 <div class="cm-fld" style="flex:2 1 220px;">
@@ -98,12 +98,13 @@
             <div class="progress-bar"><div class="progress-fill" style="width:@(p.Percent)%;"></div></div>
         </div>
     }
+    @if (!string.IsNullOrEmpty(metadataError)) { <div class="notice warn">⚠ @metadataError</div> }
     @if (!string.IsNullOrEmpty(error)) { <div class="notice warn">⚠ @error</div> }
     @foreach (var warning in result.Warnings) { <div class="notice warn">⚠ @warning</div> }
 
     <div class="gpanel bdel-panel">
         <div class="phead">
-            <span class="ptitle">🗑 Branch Manager</span>
+            <span class="ptitle">🗑 Branch Cleanup</span>
             @if (loaded)
             {
                 <div class="bdel-chips">
@@ -126,7 +127,7 @@
                 <div class="pr-placeholder">
                     <div style="font-size:2rem;opacity:.2;">🌿</div>
                     <div class="bp-title">Pick the repositories to clean up</div>
-                    <div class="bp-sub">Add an area and old sprints to find the branches their work items link, and set the team to find unattached team branches.</div>
+                    <div class="bp-sub">Add an area and old sprints to find the branches their work items link. Set the team to find team branches no work item links.</div>
                 </div>
             }
             else
@@ -178,13 +179,13 @@
                                         }
                                         else
                                         {
-                                            <span class="bdel-muted" title="Not a team branch, so its links were not looked up">—</span>
+                                            <span class="bdel-muted" title="Not a team branch, so its links were not looked up">Not checked</span>
                                         }
                                     </td>
                                     <td class="bdel-sprint">
-                                        <span class="@(r.InSelectedSprint ? "bdel-sprint-on" : "")">@(r.Parsed?.Sprint ?? "—")</span>
+                                        <span class="@(r.InSelectedSprint ? "bdel-sprint-on" : "")">@(r.Parsed?.Sprint ?? "")</span>
                                     </td>
-                                    <td class="bdel-creator">@(string.IsNullOrEmpty(r.Creator) ? "—" : r.Creator)</td>
+                                    <td class="bdel-creator">@(string.IsNullOrEmpty(r.Creator) ? "Unknown" : r.Creator)</td>
                                     <td class="bdel-sha"><CopyableRef Text="@r.ObjectId" Display="@WorkItemBadges.ShortSha(r.ObjectId)" Label="SHA" /></td>
                                 </tr>
                             </Virtualize>
@@ -207,7 +208,7 @@
                 @foreach (var entry in deleteLog.OrderBy(o => o.Deleted))
                 {
                     <div class="bdel-log-line @(entry.Deleted ? "ok" : "err")">
-                        @(entry.Deleted ? "✓" : "✕") @entry.RepoName / @entry.Branch — @entry.Message
+                        @(entry.Deleted ? "✓" : "✕") @entry.RepoName / @entry.Branch: @entry.Message
                     </div>
                 }
             </div>
@@ -222,8 +223,8 @@
             <h3>⚠ Delete @SelectedRows.Count branch(es)?</h3>
             <div class="modal-body">
                 <p style="font-size:.76rem;margin-bottom:10px;">
-                    This cannot be undone. Work items keep their links to deleted branches — Branch Creator shows
-                    those as stale and can remove them. A branch someone has pushed to since it was loaded is refused.
+                    This cannot be undone. Work items keep their links to deleted branches. Branch Creator shows
+                    those links as stale and can remove them. A branch someone has pushed to since it was loaded is not deleted.
                 </p>
                 <div class="bdel-confirm-list">
                     @foreach (var byRepo in SelectedRows.GroupBy(r => r.Repo.Name).OrderBy(g => g.Key))

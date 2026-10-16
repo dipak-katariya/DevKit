@@ -7,7 +7,54 @@ namespace DevKit.Web.Models;
 /// </summary>
 public class CodeMergingBundle
 {
+    private static long _lastGeneration;
+
+    private readonly object _resultsGate = new();
+    private long _verificationGeneration = NextGeneration();
+
     public List<RequirementMergingRow> Requirements { get; set; } = new();
+
+    /// <summary>
+    /// Which verification the verdicts on this sheet belong to. A reset moves it on, and a new sheet starts
+    /// past every earlier one, so a check or comparison that notes it when it starts can tell when it
+    /// finishes that its results describe settings or a sheet that no longer apply. Runs start on the
+    /// page's synchronization context, so noting the generation and a run's first writes are one step.
+    /// </summary>
+    public long VerificationGeneration => Interlocked.Read(ref _verificationGeneration);
+
+    /// <summary>
+    /// Moves the sheet to a new generation and runs <paramref name="reset"/> under the lock
+    /// <see cref="TryWriteResults"/> takes, so no run can write between the two.
+    /// </summary>
+    public void AdvanceVerificationGeneration(Action reset)
+    {
+        ArgumentNullException.ThrowIfNull(reset);
+        lock (_resultsGate)
+        {
+            Interlocked.Exchange(ref _verificationGeneration, NextGeneration());
+            reset();
+        }
+    }
+
+    /// <summary>
+    /// Runs <paramref name="write"/> only while the sheet is still at <paramref name="generation"/>.
+    /// False, with nothing written, once a reset or a new load has moved it on.
+    /// </summary>
+    public bool TryWriteResults(long generation, Action write)
+    {
+        ArgumentNullException.ThrowIfNull(write);
+        lock (_resultsGate)
+        {
+            if (VerificationGeneration != generation)
+            {
+                return false;
+            }
+            write();
+            return true;
+        }
+    }
+
+    private static long NextGeneration() => Interlocked.Increment(ref _lastGeneration);
 
     /// <summary>
     /// Merging target branch each repository was verified against, keyed by repository id.
@@ -44,12 +91,31 @@ public class CodeMergingBundle
     /// <summary>Set when a fetch cap truncated the result, so the UI can say what was left out.</summary>
     public string? TruncationNotice { get; set; }
 
+    /// <summary>
+    /// Every read that failed while finding pull requests. Each may have cost work items some of their
+    /// pull requests, so the rows it touched also carry it in <see cref="RequirementMergingRow.DiscoveryGaps"/>.
+    /// </summary>
+    public List<DiscoveryWarning> DiscoveryWarnings { get; set; } = new();
+
+    /// <summary>
+    /// Work items the query matched that TFS did not return, so they have no row. Each is also one of the
+    /// <see cref="DiscoveryWarnings"/>, which is how the page lists them.
+    /// </summary>
+    public List<int> UnreadWorkItemIds { get; set; } = new();
+
+    /// <summary>
+    /// Every row's QA-branch pull requests. The off-QA ones are not included: anything that must reach
+    /// every pull request goes through each row's <see cref="RequirementMergingRow.AllPullRequests"/>.
+    /// </summary>
     public IEnumerable<MergingPullRequest> AllPullRequests => Requirements.SelectMany(r => r.PullRequests);
 
     /// <summary>What the last code comparison did; null until one has run on this load.</summary>
     public CodeCompareRunSummary? LastCodeCompare { get; set; }
 
-    /// <summary>Branch commits actually read during the last verification, across repositories.</summary>
+    /// <summary>
+    /// Branch commits read by the last Verify All, in the busiest repository. This and the two figures below
+    /// describe that sheet-wide scan; a one-row re-check leaves them alone.
+    /// </summary>
     public int ScannedCommitCount { get; set; }
 
     /// <summary>True when a repository's scan stopped at the cap rather than at the branch's start.</summary>
@@ -71,7 +137,7 @@ public class RequirementMergingRow
     public List<MergingPullRequest> PullRequests { get; set; } = new();
 
     /// <summary>
-    /// Pull requests this work item links to that did not target their repository's QA branch —
+    /// Pull requests this work item links to that did not target their repository's QA branch,
     /// typically an intermediate feature-branch pull request. Kept rather than discarded so the
     /// sheet can show them on demand for cross-checking, but held out of the counts and merge
     /// verdicts by default, which are about code reaching the release branch.
@@ -79,6 +145,14 @@ public class RequirementMergingRow
     public List<MergingPullRequest> OffQaBranchPullRequests { get; set; } = new();
 
     public int PrsOffQaBranch => OffQaBranchPullRequests.Count;
+
+    /// <summary>
+    /// Failed reads that could have found more pull requests for this work item. While any is recorded,
+    /// what was found cannot vouch for the rest, so the row never rolls up as merged.
+    /// </summary>
+    public List<DiscoveryWarning> DiscoveryGaps { get; set; } = new();
+
+    public bool DiscoveryIncomplete => DiscoveryGaps.Count > 0;
 
     /// <summary>Everything found for this work item, ordered the same way as the QA-branch set.</summary>
     public List<MergingPullRequest> AllPullRequests => PullRequests
@@ -97,12 +171,29 @@ public class RequirementMergingRow
     /// Whether this row's commits have been read. Only the first rows are loaded up front;
     /// the rest fill in on expand, so a large sprint does not pay for every commit of every
     /// work item before anything is on screen. Counts and merge state stay blank until then
-    /// rather than showing a zero that would read as "no commits".
+    /// rather than showing a zero that would read as "no commits". A row whose read failed stays
+    /// unloaded, so opening it, Verify All and Load all read it again.
     /// </summary>
     public bool CommitsLoaded { get; set; }
 
+    /// <summary>The first reason a commit read of this row's pull requests failed; null when none did.</summary>
+    public string? CommitsError => PullRequests.Concat(OffQaBranchPullRequests)
+        .Select(pr => pr.CommitsError)
+        .FirstOrDefault(error => error is not null);
+
     /// <summary>UI-only: this row's commits are being fetched right now.</summary>
     public bool IsLoadingCommits { get; set; }
+}
+
+/// <summary>A discovery read that failed: what it was for, and what went wrong in words the page can show.</summary>
+/// <param name="Subject">
+/// The read, naming its repository or work item: "Pull request list of Web", "Links of work item #1234",
+/// "Pull request !56 linked from #1234".
+/// </param>
+/// <param name="Reason">What went wrong, from <c>TfsErrors.Describe</c>; the full exception is in the log.</param>
+public sealed record DiscoveryWarning(string Subject, string Reason)
+{
+    public string Text => $"{Subject}: {Reason}";
 }
 
 /// <summary>
@@ -133,6 +224,12 @@ public class UnlinkedPrBundle
     public string? ErrorMessage { get; set; }
     public string? TruncationNotice { get; set; }
 
+    /// <summary>
+    /// Pull-request lists and link checks that failed. A failed list hides its pull requests, and a failed
+    /// check counts its pull request as linked, so while any is here "every pull request is linked" is not proven.
+    /// </summary>
+    public List<DiscoveryWarning> ReadFailures { get; set; } = new();
+
     public bool HasRun { get; set; }
 
     /// <summary>Grouped for display, newest pull request first within each repository.</summary>
@@ -141,212 +238,6 @@ public class UnlinkedPrBundle
             .OrderByDescending(p => p.CreationDate ?? DateTime.MinValue)
             .GroupBy(p => p.RepositoryName, StringComparer.OrdinalIgnoreCase)
             .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase);
-}
-
-/// <summary>A pull request linked to a requirement, with the commits it carries.</summary>
-public class MergingPullRequest
-{
-    public int PullRequestId { get; set; }
-    public string Title { get; set; } = "";
-    public string Project { get; set; } = "";
-    public string RepositoryId { get; set; } = "";
-    public string RepositoryName { get; set; } = "";
-    public string SourceBranch { get; set; } = "";
-    public string TargetBranch { get; set; } = "";
-    public string SourceBranchUrl { get; set; } = "";
-    public string TargetBranchUrl { get; set; } = "";
-    public string Status { get; set; } = "";
-    public string CreatedBy { get; set; } = "";
-    public DateTime? CreationDate { get; set; }
-    public DateTime? ClosedDate { get; set; }
-    public string Url { get; set; } = "";
-
-    /// <summary>
-    /// Merge commit on the target branch: the fallback check when no commits load, and the "after"
-    /// side of the pull request's own change for the code comparison.
-    /// </summary>
-    public string LastMergeCommitId { get; set; } = "";
-    public string LastMergeSourceCommitId { get; set; } = "";
-
-    /// <summary>The target branch commit the pull request merged onto — the "before" side of its change.</summary>
-    public string LastMergeTargetCommitId { get; set; } = "";
-
-    public List<MergingCommit> Commits { get; set; } = new();
-
-    /// <summary>The commit check's verdict: whether each commit's SHA, cherry-pick or message is on the branch.</summary>
-    public bool? IsMergedToTargetBranch { get; set; }
-
-    /// <summary>
-    /// The code comparison's verdict; null until one has run for this pull request. Written from the
-    /// comparison's worker threads as well as the page, so every write takes the same lock.
-    /// </summary>
-    public PrCodeCheck? CodeCheck
-    {
-        get => Volatile.Read(ref _codeCheck);
-        set
-        {
-            lock (CodeCheckGate)
-            {
-                _codeCheck = value;
-            }
-        }
-    }
-
-    private static readonly object CodeCheckGate = new();
-    private PrCodeCheck? _codeCheck;
-
-    /// <summary>
-    /// Replaces the code check only if it is still <paramref name="expected"/> — how a comparison run
-    /// writes back without overwriting a newer run's result, a reset, or line detail added meanwhile.
-    /// </summary>
-    public bool TryReplaceCodeCheck(PrCodeCheck? expected, PrCodeCheck? replacement)
-    {
-        lock (CodeCheckGate)
-        {
-            if (!ReferenceEquals(_codeCheck, expected))
-            {
-                return false;
-            }
-            _codeCheck = replacement;
-            return true;
-        }
-    }
-
-    /// <summary>
-    /// What the sheet counts this pull request as: the code comparison when it reached an answer,
-    /// otherwise the commit check. Commits can be on a branch whose code is not — a conflict resolved
-    /// by dropping lines — so the code, once compared, is what decides.
-    /// </summary>
-    public bool? EffectiveMerged => CodeCheck is { IsConclusive: true } code
-        ? code.Verdict == CodeVerdict.Present
-        : IsMergedToTargetBranch;
-
-    /// <summary>
-    /// The commit check found every commit on the branch, yet the code comparison found code missing —
-    /// the case a commit check alone reports as merged.
-    /// </summary>
-    public bool CodeContradictsCommits =>
-        IsMergedToTargetBranch == true && CodeCheck?.Verdict is CodeVerdict.Missing or CodeVerdict.Partial;
-
-    public bool IsCompleted => string.Equals(Status, "completed", StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>When work on this PR actually started: earliest commit, else the creation date.</summary>
-    public DateTime? FirstActivityDate
-    {
-        get
-        {
-            DateTime? first = null;
-            foreach (var c in Commits)
-                if (c.Date.HasValue && (first is null || c.Date < first)) first = c.Date;
-            return first ?? CreationDate;
-        }
-    }
-
-    /// <summary>Commits that must reach the target branch — merge-tracking commits never block.</summary>
-    public IEnumerable<MergingCommit> RequiredCommits => Commits.Where(c => !c.IsBranchMergeCommit);
-
-    public int MissingCommitCount => RequiredCommits.Count(c => c.IsMergedToTargetBranch == false);
-
-    /// <summary>Commits that reached the branch and were taken back off it again.</summary>
-    public int RolledBackCommitCount => RequiredCommits.Count(c => c.IsRolledBack);
-
-    /// <summary>True when the only thing stopping this pull request is rolled-back code.</summary>
-    public bool IsRolledBack =>
-        IsMergedToTargetBranch == false && RolledBackCommitCount > 0
-        && RolledBackCommitCount == MissingCommitCount;
-}
-
-/// <summary>A single commit inside a pull request.</summary>
-public class MergingCommit
-{
-    /// <summary>
-    /// How git opens a merge commit that belongs to the source branch's own history — either
-    /// syncing from a remote ("Merge remote-tracking branch 'origin/main' into feature/x") or
-    /// merging another branch in locally ("Merge branch 'main' into feature/x"). Neither is a
-    /// change the developer wrote, and neither can be cherry-picked to a release branch on its
-    /// own, so both are optional. Ordered longest-first is not required — the two openings are
-    /// distinct, since a remote-tracking message does not begin with "Merge branch".
-    /// </summary>
-    public static readonly string[] MergeCommitPrefixes =
-    {
-        "Merge remote-tracking branch",
-        "Merge branch"
-    };
-
-    private const int ShortIdLength = 8;
-
-    public string CommitId { get; set; } = "";
-    public string Message { get; set; } = "";
-    public string Author { get; set; } = "";
-    public DateTime? Date { get; set; }
-    public string Url { get; set; } = "";
-
-    /// <summary>
-    /// The author's email and time, which git keeps through a cherry-pick and a rebase — so a copy
-    /// with a new SHA, or a message changed while fixing a conflict, still matches the original.
-    /// </summary>
-    public string AuthorEmail { get; set; } = "";
-    public DateTime? AuthorDate { get; set; }
-
-    public bool? IsMergedToTargetBranch { get; set; }
-
-    /// <summary>What the commit check matched this commit by, for the tooltip.</summary>
-    public CommitMatch MatchKind { get; set; }
-
-    /// <summary>
-    /// Set when the commit reached the branch and was later taken back off it. Distinct from
-    /// simply not merged: the code was there, so this is a regression to chase rather than
-    /// work still to do. Rolled-back commits also report <see cref="IsMergedToTargetBranch"/>
-    /// as false, so anything that only reads that keeps working.
-    /// </summary>
-    public bool IsRolledBack { get; set; }
-
-    /// <summary>How the rollback was established, for the tooltip. Empty when not rolled back.</summary>
-    public string RollbackReason { get; set; } = "";
-
-    public string ShortId => CommitId.Length > ShortIdLength ? CommitId[..ShortIdLength] : CommitId;
-
-    /// <summary>
-    /// True for the merge commits git creates when a developer brings another branch into their
-    /// own — "Merge remote-tracking branch 'origin/main' into feature/x" when syncing a remote,
-    /// "Merge branch 'main' into feature/x" when merging locally. Each is an artifact of the
-    /// source branch's history rather than work of its own, and neither can be cherry-picked to
-    /// a release branch independently, so requiring them would report such a pull request
-    /// unmerged forever. They are treated as optional instead — the single largest source of
-    /// false negatives if this is missed.
-    /// </summary>
-    public bool IsBranchMergeCommit
-    {
-        get
-        {
-            var message = Message.TrimStart();
-            return MergeCommitPrefixes.Any(p => message.StartsWith(p, StringComparison.OrdinalIgnoreCase));
-        }
-    }
-}
-
-/// <summary>How the commit check placed a commit on the branch — or why it did not.</summary>
-public enum CommitMatch
-{
-    None,
-
-    /// <summary>The same commit, merged rather than copied.</summary>
-    Sha,
-
-    /// <summary>A copy made with <c>git cherry-pick -x</c>, whose message names this commit.</summary>
-    CherryPick,
-
-    /// <summary>A copy with the same author and author time — a cherry-pick or rebase, even reworded.</summary>
-    Author,
-
-    /// <summary>A commit with the same, distinctive message.</summary>
-    Message,
-
-    /// <summary>
-    /// Only a commit with the same message was found, and that message is too short or too common to
-    /// prove anything, so it is not counted.
-    /// </summary>
-    AmbiguousMessage
 }
 
 /// <summary>Everything needed for one Code Merging Sheet load.</summary>
@@ -367,6 +258,23 @@ public sealed record CodeMergingQuery(
 {
     /// <summary>For log and error messages.</summary>
     public string IterationSummary => string.Join(", ", IterationPaths);
+}
+
+/// <summary>
+/// What the Code Merging Sheet is busy with, which decides what its buttons may start. Kept out of the
+/// page so the rules can be tested without rendering it.
+/// </summary>
+public readonly record struct MergingSheetActivity(bool Loading, bool Verifying, bool LoadingRest, bool ComparingCode)
+{
+    /// <summary>Verify All, the read of the remaining commits, or a code comparison is running.</summary>
+    public bool IsChecking => Verifying || LoadingRest || ComparingCode;
+
+    /// <summary>
+    /// Nothing is loading or being checked. Load replaces the sheet, so it waits for every check: one still
+    /// running would carry on against a sheet whose commits it never read, which can read Merged when it
+    /// is not.
+    /// </summary>
+    public bool IsIdle => !Loading && !IsChecking;
 }
 
 public static class CodeMergingDefaults

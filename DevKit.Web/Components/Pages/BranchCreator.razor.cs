@@ -7,14 +7,14 @@ namespace DevKit.Web.Components.Pages;
 
 /// <summary>
 /// State, selections and the work-item grid for the Branch Creator. The branch workflow itself
-/// — existing links, validation, creating and linking — lives in BranchCreator.Branches.cs.
+/// (existing links, validation, creating and linking) lives in BranchCreator.Branches.cs.
 /// </summary>
 public partial class BranchCreator
 {
     // Data (shared)
-    private List<TfsArea> areas => PageState.TfsData.Areas;
-    private List<TfsIteration> iterations => PageState.TfsData.Iterations;
-    private List<TfsRepo> repos => PageState.TfsData.Repos;
+    private IReadOnlyList<TfsArea> areas => PageState.TfsData.Areas;
+    private IReadOnlyList<TfsIteration> iterations => PageState.TfsData.Iterations;
+    private IReadOnlyList<TfsRepo> repos => PageState.TfsData.Repos;
 
     // Page state (preserved across navigation)
     private BranchCreatorState S => PageState.BranchCreator;
@@ -46,10 +46,19 @@ public partial class BranchCreator
     private string existingErr = "";
     private string branchLoadErr = "";
 
+    // Why the area, sprint or repository pickers are short; the lists that did load stay usable.
+    private string? metadataError;
+
     // Superseded work is cancelled rather than left to finish and overwrite newer state: picking
-    // a second repository while the first is still listing would otherwise race.
+    // a second repository while the first is still listing would otherwise race. Both are tied to the
+    // page, so a read started after it closed stops at once. Creating and linking a branch is not:
+    // those writes take CancellationToken.None, so leaving cannot cut a create-then-link in half.
     private CancellationTokenSource? branchLoadCts;
     private CancellationTokenSource? linkLoadCts;
+
+    // The work-item and branch reads stop when the page closes. Closing only ends the page's wait for the shared
+    // metadata: that load goes on for the next page.
+    private readonly PageLifetime page = new();
 
     // Default base branch: "main" everywhere, except the CasepointARA repo which
     // targets the .NET 8 migration line. Both yield to the repository's QA branch from Settings.
@@ -77,11 +86,28 @@ public partial class BranchCreator
     {
         teamName = Settings.TeamName;
 
-        if (!Settings.IsConfigured) return;
+        if (!Settings.IsConfigured)
 
-        if (!PageState.TfsData.IsLoaded) await LoadSharedTfsDataAsync();
+        {
 
-        if (S.HasState) return;
+            return;
+
+        }
+
+        var load = await PageState.TfsData.EnsureLoadedAsync(page.Token);
+        if (load.Cancelled)
+        {
+            return;
+        }
+        metadataError = load.ErrorMessage;
+
+        if (S.HasState)
+
+        {
+
+            return;
+
+        }
         S.HasState = true;
 
         ApplyAreaAndSprintDefaults();
@@ -93,36 +119,17 @@ public partial class BranchCreator
         }
     }
 
-    private async Task LoadSharedTfsDataAsync()
-    {
-        try
-        {
-            PageState.TfsData.Projects = await TfsApi.GetProjectsAsync();
-            PageState.TfsData.Repos = await TfsApi.GetRepositoriesAsync();
-            foreach (var p in PageState.TfsData.Projects)
-            {
-                PageState.TfsData.Areas.AddRange(await TfsApi.GetAreasAsync(p.Name));
-                PageState.TfsData.Iterations.AddRange(await TfsApi.GetIterationsAsync(p.Name));
-            }
-            PageState.TfsData.IsLoaded = true;
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "Could not load projects, repositories and classification nodes from TFS");
-        }
-    }
-
     private void ApplyAreaAndSprintDefaults()
     {
         selectedArea = AreaSprintSelect.Parse(Settings.DefaultAreaPath) ?? selectedArea;
-        if (!string.IsNullOrEmpty(Settings.DefaultSprint))
-            selectedSprint = Settings.DefaultSprint;
+        selectedSprint = AreaSprintSelect.DefaultSprint(Settings, iterations, selectedArea, DateTime.Today) ?? selectedSprint;
     }
 
     public void Dispose()
     {
         CancelAndDispose(ref branchLoadCts);
         CancelAndDispose(ref linkLoadCts);
+        page.Dispose();
     }
 
 
@@ -158,11 +165,14 @@ public partial class BranchCreator
 
     /// <summary>
     /// Switches repository, then loads that repository's branches and pre-selects its base branch.
-    /// The branch list is always the selected repository's — no other repository's refs appear.
+    /// The branch list is always the selected repository's; no other repository's refs appear.
     /// </summary>
     private async Task SelectRepo(TfsRepo repo)
     {
-        if (selectedRepo?.Id == repo.Id && branches.Count > 0) return;
+        if (selectedRepo?.Id == repo.Id && branches.Count > 0)
+        {
+            return;
+        }
 
         selectedRepo = repo;
         branches = Array.Empty<string>();
@@ -170,7 +180,7 @@ public partial class BranchCreator
         branchLoadErr = "";
 
         CancelAndDispose(ref branchLoadCts);
-        branchLoadCts = new CancellationTokenSource();
+        branchLoadCts = page.CreateLinked();
         var ct = branchLoadCts.Token;
 
         loadingBranches = true;
@@ -178,7 +188,10 @@ public partial class BranchCreator
         try
         {
             var loaded = await BranchCache.GetAsync(repo, ct);
-            if (ct.IsCancellationRequested) return;
+            if (ct.IsCancellationRequested)
+            {
+                return;
+            }
 
             branches = loaded;
             baseBranch = PickDefaultBaseBranch(repo, loaded, Settings.GetRepoBranches(repo.Id).QaBranch);
@@ -186,14 +199,17 @@ public partial class BranchCreator
             // Staleness depends on this list, so the verdicts are refreshed alongside it.
             MarkMissingBranches();
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException ex) when (ct.IsCancellationRequested)
         {
-            return; // A newer selection owns the form now.
+            Logger.LogDebug(ex, "Branch list for {Repo} was superseded by a newer selection or the page was left", repo.Name);
         }
         catch (Exception ex)
         {
-            Logger.LogWarning(ex, "Could not load branches for repository {Repo}", repo.Name);
-            branchLoadErr = ex is TimeoutException ? ex.Message : $"Branch list unavailable: {ex.Message}";
+            if (!TfsErrors.IsLogged(ex))
+            {
+                Logger.LogError(ex, "Could not load branches for repository {Repo}", repo.Name);
+            }
+            branchLoadErr = ex is TimeoutException ? ex.Message : $"Branch list unavailable: {TfsErrors.Describe(ex)}";
             baseBranch = PickDefaultBaseBranch(repo, Array.Empty<string>(), Settings.GetRepoBranches(repo.Id).QaBranch);
         }
         finally
@@ -208,20 +224,28 @@ public partial class BranchCreator
 
     private async Task LoadWorkItems()
     {
-        if (selectedArea == null) return;
+        var area = selectedArea;
+        if (area == null)
+        {
+            return;
+        }
         loading = true; workItems.Clear(); filtered.Clear(); selectedItem = null; resultMsg = "";
         StateHasChanged();
         try
         {
-            var areaPath = TfsApiService.ToWiqlPath(selectedArea.Path);
+            var areaPath = TfsApiService.ToWiqlPath(area.Path);
             var iterPath = !string.IsNullOrEmpty(selectedSprint) ? TfsApiService.ToWiqlPath(selectedSprint) : null;
-            workItems = await TfsApi.LoadWorkItemsAsync(selectedArea.Project, areaPath, iterPath);
+            workItems = await TfsApi.LoadWorkItemsAsync(area.Project, areaPath, iterPath, page.Token);
             ApplyFilter();
+        }
+        catch (OperationCanceledException ex) when (page.Token.IsCancellationRequested)
+        {
+            Logger.LogDebug(ex, "Work-item load for area {Area} stopped because the page was left", area.Path);
         }
         catch (Exception ex)
         {
-            Logger.LogWarning(ex, "Work-item load failed for area {Area}", selectedArea.Path);
-            resultMsg = $"<span style='color:var(--red);'>✕ Load failed: {Enc(ex.Message)}</span>";
+            Logger.LogError(ex, "Work-item load failed for area {Area}", area.Path);
+            resultMsg = $"<span style='color:var(--red);'>✕ Load failed: {Enc(TfsErrors.Describe(ex))}</span>";
             resultOk = false;
         }
         loading = false;
@@ -279,7 +303,7 @@ public partial class BranchCreator
 
     /// <summary>
     /// The repository's QA branch from Settings wins, then the repo-specific default, then common
-    /// names — so a missing preferred branch never leaves the picker empty. Candidates are probed
+    /// names, so a missing preferred branch never leaves the picker empty. Candidates are probed
     /// against a case-insensitive index because a repository can hold tens of thousands of
     /// branches and scanning the list once per candidate would walk it several times over.
     /// </summary>

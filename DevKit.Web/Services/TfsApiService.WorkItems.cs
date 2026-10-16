@@ -10,7 +10,7 @@ public partial class TfsApiService
     // ═══ WIQL + WORK ITEMS ═══
 
     /// <summary>
-    /// Ids of every work item under the area in any of the sprints, whatever its type — a branch can be
+    /// Ids of every work item under the area in any of the sprints, whatever its type: a branch can be
     /// linked from a requirement, a bug or a task alike. Paths may be raw; they are normalised here.
     /// </summary>
     public Task<List<int>> QuerySprintWorkItemIdsAsync(
@@ -22,7 +22,7 @@ public partial class TfsApiService
         return WiqlIds(project, where, ct);
     }
 
-    public async Task<List<WorkItem>> LoadWorkItemsAsync(string project, string areaPath, string? iterPath)
+    public async Task<List<WorkItem>> LoadWorkItemsAsync(string project, string areaPath, string? iterPath, CancellationToken ct = default)
     {
         var areaFilter = $"[System.AreaPath] = '{WiqlEscape(areaPath)}'";
         var iterFilter = !string.IsNullOrEmpty(iterPath)
@@ -31,7 +31,7 @@ public partial class TfsApiService
 
         var wiql = $"SELECT [System.Id] FROM WorkItems WHERE [System.WorkItemType] IN ('Requirement','Change Request','Bug') AND {areaFilter} AND {iterFilter} ORDER BY [System.Id]";
 
-        var wiqlResult = await PostJson(ProjectApi(project, $"wit/wiql?api-version={Ver}"), new { query = wiql });
+        var wiqlResult = await PostJson(ProjectApi(project, $"wit/wiql?api-version={Ver}"), new { query = wiql }, ct);
 
         var ids = wiqlResult.GetProperty("workItems").EnumerateArray()
             .Select(w => w.GetProperty("id").GetInt32())
@@ -45,7 +45,7 @@ public partial class TfsApiService
         foreach (var chunk in ids.Chunk(WorkItemBatchSize))
         {
             var idsParam = string.Join(",", chunk);
-            var data = await GetJson(ProjectApi(project, $"wit/workitems?ids={idsParam}&fields={fields}&api-version={Ver}"));
+            var data = await GetJson(ProjectApi(project, $"wit/workitems?ids={idsParam}&fields={fields}&api-version={Ver}"), ct);
             foreach (var wi in data.GetProperty("value").EnumerateArray())
             {
                 var f = wi.GetProperty("fields");
@@ -65,19 +65,19 @@ public partial class TfsApiService
         return items;
     }
 
-    // ═══ PLANNING — REQUIREMENTS WITH TASKS ═══
+    // ═══ PLANNING: REQUIREMENTS WITH TASKS ═══
 
     /// <summary>
     /// Loads all Requirements/Change Requests/Bugs in a sprint with their effort fields.
     /// </summary>
-    public async Task<List<WorkItem>> LoadPlanningItemsAsync(string project, string iterPath)
+    public async Task<List<WorkItem>> LoadPlanningItemsAsync(string project, string iterPath, CancellationToken ct = default)
     {
         var wiql = $@"SELECT [System.Id] FROM WorkItems
             WHERE [System.WorkItemType] IN ('Requirement','Change Request','Bug')
             AND [System.IterationPath] = '{WiqlEscape(iterPath)}'
             ORDER BY [System.Id]";
 
-        var wiqlResult = await PostJson(ProjectApi(project, $"wit/wiql?api-version={Ver}"), new { query = wiql });
+        var wiqlResult = await PostJson(ProjectApi(project, $"wit/wiql?api-version={Ver}"), new { query = wiql }, ct);
 
         var ids = wiqlResult.GetProperty("workItems").EnumerateArray()
             .Select(w => w.GetProperty("id").GetInt32())
@@ -92,7 +92,7 @@ public partial class TfsApiService
         foreach (var chunk in ids.Chunk(WorkItemBatchSize))
         {
             var idsParam = string.Join(",", chunk);
-            var data = await GetJson(ProjectApi(project, $"wit/workitems?ids={idsParam}&fields={fields}&api-version={Ver}"));
+            var data = await GetJson(ProjectApi(project, $"wit/workitems?ids={idsParam}&fields={fields}&api-version={Ver}"), ct);
             foreach (var wi in data.GetProperty("value").EnumerateArray())
             {
                 var f = wi.GetProperty("fields");
@@ -119,7 +119,7 @@ public partial class TfsApiService
     /// <summary>
     /// Gets all child Tasks of a work item via WorkItemLinks WIQL query.
     /// </summary>
-    public async Task<List<WorkItem>> GetChildTasksAsync(string project, string parentId)
+    public async Task<List<WorkItem>> GetChildTasksAsync(string project, string parentId, CancellationToken ct = default)
     {
         if (!int.TryParse(parentId, out var parentIdNum))
             return new List<WorkItem>();
@@ -129,7 +129,7 @@ public partial class TfsApiService
             AND [System.Links.LinkType] = 'System.LinkTypes.Hierarchy-Forward'
             MODE (Recursive)";
 
-        var wiqlResult = await PostJson(ProjectApi(project, $"wit/wiql?api-version={Ver}"), new { query = wiql });
+        var wiqlResult = await PostJson(ProjectApi(project, $"wit/wiql?api-version={Ver}"), new { query = wiql }, ct);
 
         if (!wiqlResult.TryGetProperty("workItemRelations", out var rels))
             return new List<WorkItem>();
@@ -150,7 +150,7 @@ public partial class TfsApiService
         foreach (var chunk in childIds.Chunk(WorkItemBatchSize))
         {
             var idsParam = string.Join(",", chunk);
-            var data = await GetJson(ProjectApi(project, $"wit/workitems?ids={idsParam}&fields={fields}&api-version={Ver}"));
+            var data = await GetJson(ProjectApi(project, $"wit/workitems?ids={idsParam}&fields={fields}&api-version={Ver}"), ct);
             foreach (var wi in data.GetProperty("value").EnumerateArray())
             {
                 var f = wi.GetProperty("fields");
@@ -179,7 +179,8 @@ public partial class TfsApiService
     /// <summary>
     /// Updates a single field on a work item using JSON Patch.
     /// </summary>
-    public async Task UpdateWorkItemFieldAsync(string project, string workItemId, string fieldName, object value)
+    public async Task UpdateWorkItemFieldAsync(
+        string project, string workItemId, string fieldName, object value, CancellationToken ct = default)
     {
         var patchBody = new[] {
             new {
@@ -192,37 +193,36 @@ public partial class TfsApiService
         {
             Content = new StringContent(JsonSerializer.Serialize(patchBody), Encoding.UTF8, "application/json-patch+json")
         };
-        using var resp = await SendAuthed(req);
+        using var resp = await SendAuthed(req, ct);
     }
 
     // ═══ TASK CREATION (Planning Management, §6) ═══
-    /// <summary>
-    /// Creates a child Task under a Requirement, Change Request or Bug with the given discipline and
-    /// tag (see <see cref="PlanningTaskCatalog.TagFor"/>), inheriting the supplied area/iteration.
-    /// Returns the new work-item id.
-    /// </summary>
-    public async Task<int> CreateChildTaskAsync(string project, string parentId, string title, string discipline, string areaPath, string iterPath,
-        string? executionType = null, string tag = PlanningTaskCatalog.ProductTag)
+    /// <summary>Creates the child Task <paramref name="task"/> describes and returns its work-item id.</summary>
+    public async Task<int> CreateChildTaskAsync(ChildTaskRequest task, CancellationToken ct = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(tag);
-        var parentUrl = $"{Url}/_apis/wit/workitems/{parentId}";
+        ArgumentNullException.ThrowIfNull(task);
+        ArgumentException.ThrowIfNullOrWhiteSpace(task.Tag);
+        var parentUrl = $"{Url}/_apis/wit/workitems/{task.ParentId}";
         var patch = new List<object>
         {
-            new { op = "add", path = "/fields/System.Title", value = title },
-            new { op = "add", path = "/fields/Microsoft.VSTS.Common.Discipline", value = discipline },
-            new { op = "add", path = "/fields/System.Tags", value = tag },
-            new { op = "add", path = "/fields/System.AreaPath", value = areaPath },
-            new { op = "add", path = "/fields/System.IterationPath", value = iterPath }
+            new { op = "add", path = "/fields/System.Title", value = task.Title },
+            new { op = "add", path = "/fields/Microsoft.VSTS.Common.Discipline", value = task.Discipline },
+            new { op = "add", path = "/fields/System.Tags", value = task.Tag },
+            new { op = "add", path = "/fields/System.AreaPath", value = task.AreaPath },
+            new { op = "add", path = "/fields/System.IterationPath", value = task.IterationPath }
         };
-        if (!string.IsNullOrEmpty(executionType))
-            patch.Add(new { op = "add", path = "/fields/Casepoint.TFS.CustomFields.TaskExecutionType", value = executionType });
+        if (!string.IsNullOrEmpty(task.ExecutionType))
+        {
+            patch.Add(new { op = "add", path = "/fields/Casepoint.TFS.CustomFields.TaskExecutionType", value = task.ExecutionType });
+        }
+
         patch.Add(new { op = "add", path = "/relations/-", value = new { rel = "System.LinkTypes.Hierarchy-Reverse", url = parentUrl } });
-        using var req = new HttpRequestMessage(HttpMethod.Post, ProjectApi(project, $"wit/workitems/$Task?api-version={Ver}"))
+        using var req = new HttpRequestMessage(HttpMethod.Post, ProjectApi(task.Project, $"wit/workitems/$Task?api-version={Ver}"))
         {
             Content = new StringContent(JsonSerializer.Serialize(patch), Encoding.UTF8, "application/json-patch+json")
         };
-        using var resp = await SendAuthed(req);
-        var el = JsonSerializer.Deserialize<JsonElement>(await resp.Content.ReadAsStringAsync());
+        using var resp = await SendAuthed(req, ct);
+        var el = JsonSerializer.Deserialize<JsonElement>(await resp.Content.ReadAsStringAsync(ct));
         return el.TryGetProperty("id", out var idEl) ? idEl.GetInt32() : 0;
     }
 

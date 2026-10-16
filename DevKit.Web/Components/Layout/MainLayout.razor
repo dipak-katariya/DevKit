@@ -1,7 +1,13 @@
 @inherits LayoutComponentBase
+@implements IDisposable
 @inject SettingsService Settings
+@inject UserSession Session
+@inject AuthenticationStateProvider Authentication
 @inject NavigationManager Nav
 @inject IJSRuntime JS
+@inject ILogger<MainLayout> Logger
+
+<PageTitle>@ToolCatalog.PageTitle(new Uri(Nav.Uri).AbsolutePath)</PageTitle>
 
 <div class="devkit-app">
     <aside class="sidebar">
@@ -9,7 +15,7 @@
             <div class="profile-avatar">DK</div>
             <div class="profile-meta">
                 <span class="profile-name">DevKit</span>
-                <span class="profile-sub">TFS · Casepoint</span>
+                <span class="profile-sub">@ServerLabel</span>
             </div>
             <span class="profile-bell"><Icon Inner="@Icons.Bell" /></span>
         </div>
@@ -26,15 +32,43 @@
             <CommandSearch />
             <div class="tb-spacer"></div>
             <div class="tb-actions">
-                <div class="conn-pill @(Settings.IsConfigured ? "ok" : "err")">
-                    <span class="dot"></span>
-                    <span>@(Settings.IsConfigured ? "Connected" : "Not configured")</span>
-                </div>
+                @if (Session.IsReady && (Settings.LastSaveError ?? Settings.LoadProblem) is { } settingsProblem)
+                {
+                    <a class="conn-pill err" href="settings" title="@settingsProblem" style="text-decoration:none;">
+                        <span class="dot"></span>
+                        <span>Settings problem</span>
+                    </a>
+                }
+                @if (Session.IsReady)
+                {
+                    <div class="conn-pill @(Settings.IsConfigured ? "ok" : "err")">
+                        <span class="dot"></span>
+                        <span>@(Settings.IsConfigured ? "Connected" : "Not configured")</span>
+                    </div>
+                }
+                @if (Session.User is { } user)
+                {
+                    @* A plain form: the browser posts it and follows the redirect to the sign-in page. *@
+                    <form class="tb-user" method="post" action="signout">
+                        <AntiforgeryToken />
+                        <span class="tb-user-name" title="Signed in as @user.Name">@user.Name</span>
+                        <button class="tb-btn tb-signout" type="submit" title="Sign out, so someone else can sign in">Sign out</button>
+                    </form>
+                }
             </div>
         </header>
 
         <div class="shell">
-            @if (!Settings.IsConfigured && RequiresSetup)
+            @if (!Session.IsReady)
+            {
+                <div class="setup-guard">
+                    <div class="setup-card">
+                        <h2>@(startProblem is null ? "Opening DevKit…" : "DevKit could not open")</h2>
+                        <p>@(startProblem ?? "Loading your settings.")</p>
+                    </div>
+                </div>
+            }
+            else if (!Settings.IsConfigured && RequiresSetup)
             {
                 <div class="setup-guard">
                     <div class="setup-card">
@@ -42,7 +76,7 @@
                             <Icon Inner="@Icons.Settings" CssClass="ic-xl" />
                         </div>
                         <h2>Setup Required</h2>
-                        <p>Configure your TFS server URL and Personal Access Token to get started.</p>
+                        <p>@SetupHint</p>
                         <button class="btn-primary" style="margin-top:18px;width:auto;padding:10px 24px;"
                                 @onclick='() => Nav.NavigateTo("/settings")'>
                             Open Settings
@@ -61,6 +95,9 @@
 @code {
     private static readonly string[] NoSetupPaths = { "", "/markdown", "/workday", "/settings" };
 
+    // Why the settings could not be made ready; null while they load or once they have.
+    private string? startProblem;
+
     private bool RequiresSetup
     {
         get
@@ -70,6 +107,75 @@
         }
     }
 
+    /// <summary>"TFS · Collection" for the server in use: its collection is the last part of its address.</summary>
+    private string ServerLabel =>
+        Uri.TryCreate(Settings.Tfs.Url, UriKind.Absolute, out var server) && server.Segments.Length > 1
+            ? $"TFS · {Uri.UnescapeDataString(server.Segments[^1].TrimEnd('/'))}"
+            : "TFS";
+
+    private string SetupHint => Session.IsShared
+        ? "Connect DevKit to TFS: enter your personal access token once in Settings. It is kept encrypted on the DevKit server and loaded only for you."
+        : "Connect DevKit to TFS in Settings: sign in with your Windows account or a personal access token.";
+
+    protected override void OnInitialized()
+    {
+        // The top bar shows the connection and any save problem, so it redraws when Settings saves on another page.
+        Settings.Changed += OnSettingsChanged;
+        if (Session.IsShared)
+        {
+            Authentication.AuthenticationStateChanged += OnAuthenticationChanged;
+        }
+    }
+
+    // Raised on whichever thread saved, which in local mode can be another page's: the redraw goes through this
+    // page's own dispatcher.
+    private void OnSettingsChanged() => _ = InvokeAsync(StateHasChanged);
+
+    /// <summary>Shared mode: the person's settings live in their browser, which only answers once the page is live.</summary>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || Session.IsReady)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!await Session.StartAsync())
+            {
+                Nav.NavigateTo(SignInEndpoints.SignInPath, forceLoad: true);
+                return;
+            }
+        }
+        catch (JSDisconnectedException ex)
+        {
+            Logger.LogDebug(ex, "The page closed while the settings were loading");
+            return;
+        }
+        catch (Exception ex) when (ex is JSException or InvalidOperationException or TaskCanceledException)
+        {
+            Logger.LogError(ex, "The settings could not be loaded for this page");
+            startProblem = "Your settings could not be loaded. Reload the page. If it keeps happening, tell whoever runs DevKit.";
+        }
+
+        StateHasChanged();
+    }
+
+    /// <summary>The session ended (signed out in another tab, or past its days): this page goes back to the sign-in page.</summary>
+    private void OnAuthenticationChanged(Task<AuthenticationState> changed) => _ = InvokeAsync(async () =>
+    {
+        if ((await changed).User.Identity?.IsAuthenticated != true)
+        {
+            Nav.NavigateTo(SignInEndpoints.SignInPath, forceLoad: true);
+        }
+    });
+
     private async Task GoBack() => await JS.InvokeVoidAsync("devKit.historyBack");
     private async Task GoForward() => await JS.InvokeVoidAsync("devKit.historyForward");
+
+    public void Dispose()
+    {
+        Settings.Changed -= OnSettingsChanged;
+        Authentication.AuthenticationStateChanged -= OnAuthenticationChanged;
+    }
 }

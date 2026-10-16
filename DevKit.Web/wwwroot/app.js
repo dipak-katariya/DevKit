@@ -1,4 +1,4 @@
-// DevKit — the JS interop surface Blazor calls into (window.devKit).
+// DevKit: the JS interop surface Blazor calls into (window.devKit).
 
 (function () {
     'use strict';
@@ -10,9 +10,48 @@
     // markdown.js. This file never builds markup of its own.
     function parseMarkdown(src) { return window.devKitMd.render(src); }
 
+    // One entry per element, { handler, timer }. The timer is the pending bind, kept so that unregistering
+    // before it fires cannot leave a listener behind.
+    var clickOutsideHandlers = new Map();
+
+    function unregisterClickOutside(el) {
+        var entry = clickOutsideHandlers.get(el);
+        if (!entry) {
+            return;
+        }
+        clearTimeout(entry.timer);
+        document.removeEventListener('click', entry.handler);
+        clickOutsideHandlers.delete(el);
+    }
+
+    function registerClickOutside(el, dotNetRef) {
+        if (!el) {
+            return;
+        }
+        // Registering again replaces the earlier listener, so an element never has two.
+        unregisterClickOutside(el);
+        var entry = { handler: null, timer: 0 };
+        entry.handler = function (e) {
+            if (el.isConnected && el.contains(e.target)) {
+                return;
+            }
+            // One-shot: an outside click always ends the registration, and the component registers again
+            // the next time its panel opens. An element already gone from the page only drops its listener,
+            // because its component, and the .NET reference with it, has been disposed.
+            unregisterClickOutside(el);
+            if (el.isConnected) {
+                dotNetRef.invokeMethodAsync('CloseDropdown');
+            }
+        };
+        // Bound a moment later, so the click that opened the panel does not reach the new listener.
+        entry.timer = setTimeout(function () {
+            document.addEventListener('click', entry.handler);
+        }, CLICK_BIND_DELAY_MS);
+        clickOutsideHandlers.set(el, entry);
+    }
+
     // ─── Public API ───
 
-    var clickOutsideHandlers = new Map();
     var commandKeyBound = false;
 
     window.devKit = {
@@ -79,29 +118,7 @@
             if (el) el.innerHTML = src ? parseMarkdown(src) : '';
         },
 
-        registerClickOutside: function (el, dotNetRef) {
-            const handler = (e) => {
-                // A component removed while open could not unregister (its element was already gone),
-                // so its listener drops itself instead of calling a disposed .NET reference.
-                if (el && !el.isConnected) {
-                    document.removeEventListener('click', handler);
-                    clickOutsideHandlers.delete(el);
-                    return;
-                }
-                if (el && !el.contains(e.target)) {
-                    dotNetRef.invokeMethodAsync('CloseDropdown');
-                }
-            };
-            clickOutsideHandlers.set(el, handler);
-            setTimeout(() => document.addEventListener('click', handler), CLICK_BIND_DELAY_MS);
-        },
-
-        unregisterClickOutside: function (el) {
-            const handler = clickOutsideHandlers.get(el);
-            if (handler) {
-                document.removeEventListener('click', handler);
-                clickOutsideHandlers.delete(el);
-            }
-        }
+        registerClickOutside: registerClickOutside,
+        unregisterClickOutside: unregisterClickOutside
     };
 })();

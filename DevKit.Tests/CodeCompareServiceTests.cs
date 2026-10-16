@@ -8,7 +8,7 @@ namespace DevKit.Tests;
 
 /// <summary>
 /// The code comparison end to end, against an in-memory git server that answers the same endpoints TFS
-/// does — refs, commit diffs, commits, trees and blobs — from real file trees. Besides the verdicts, the
+/// does (refs, commit diffs, commits, trees and blobs) from real file trees. Besides the verdicts, the
 /// tests pin down what made the old check unreliable or slow: per-scope limits, one failing pull request
 /// not stopping the rest, Stop restoring earlier results, and files settled without being downloaded.
 /// </summary>

@@ -125,7 +125,7 @@ public class CapacityPlanningSettingsTests
             TagRules = new()
             {
                 new() { Tag = "  ALM  ", Deliverable = true },
-                new() { Tag = "alm", Deliverable = false },     // duplicate by case — first wins
+                new() { Tag = "alm", Deliverable = false },     // duplicate by case, first wins
                 new() { Tag = "   " },
                 new() { Tag = new string('x', CapacityPlanningSettings.MaxNameLength + 1) },
                 null!

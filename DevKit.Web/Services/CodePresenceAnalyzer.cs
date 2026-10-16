@@ -4,7 +4,7 @@ namespace DevKit.Web.Services;
 
 /// <summary>Git object ids of one file in the four versions a comparison reads. Null: absent there.</summary>
 /// <param name="Base">QA just before the pull request merged.</param>
-/// <param name="After">QA right after it merged — the pull request's own result.</param>
+/// <param name="After">QA right after it merged: the pull request's own result.</param>
 /// <param name="Destination">The merging branch now.</param>
 /// <param name="Qa">QA now, which may carry later changes on top of this pull request.</param>
 /// <param name="QaKnown">
@@ -41,7 +41,7 @@ public sealed record FileAnalysis(
 /// block only, so two identical blocks are not both satisfied by one. A common line that exists elsewhere
 /// in the file proves nothing, and is not taken as proof.
 ///
-/// A block whose own lines QA changed again later — a fix on top of a fix — is also checked against QA's
+/// A block whose own lines QA changed again later (a fix on top of a fix) is also checked against QA's
 /// current version of them, so a branch that took both changes is not flagged for the first one.
 /// </summary>
 public static partial class CodePresenceAnalyzer
@@ -51,7 +51,7 @@ public static partial class CodePresenceAnalyzer
     private const int MaxPreviewLines = 40;
 
     /// <summary>
-    /// The verdict when comparing object ids settles it — identical content has an identical id — or
+    /// The verdict when comparing object ids settles it (identical content has an identical id), or
     /// null when the file differs from every reference version and needs comparing line by line.
     /// </summary>
     public static (FileCodeStatus Status, string Reason)? ClassifyByObjectId(FileChangeKind change, BlobIds ids)
@@ -140,7 +140,7 @@ public static partial class CodePresenceAnalyzer
         {
             if (ids.QaKnown && ids.Qa is null)
             {
-                // Gone from QA at this path too — deleted later, or moved. Moved code may well be missing
+                // Gone from QA at this path too: deleted later, or moved. Moved code may well be missing
                 // from the branch, so this is left for a person rather than counted either way.
                 return (FileCodeStatus.Unverified,
                     "Neither QA nor the branch has this file at this path any more. If QA deleted it later, nothing is missing; " +

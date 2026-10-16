@@ -1,4 +1,4 @@
-@* One pull request's commits, and whether each — or a copy of it — reached the merging branch. *@
+@* One pull request's commits, and whether each (or a copy of it) reached the merging branch. *@
 
 <div class="cm-commit-wrap">
     @if (Commits.Count == 0)
@@ -10,11 +10,11 @@
         <table class="cm-commit-table">
             <thead>
                 <tr>
-                    <th class="cm-k-sha" title="Commit SHA — click to copy">Commit</th>
-                    <th title="Commit message — click to copy">Message</th>
+                    <th class="cm-k-sha" title="Commit SHA. Click to copy.">Commit</th>
+                    <th title="Commit message. Click to copy.">Message</th>
                     <th class="cm-p-user" title="Who authored the commit">Author</th>
                     <th class="cm-p-date" title="When the commit was authored">Date</th>
-                    @if (Verified) { <th class="cm-k-merged" title="Whether this commit — or a copy of it — reached @BranchLabel">On branch</th> }
+                    @if (Verified) { <th class="cm-k-merged" title="Whether this commit (or a copy of it) reached @BranchLabel">On branch</th> }
                 </tr>
             </thead>
             <tbody>
@@ -102,13 +102,13 @@
         true => c.MatchKind switch
         {
             CommitMatch.CherryPick => $"A cherry-pick of this commit (made with git cherry-pick -x) is on {BranchLabel}.",
-            CommitMatch.Author => $"A copy of this commit — same author, same author time — is on {BranchLabel}: a cherry-pick or rebase, possibly with a new message.",
+            CommitMatch.Author => $"A copy of this commit (same author and author time) is on {BranchLabel}: a cherry-pick or rebase, possibly with a new message.",
             CommitMatch.Message => $"A commit with this exact, distinctive message is on {BranchLabel}.",
             _ => $"This commit is on {BranchLabel}."
         },
         false when c.MatchKind == CommitMatch.AmbiguousMessage =>
-            $"No copy of this commit is on {BranchLabel} by SHA or author. A commit with the same message is there, but the message is too short or too common to prove it is this one — Compare Code checks the code itself.",
+            $"No copy of this commit is on {BranchLabel} by SHA or author. A commit with the same message is there, but the message is too short or too common to prove it is this one. Compare Code checks the code itself.",
         false => $"Neither this commit nor a copy of it was found on {BranchLabel}.",
-        _ => "Not checked yet — run Verify All to compare this commit against the branch."
+        _ => "Not checked yet. Run Verify All to compare this commit against the branch."
     };
 }

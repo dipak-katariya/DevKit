@@ -4,21 +4,26 @@ using DevKit.Web.Models;
 namespace DevKit.Web.Services;
 
 /// <summary>
-/// The TFS / Azure DevOps REST client. Split across partials by the area of the API it talks to —
-/// see TfsApiService.Capacity, .Audit, .WorkItems and .Git — all sharing the request helpers here.
+/// The TFS / Azure DevOps REST client. Split across partials by the area of the API it talks to
+/// (see TfsApiService.Capacity, .Audit, .WorkItems and .Git), all sharing the request helpers here.
 /// </summary>
-public partial class TfsApiService
+public partial class TfsApiService : ITfsMetadataSource
 {
     private const int MaxWorkItems = 200;
     private const int WorkItemBatchSize = 50;
-    private const int MaxPullRequests = 200;
 
-    /// <summary>Open pull requests read per repository when deciding which branches Branch Delete must keep.</summary>
-    private const int MaxActivePullRequests = 1000;
+    /// <summary>Active pull requests asked for per request when deciding which branches Branch Cleanup must keep.</summary>
+    private const int ActivePullRequestPageSize = 1000;
+
+    /// <summary>Pages of active pull requests read per repository before the answer is reported as cut short.</summary>
+    private const int MaxActivePullRequestPages = 20;
+
+    /// <summary>Most active pull requests read per repository; a repository with more has every branch kept.</summary>
+    public const int MaxActivePullRequests = ActivePullRequestPageSize * MaxActivePullRequestPages;
+
     private const string EmptyObjectId = "0000000000000000000000000000000000000000";
 
     private readonly TfsRequestClient _req;
-    private readonly SettingsService _settings;
     private readonly ILogger<TfsApiService> _logger;
 
     private static readonly string[] ExcludedAreas = {
@@ -26,11 +31,16 @@ public partial class TfsApiService
         "DataSite Team", "Mobile App", "Review Utilities", "Document Export", "AI", "ARA core"
     };
 
-    public TfsApiService(HttpClient http, SettingsService settings, ILogger<TfsApiService> logger)
+    public TfsApiService(TfsRequestClient req, ILogger<TfsApiService> logger)
     {
-        _req = new TfsRequestClient(http, settings);
-        _settings = settings;
+        _req = req;
         _logger = logger;
+    }
+
+    /// <summary>Over a client of the caller's own, as tests use it; DI only sees the public constructor.</summary>
+    internal TfsApiService(HttpClient http, SettingsService settings, ILogger<TfsApiService> logger)
+        : this(new TfsRequestClient(http, settings), logger)
+    {
     }
 
     // Auth, cache-bypass, TFS error detail and the URL builders live in TfsRequestClient so
@@ -49,76 +59,60 @@ public partial class TfsApiService
     private Task<JsonElement> GetJson(string url, CancellationToken ct = default) => _req.GetJsonAsync(url, ct);
     private Task<JsonElement> PostJson(string url, object body, CancellationToken ct = default) => _req.PostJsonAsync(url, body, ct);
 
-    /// <summary>A GET that waits its turn at the process-wide TFS gate, for reads issued in parallel.</summary>
-    private Task<JsonElement> GetJsonThrottled(string url, CancellationToken ct) =>
-        TfsThrottle.RunAsync(() => GetJson(url, ct), ct);
-
     // ═══ PROJECTS ═══
-    public async Task<List<TfsProject>> GetProjectsAsync()
+
+    /// <summary>
+    /// Checks a server URL and sign-in before anything is saved, and returns how many projects that sign-in can
+    /// see and the account TFS ran it as. Throws when TFS refuses the sign-in or cannot be reached;
+    /// <see cref="TfsErrors.Describe"/> words it.
+    /// </summary>
+    public Task<TfsConnectionCheck> TestConnectionAsync(
+        string url, TfsAuthMode auth, string pat, CancellationToken ct = default) =>
+        _req.CheckConnectionAsync(url, auth, pat, ct);
+
+    public async Task<List<TfsProject>> GetProjectsAsync(CancellationToken ct = default)
     {
-        var data = await GetJson(Api($"projects?api-version={Ver}"));
+        var data = await GetJson(Api($"projects?api-version={Ver}"), ct);
         return data.GetProperty("value").EnumerateArray()
             .Select(p => new TfsProject { Id = p.GetProperty("id").GetString()!, Name = p.GetProperty("name").GetString()! })
             .OrderBy(p => p.Name).ToList();
     }
 
     // ═══ REPOSITORIES ═══
-    public async Task<List<TfsRepo>> GetRepositoriesAsync()
+    // The metadata reads throw on failure: an empty list would read as a server with nothing on it.
+    // SharedTfsData logs and describes the failure.
+    public async Task<List<TfsRepo>> GetRepositoriesAsync(CancellationToken ct = default)
     {
-        try
-        {
-            var data = await GetJson(Api($"git/repositories?api-version={Ver}"));
-            return data.GetProperty("value").EnumerateArray()
-                .Where(r => r.TryGetProperty("id", out _) && r.TryGetProperty("name", out _))
-                .Select(r => new TfsRepo
-                {
-                    Id = r.GetProperty("id").GetString()!,
-                    Name = r.GetProperty("name").GetString()!,
-                    Project = r.TryGetProperty("project", out var proj) && proj.TryGetProperty("name", out var pn) ? pn.GetString()! : "",
-                    RemoteUrl = r.TryGetProperty("remoteUrl", out var ru) ? ru.GetString() ?? "" : ""
-                })
-                .Where(r => !string.IsNullOrEmpty(r.Project))
-                .OrderBy(r => $"{r.Project}/{r.Name}").ToList();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to load repositories from TFS");
-            return new List<TfsRepo>();
-        }
+        var data = await GetJson(Api($"git/repositories?api-version={Ver}"), ct);
+        return data.GetProperty("value").EnumerateArray()
+            .Where(r => r.TryGetProperty("id", out _) && r.TryGetProperty("name", out _))
+            .Select(r => new TfsRepo
+            {
+                Id = r.GetProperty("id").GetString()!,
+                Name = r.GetProperty("name").GetString()!,
+                Project = r.TryGetProperty("project", out var proj) && proj.TryGetProperty("name", out var pn) ? pn.GetString()! : "",
+                DefaultBranch = GitRefName.Strip(TfsJson.Str(r, "defaultBranch"))
+            })
+            .Where(r => !string.IsNullOrEmpty(r.Project))
+            .OrderBy(r => $"{r.Project}/{r.Name}").ToList();
     }
 
     // ═══ AREAS ═══
-    public async Task<List<TfsArea>> GetAreasAsync(string project)
+    public async Task<List<TfsArea>> GetAreasAsync(string project, CancellationToken ct = default)
     {
-        try
-        {
-            var data = await GetJson(ProjectApi(project, $"wit/classificationnodes/areas?$depth=10&api-version={Ver}"));
-            var nodes = FlattenNodes(data);
-            return nodes
-                .Where(n => !ExcludedAreas.Any(ex => string.Equals(n.Name, ex, StringComparison.OrdinalIgnoreCase)))
-                .Select(n => new TfsArea { Id = n.Id, Name = n.Name, Path = n.Path, Project = project })
-                .ToList();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to load areas for project {Project}", project);
-            return new List<TfsArea>();
-        }
+        var data = await GetJson(ProjectApi(project, $"wit/classificationnodes/areas?$depth=10&api-version={Ver}"), ct);
+        var nodes = FlattenNodes(data);
+        return nodes
+            .Where(n => !ExcludedAreas.Any(ex => string.Equals(n.Name, ex, StringComparison.OrdinalIgnoreCase)))
+            .Select(n => new TfsArea { Id = n.Id, Name = n.Name, Path = n.Path, Project = project })
+            .ToList();
     }
 
     // ═══ ITERATIONS ═══
-    public async Task<List<TfsIteration>> GetIterationsAsync(string project)
+    public async Task<List<TfsIteration>> GetIterationsAsync(string project, CancellationToken ct = default)
     {
-        try
-        {
-            var data = await GetJson(ProjectApi(project, $"wit/classificationnodes/iterations?$depth=5&api-version={Ver}"));
-            return FlattenIterations(data, project);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to load iterations for project {Project}", project);
-            return new List<TfsIteration>();
-        }
+        var data = await GetJson(ProjectApi(project, $"wit/classificationnodes/iterations?$depth=5&api-version={Ver}"), ct);
+        return FlattenIterations(data, project);
     }
 
     // ═══ URL BUILDERS ═══

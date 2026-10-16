@@ -3,8 +3,8 @@ using DevKit.Web.Models;
 namespace DevKit.Web.Services;
 
 /// <summary>
-/// Pure validation checks for the Insight Hub Tasks (§4) and Bugs (§5) tabs.
-/// No I/O — operates on already-fetched <see cref="AuditData"/>.
+/// Pure validation checks for the Sprint Insights Tasks (§4) and Bugs (§5) tabs.
+/// No I/O: operates on already-fetched <see cref="AuditData"/>.
 /// </summary>
 public static class InsightAuditService
 {
@@ -82,7 +82,7 @@ public static class InsightAuditService
                           && !(string.Equals(t.Discipline, Test, StringComparison.OrdinalIgnoreCase) && IsRegressionTitle(t)))
                  .Select(t => Row(t))));
 
-        checks.Add(Check("Tasks — Missing Estimate or Remaining Work", AuditSeverity.Critical,
+        checks.Add(Check("Tasks: Missing Estimate or Remaining Work", AuditSeverity.Critical,
             tasks.Where(t =>
                     ((t.OriginalEstimate ?? 0) <= 0
                      || (!StateIn(t, "Closed") && t.RemainingWork is null))
@@ -91,14 +91,14 @@ public static class InsightAuditService
                     && !(string.Equals(t.Discipline, Test, StringComparison.OrdinalIgnoreCase) && IsRegressionTitle(t)))
                  .Select(t => Row(t))));
 
-        checks.Add(Check("Development Discipline — Invalid Title Prefix", AuditSeverity.Warning,
+        checks.Add(Check("Development Discipline: Invalid Title Prefix", AuditSeverity.Warning,
             tasks.Where(t => string.Equals(t.Discipline, Dev, StringComparison.OrdinalIgnoreCase)
                           && !MatchesAny(t.Title, DevPrefixes)
                           && !PrefixExempt(t, parents))
                  .Select(t => Row(t, ExpectedDevPrefixes)),
             extra: "Expected Prefix"));
 
-        checks.Add(Check("Test Discipline — Invalid Title Prefix", AuditSeverity.Warning,
+        checks.Add(Check("Test Discipline: Invalid Title Prefix", AuditSeverity.Warning,
             tasks.Where(t => string.Equals(t.Discipline, Test, StringComparison.OrdinalIgnoreCase)
                           && !MatchesAny(t.Title, TestPrefixes)
                           && !PrefixExempt(t, parents))
@@ -143,7 +143,7 @@ public static class InsightAuditService
 
     // ─────────────── §5 BUGS ───────────────
 
-    /// <summary>§5.1 global bug exclusion — by both Reason and Tags.</summary>
+    /// <summary>§5.1 global bug exclusion, by both Reason and Tags.</summary>
     public static bool IsBugExcluded(WorkItem bug)
     {
         string[] terms = { "Duplicate", "Deferred", "Cannot Reproduce", "Cannot Reproduced", "Rejected" };
@@ -161,18 +161,18 @@ public static class InsightAuditService
             bugs.Where(b => StateIn(b, "Active", "Resolved", "Closed") && string.IsNullOrWhiteSpace(b.RootCause))
                 .Select(b => Row(b))));
 
-        checks.Add(Check("Bugs — No Dev Task", AuditSeverity.Critical,
+        checks.Add(Check("Bugs: No Dev Task", AuditSeverity.Critical,
             bugs.Where(b => !IsBugExcluded(b) && !ChildrenOf(children, b).Any(c => string.Equals(c.Discipline, Dev, StringComparison.OrdinalIgnoreCase)))
                 .Select(b => Row(b))));
 
         var bugTasks = bugs.SelectMany(b => ChildrenOf(children, b).Select(c => (Bug: b, Task: c))).ToList();
 
-        checks.Add(Check("Bug Tasks — Missing Bug/Maintenance Tag & No Work", AuditSeverity.Warning,
+        checks.Add(Check("Bug Tasks: Missing Bug/Maintenance Tag & No Work", AuditSeverity.Warning,
             bugTasks.Where(x => !x.Task.HasTag(BugWork.MaintenanceTag) && (x.Task.CompletedWork ?? 0) == 0)
                     .Select(x => Row(x.Task, $"Bug #{x.Bug.Id}")),
             extra: "Parent Bug"));
 
-        checks.Add(Check("Bug Tasks — No Completed Work (Active/Resolved/Closed)", AuditSeverity.Warning,
+        checks.Add(Check("Bug Tasks: No Completed Work (Active/Resolved/Closed)", AuditSeverity.Warning,
             bugTasks.Where(x => StateIn(x.Task, "Active", "Resolved", "Closed") && (x.Task.CompletedWork ?? 0) == 0 && !IsRejected(x.Task))
                     .Select(x => Row(x.Task, $"Bug #{x.Bug.Id}")),
             extra: "Parent Bug"));

@@ -1,8 +1,9 @@
-@* The Insight Hub's Task Creation tab: standardized child tasks for a Requirement, Change Request
+@* The Task Creation tab of Sprint Insights: standardized child tasks for a Requirement, Change Request
    or Bug, created in one action. *@
 @inject TfsApiService TfsApi
 @inject PageStateService PageState
 @inject ILogger<TaskCreationPanel> Logger
+@implements IDisposable
 
 <div class="cfg-bar">
     @Selectors
@@ -20,16 +21,16 @@
     <div class="cfg-bar-filters" style="margin-top:16px;">
         <div style="flex:2;min-width:200px;"><div class="cfg-field"><label class="cfg-label">🔍 Search</label><input class="cfg-fi" placeholder="ID, title, assignee…" value="@State.SearchQ" @oninput="OnSearch" /></div></div>
         <div style="flex:1;min-width:150px;"><div class="cfg-field"><label class="cfg-label">🏷 Type</label>
-            <GlassDropdown Value="@State.TypeFilter" Placeholder="— All —" EmptyLabel="— All —" EmptyValue="" Options="@TypeOptions" OnChange="OnType" /></div></div>
+            <GlassDropdown Value="@State.TypeFilter" Placeholder="All" EmptyLabel="All" EmptyValue="" Options="@TypeOptions" OnChange="OnType" /></div></div>
         <div style="flex:1;min-width:150px;"><div class="cfg-field"><label class="cfg-label">👤 Assignee</label>
-            <GlassDropdown Value="@State.AssigneeFilter" Placeholder="— All —" EmptyLabel="— All —" EmptyValue="" Options="@AssigneeOptions" OnChange="OnAssignee" /></div></div>
+            <GlassDropdown Value="@State.AssigneeFilter" Placeholder="All" EmptyLabel="All" EmptyValue="" Options="@AssigneeOptions" OnChange="OnAssignee" /></div></div>
     </div>
 }
 <div class="content" style="flex-direction:column;">
     <div class="gpanel" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
         <div class="phead">
-            <span class="ptitle">🧩 Create Standardized Tasks</span>
-            <span style="font-size:.64rem;color:var(--muted);">Pick a requirement → choose categories → create child tasks (discipline + @PlanningTaskCatalog.ProductTag tag, or @BugWork.MaintenanceTag under a Bug).</span>
+            <span class="ptitle">🧩 Create Tasks</span>
+            <span style="font-size:.64rem;color:var(--muted);">Pick an item, tick the tasks you need, then create them. Each task gets its discipline and the @PlanningTaskCatalog.ProductTag tag (@BugWork.MaintenanceTag under a Bug).</span>
         </div>
         <div class="pbody" style="flex:1;overflow:auto;padding:0;">
             @if (!string.IsNullOrEmpty(error)) { <div class="notice warn" style="margin:12px;">⚠ @error</div> }
@@ -52,11 +53,11 @@
                             <tr @key="r.Id">
                                 <td><a class="id-link" href="@TfsApi.WorkItemUrl(r.Project, r.Id)" target="_blank" rel="noopener">#@r.Id</a></td>
                                 <td>
-                                    <span class="type-pill @(r.Type == "Bug" ? "bug" : r.Type == "Change Request" ? "cr" : "")">@r.Type</span>
+                                    <span class="type-pill @WorkItemBadges.TypeClass(r.Type)">@r.Type</span>
                                     <div class="cell-title">@r.Title</div>
                                 </td>
                                 <td style="font-size:.7rem;">@r.Assigned</td>
-                                <td><span class="state-pill @StateCls(r.State)">@r.State</span></td>
+                                <td><span class="state-pill @WorkItemBadges.StateClass(r.State)">@r.State</span></td>
                                 <td>
                                     <button class="btn-sm btn-sm-active" @onclick="() => OpenCreate(r)">
                                         @if (State.CreatedCounts.TryGetValue(r.Id, out var n) && n > 0) { <text>✅ @n Created · add more</text> }
@@ -165,7 +166,7 @@
     [Parameter] public TfsArea? Area { get; set; }
     [Parameter] public string? Sprint { get; set; }
 
-    /// <summary>The hub's shared area and sprint pickers, rendered at the start of the bar.</summary>
+    /// <summary>The page's shared area and sprint pickers, rendered at the start of the bar.</summary>
     [Parameter] public RenderFragment? Selectors { get; set; }
 
     private bool loading;
@@ -183,6 +184,9 @@
 
     // Kept in PageState so the list and the "n Created" badges survive switching tabs.
     private TaskCreationState State => PageState.TaskCreation;
+
+    // Leaving the tab stops the list's read; tasks being created are left to finish.
+    private readonly PageLifetime page = new();
 
     private string SelectionKey => $"{Area?.Project}|{Area?.Path}|{Sprint}";
 
@@ -211,17 +215,21 @@
         {
             var iterPath = TfsApiService.ToWiqlPath(sprint);
             var areaPath = TfsApiService.ToWiqlPath(area.Path);
-            var items = await TfsApi.LoadPlanningItemsAsync(area.Project, iterPath);
+            var items = await TfsApi.LoadPlanningItemsAsync(area.Project, iterPath, page.Token);
             State.Requirements = items.Where(r => InArea(r, areaPath)).ToList();
             State.LoadedKey = key;
             State.LoadedSprint = sprint;
             State.SearchQ = ""; State.TypeFilter = ""; State.AssigneeFilter = "";
             if (State.Requirements.Count == 0) error = "No Requirements, Change Requests, or Bugs found for this area and sprint.";
         }
+        catch (OperationCanceledException ex) when (page.Token.IsCancellationRequested)
+        {
+            Logger.LogDebug(ex, "Task Creation load for {Area} / {Sprint} stopped because the tab was left", area.Path, sprint);
+        }
         catch (Exception ex)
         {
-            Logger.LogWarning(ex, "Task Creation load failed for {Area} / {Sprint}", area.Path, sprint);
-            error = $"Load failed: {ex.Message}";
+            Logger.LogError(ex, "Task Creation load failed for {Area} / {Sprint}", area.Path, sprint);
+            error = $"Load failed: {TfsErrors.Describe(ex)}";
         }
         finally
         {
@@ -267,20 +275,30 @@
         var iterPath = TfsApiService.ToWiqlPath(State.LoadedSprint);
         var tag = PlanningTaskCatalog.TagFor(parent.Type);
         var failed = new List<string>();
+        var firstFailure = "";
         var created = 0;
         foreach (var cat in selection.InCatalogOrder())
         {
             try
             {
-                await TfsApi.CreateChildTaskAsync(parent.Project, parent.Id, TaskTitle(cat, parent), cat.Discipline, parent.Area, iterPath, SelectedExec(cat), tag);
+                var task = new ChildTaskRequest(parent.Project, parent.Id, TaskTitle(cat, parent), cat.Discipline, parent.Area, iterPath)
+                {
+                    ExecutionType = SelectedExec(cat),
+                    Tag = tag
+                };
+                await TfsApi.CreateChildTaskAsync(task, CancellationToken.None);
                 created++;
                 createdThisSession.Add(cat.Prefix);
             }
             catch (Exception ex)
             {
                 // One rejected task must not stop the rest of the set; it stays ticked for a retry.
-                Logger.LogWarning(ex, "Creating '{Prefix}' under #{ParentId} failed", cat.Prefix, parent.Id);
+                Logger.LogError(ex, "Creating '{Prefix}' under #{ParentId} failed", cat.Prefix, parent.Id);
                 failed.Add(cat.Prefix);
+                if (firstFailure.Length == 0)
+                {
+                    firstFailure = TfsErrors.Describe(ex);
+                }
             }
         }
 
@@ -290,7 +308,7 @@
         createOk = failed.Count == 0;
         createResult = createOk
             ? $"✓ Created {created} task(s) tagged {tag}."
-            : $"Created {created}, {failed.Count} failed: {string.Join(", ", failed)}. They are still ticked — try again.";
+            : $"Created {created}, {failed.Count} failed: {string.Join(", ", failed)} ({firstFailure.TrimEnd('.')}). They are still ticked, so you can try again.";
         creating = false;
     }
 
@@ -306,11 +324,5 @@
     private void OnType(ChangeEventArgs e) => State.TypeFilter = e.Value?.ToString() ?? "";
     private void OnAssignee(ChangeEventArgs e) => State.AssigneeFilter = e.Value?.ToString() ?? "";
 
-    private static string StateCls(string? s) => (s ?? "").ToLowerInvariant() switch
-    {
-        "active" => "state-active",
-        "resolved" => "state-resolved",
-        "closed" => "state-closed",
-        _ => "state-new"
-    };
+    public void Dispose() => page.Dispose();
 }

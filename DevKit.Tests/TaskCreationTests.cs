@@ -6,7 +6,7 @@ namespace DevKit.Tests;
 
 /// <summary>
 /// Task Creation writes real work items, so what gets ticked and how each task is tagged decide
-/// what lands in TFS — and whether the Bugs audit and the capacity tab count it as bug work.
+/// what lands in TFS, and whether the Bugs audit and the capacity tab count it as bug work.
 /// </summary>
 public class TaskCreationTests
 {

@@ -1,7 +1,8 @@
 @inject TfsApiService TfsApi
+@inject ILogger<SizeCheckPanel> Logger
 
-@* Size Check — requirement/CHR sizes verified against the estimates on their child tasks.
-   Area and sprint are owned by the hub and arrive as parameters so they stay shared across tabs. *@
+@* Size Check: requirement/CHR sizes verified against the estimates on their child tasks.
+   Area and sprint are owned by Sprint Insights and arrive as parameters so they stay shared across tabs. *@
 
 <div style="display:flex;flex-direction:column;gap:0;flex:1;overflow:hidden;">
     <div class="cfg-bar">
@@ -64,7 +65,7 @@
                 <label class="cfg-label">🏷 Type</label>
                 <MultiSelectDropdown Style="min-width:200px;" Options="@TypeOptions" Selected="@typeFilter"
                                      SelectedChanged="OnTypeFilterChanged" ItemNoun="type"
-                                     Placeholder="— None —" SearchPlaceholder="Search types…" />
+                                     Placeholder="None" SearchPlaceholder="Search types…" />
             </div>
         </div>
     </div>
@@ -165,18 +166,19 @@
                                             <a class="id-link" href="@TfsApi.WorkItemUrl(pi.WorkItem.Project, pi.WorkItem.Id)" target="_blank" rel="noopener" style="font-weight:700;">#@pi.WorkItem.Id</a>
                                         </td>
                                         <td>
-                                            <span class="type-pill @TypeCls(pi.WorkItem.Type)">@pi.WorkItem.Type</span>
+                                            <span class="type-pill @WorkItemBadges.TypeClass(pi.WorkItem.Type)">@pi.WorkItem.Type</span>
                                             <div class="cell-title" style="font-weight:700;">@pi.WorkItem.Title</div>
                                             <div class="cell-meta">@pi.Tasks.Count task(s)</div>
                                         </td>
-                                        <td><span class="state-pill @StateCls(pi.WorkItem.State)">@pi.WorkItem.State</span></td>
+                                        <td><span class="state-pill @WorkItemBadges.StateClass(pi.WorkItem.State)">@pi.WorkItem.State</span></td>
                                         <td style="font-size:.66rem;">@pi.WorkItem.Assigned</td>
                                         <td style="text-align:center;">
                                             @if (pi.EditingSize != null)
                                             {
                                                 <div style="display:flex;align-items:center;gap:3px;justify-content:center;">
-                                                    <input type="number" step="0.5" min="0" value="@pi.EditingSize"
-                                                           @onchange="e => pi.EditingSize = e.Value?.ToString()"
+                                                    @* Bound on every keystroke: the browser raises keydown before change, so Enter would save the old size. *@
+                                                    <input type="number" step="0.5" min="0"
+                                                           @bind="pi.EditingSize" @bind:event="oninput"
                                                            @onkeydown="e => OnSizeKeyDown(e, pi)"
                                                            style="width:55px;background:rgba(0,0,0,.3);border:1px solid var(--accent);border-radius:5px;color:var(--text);font-size:.72rem;padding:2px 4px;font-family:var(--mono);text-align:center;"
                                                            autofocus />
@@ -189,8 +191,8 @@
                                             else
                                             {
                                                 <span style="font-family:var(--mono);font-size:.76rem;font-weight:700;cursor:pointer;color:@(hasSize ? "var(--accent2)" : "var(--red)");padding:3px 8px;border-radius:5px;background:rgba(255,255,255,.06);"
-                                                      @onclick="() => StartEditSize(pi)" title="Click to edit">
-                                                    @(hasSize ? pi.WorkItem.Effort!.Value.ToString("0.##") : "—")
+                                                      @onclick="() => pi.BeginSizeEdit()" title="Click to edit">
+                                                    @(hasSize ? pi.WorkItem.Effort!.Value.ToString("0.##") : "Not set")
                                                 </span>
                                             }
                                         </td>
@@ -209,26 +211,24 @@
                                                     </button>
                                                 </div>
                                             }
-                                            else { <span style="color:var(--muted);">—</span> }
                                         </td>
                                         <td style="text-align:center;font-family:var(--mono);font-size:.7rem;color:var(--cyan);font-weight:700;">
-                                            @(pi.TaskTotalEstimate > 0 ? pi.TaskTotalEstimate.ToString("0.##") : "—")
+                                            @(pi.TaskTotalEstimate > 0 ? pi.TaskTotalEstimate.ToString("0.##") : "")
                                         </td>
                                         <td style="text-align:center;font-family:var(--mono);font-size:.7rem;color:var(--amber);font-weight:700;">
-                                            @(pi.TaskTotalRemaining > 0 ? pi.TaskTotalRemaining.ToString("0.##") : "—")
+                                            @(pi.TaskTotalRemaining > 0 ? pi.TaskTotalRemaining.ToString("0.##") : "")
                                         </td>
                                         <td style="text-align:center;font-family:var(--mono);font-size:.7rem;color:var(--green);font-weight:700;">
-                                            @(pi.TaskTotalCompleted > 0 ? pi.TaskTotalCompleted.ToString("0.##") : "—")
+                                            @(pi.TaskTotalCompleted > 0 ? pi.TaskTotalCompleted.ToString("0.##") : "")
                                         </td>
                                         <td style="text-align:center;font-family:var(--mono);font-size:.7rem;color:var(--purple);font-weight:700;">
-                                            @(pi.TaskTotalRevised > 0 ? pi.TaskTotalRevised.ToString("0.##") : "—")
+                                            @(pi.TaskTotalRevised > 0 ? pi.TaskTotalRevised.ToString("0.##") : "")
                                         </td>
                                         <td style="text-align:center;font-family:var(--mono);font-size:.66rem;font-weight:700;color:@(mismatch ? "var(--amber)" : hasSize ? "var(--green)" : "var(--muted)");">
                                             @if (hasSize && pi.TaskTotalEstimate > 0)
                                             {
                                                 @(pi.SizeMismatch > 0 ? "+" : "")@pi.SizeMismatch.ToString("0.##")
                                             }
-                                            else { @("—") }
                                         </td>
                                     </tr>
 
@@ -252,14 +252,14 @@
                                                         else { <span style="color:var(--green);">· completed → size</span> }
                                                     </div>
                                                 </td>
-                                                <td><span class="state-pill @StateCls(t.State)">@t.State</span></td>
+                                                <td><span class="state-pill @WorkItemBadges.StateClass(t.State)">@t.State</span></td>
                                                 <td style="font-size:.64rem;color:var(--muted2);">@t.Assigned</td>
                                                 <td></td>
                                                 <td></td>
-                                                <td style="text-align:center;font-family:var(--mono);font-size:.66rem;color:var(--cyan);@(isCurrent ? "font-weight:700;text-decoration:underline;" : "")">@(t.OriginalEstimate?.ToString("0.##") ?? "—")</td>
-                                                <td style="text-align:center;font-family:var(--mono);font-size:.66rem;color:var(--amber);">@(t.RemainingWork?.ToString("0.##") ?? "—")</td>
-                                                <td style="text-align:center;font-family:var(--mono);font-size:.66rem;color:var(--green);@(isCurrent ? "" : "font-weight:700;text-decoration:underline;")">@(t.CompletedWork?.ToString("0.##") ?? "—")</td>
-                                                <td style="text-align:center;font-family:var(--mono);font-size:.66rem;color:var(--purple);">@(rev > 0 ? rev.ToString("0.##") : "—")</td>
+                                                <td style="text-align:center;font-family:var(--mono);font-size:.66rem;color:var(--cyan);@(isCurrent ? "font-weight:700;text-decoration:underline;" : "")">@(t.OriginalEstimate?.ToString("0.##") ?? "")</td>
+                                                <td style="text-align:center;font-family:var(--mono);font-size:.66rem;color:var(--amber);">@(t.RemainingWork?.ToString("0.##") ?? "")</td>
+                                                <td style="text-align:center;font-family:var(--mono);font-size:.66rem;color:var(--green);@(isCurrent ? "" : "font-weight:700;text-decoration:underline;")">@(t.CompletedWork?.ToString("0.##") ?? "")</td>
+                                                <td style="text-align:center;font-family:var(--mono);font-size:.66rem;color:var(--purple);">@(rev > 0 ? rev.ToString("0.##") : "")</td>
                                                 <td></td>
                                             </tr>
                                         }

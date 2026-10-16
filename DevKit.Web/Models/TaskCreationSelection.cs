@@ -46,7 +46,7 @@ public sealed class TaskCreationSelection
         else selected.UnionWith(defaults);
     }
 
-    /// <summary>Keeps only these categories ticked — after a partial failure, the ones to retry.</summary>
+    /// <summary>Keeps only these categories ticked: after a partial failure, the ones to retry.</summary>
     public void RetainOnly(IEnumerable<string> prefixes) => selected.IntersectWith(prefixes);
 
     /// <summary>The ticked categories in catalog order, which is the order their tasks are created in.</summary>

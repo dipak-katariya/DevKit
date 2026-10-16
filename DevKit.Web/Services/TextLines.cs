@@ -34,8 +34,8 @@ public sealed class LineSequence
 
 /// <summary>
 /// Turns file text into comparable line ids. Comparison ignores whitespace and skips blank lines, so
-/// re-indentation, a reformatted operator, CRLF against LF and an extra blank line — the usual
-/// by-products of resolving a conflict by hand — never read as missing code.
+/// re-indentation, a reformatted operator, CRLF against LF and an extra blank line (the usual
+/// by-products of resolving a conflict by hand) never read as missing code.
 /// </summary>
 public sealed class LineInterner
 {

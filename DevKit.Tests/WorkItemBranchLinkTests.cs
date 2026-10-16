@@ -39,7 +39,7 @@ public class WorkItemBranchLinkTests
     public void Does_not_match_the_same_branch_name_in_a_different_repository()
     {
         // Two repositories genuinely hold branches of this name, and both are linked to the work
-        // item — treating them as one would suppress a link that still needs creating.
+        // item. Treating them as one would suppress a link that still needs creating.
         Assert.False(Link().Matches(RepoB, Branch));
     }
 
