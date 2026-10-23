@@ -18,6 +18,7 @@ DevKit is a self‑hosted **Blazor Server** application that runs on your machin
 - [Tech Stack](#tech-stack)
 - [Getting Started](#getting-started)
 - [Shared on a server](#shared-on-a-server)
+  - [Run it on another machine](#run-it-on-another-machine)
 - [Configuration](#configuration)
 - [Project Structure](#project-structure)
 - [Security](#security)
@@ -92,7 +93,7 @@ Track your day from clock in/out entries.
 | Language | C# (nullable + implicit usings enabled) |
 | Integration | TFS / Azure DevOps Server REST API (default `api-version 5.0`), Windows sign-in (Negotiate/NTLM) or Basic auth with a PAT |
 | Front‑end | Hand‑written CSS ([`app.css`](DevKit.Web/wwwroot/app.css) plus `components.css`, `tools.css`, `merging.css`, `code-compare.css`) and vanilla JS ([`app.js`](DevKit.Web/wwwroot/app.js), `markdown.js`, `markdown-viewer.js`), no SPA framework |
-| Persistence | Per-user JSON file (`%LOCALAPPDATA%\DevKit\usersettings.json`), no database |
+| Persistence | Per-user JSON file (`%LOCALAPPDATA%\DevKit\usersettings.json`); in shared mode, each person's own browser; no database |
 
 ---
 
@@ -144,7 +145,7 @@ DevKit can run once on a shared machine for the whole team. What makes it shared
    icacls "%LOCALAPPDATA%\DevKit\devkit.json" /grant:r "%USERNAME%:F" "SYSTEM:F" "Administrators:F"
    ```
 
-2. **Start DevKit** there with `scripts\devkit-host.bat` (or `devkit host`). It cleans, restores and builds the Release build, then starts DevKit shared on port 5850, on every name of the machine, in Production. It stops before building when devkit.json is missing or port 5850 is already in use. `devkit run` starts the last build again without rebuilding.
+2. **Start DevKit** there with `scripts\devkit-host.bat` (or `devkit host`). It cleans, restores and builds the Release build, then starts DevKit shared on port 5850, on every name of the machine, in Production. It stops before building when devkit.json is missing or port 5850 is already in use. `devkit run` starts the last build again without rebuilding. To run DevKit on a machine without building it there, see [Run it on another machine](#run-it-on-another-machine).
 
 3. **Everyone opens** `http://<machine name>:5850` (for example `http://devbox:5850`) from their own PC. There is no link to pass around.
 
@@ -153,7 +154,12 @@ Without the file DevKit runs in local mode, which only lets in the machine it ru
 - **Sign-in page.** *Sign in with your Windows account* signs a browser on the domain in with nothing to type. *Sign in as someone else* takes a Windows username and password, which Windows itself checks against the domain; DevKit keeps neither. It is offered only over https or on the server itself: over plain http from another PC the password would cross the network unencrypted, so the form is turned off and a posted password is refused before Windows sees it. A refusal never says whether the account exists, is locked or is disabled; the audit log does.
 - **Session.** A sign-in lasts **5 days** (`SessionDays`) and then asks again. **Sign out** in the top bar ends it in every tab of that browser, so the next person can sign in. A session works only from the address it signed in from, so a copied session cookie is useless on any other machine; a PC whose address changes signs in again, and the audit log records it.
 - **Several people, one machine.** Everyone has their own session and their own settings, wherever they sit. People signed in to the server itself (for example over Remote Desktop) each use their own Windows account and their own browser profile, so each signs in as themselves and sees only their own token and settings.
-- **Each person's own TFS token and settings.** After signing in, each person enters their PAT once in **⚙ Settings**. It and their settings are kept in **a file of their own on the server**, `%LOCALAPPDATA%\DevKit\users\`, encrypted for their Windows account and loaded only when that account signs in. They come back on every later visit, from any PC or browser, after DevKit restarts or is updated, and when DevKit moves to another address. Files are named by a hash of the account, so no names appear on disk, and nobody else's sign-in reads them. The account DevKit runs as and the server's administrators hold the keys, so they could in principle decrypt them. A copy an earlier DevKit kept in a person's browser moves to the server on their first visit, if their browser still has it for the address in use.
+- **Each person's own TFS token and settings, kept only on their own PC.** After signing in, each person enters their PAT once in **⚙ Settings**. It and their settings are kept **in their own browser on their own PC, never on the server**. DevKit seals them with AES-256-GCM for their Windows account, under a key of their own that the Windows domain locks to the account DevKit runs as (DPAPI-NG). The browser keeps them, with that locked key, in cookies that are `HttpOnly`, `SameSite=Strict`, `Secure` over https, and sent only to DevKit's `/devkit-vault` address, so other sites never receive them. The browser also encrypts its cookies on disk for the person's Windows account. The server keeps no key and no settings.
+  - **They follow DevKit to another server, with nothing copied.** The cookies belong to the machine's DNS domain (for example `metatreesystems.com`), and the domain opens their keys for the account DevKit runs as on any machine in it. So every DevKit server in the domain running as that same Windows account reads them: they come back on every later visit, after DevKit restarts or is updated, and when DevKit moves to another machine. A browser that opens DevKit by its short name or IP address keeps them for that name only.
+  - **They stay on that PC.** Another browser or PC starts empty: enter the PAT once there. Clearing the browser's cookies removes them.
+  - **Nobody else's.** Cookie names are a hash of the account, so no names show, and settings sealed for one account never open as another's. Only a program running as the account DevKit runs as can have the domain open a person's key, so another site in the domain that got someone's cookies could not read them; whoever signs in to Windows as that account could.
+  - **When the domain does not answer.** DevKit asks a domain controller to open a person's key, or uses keys Windows already has from one. While it cannot, Settings says so and nothing is saved, so nobody's settings are overwritten; reloading the page once the domain answers brings them back.
+  - **Moved off the server once.** Settings an earlier DevKit kept on the server (`%LOCALAPPDATA%\DevKit\users`) or in a browser move into the person's browser on their next visit, and are then deleted from the server.
 - **Windows sign-in to TFS** acts as the account DevKit runs as, so in shared mode only that account may use it; everyone else uses their PAT.
 - **The TFS server is fixed** for everyone by `TfsUrl`, so nobody can point DevKit, and their token, at another server.
 - **Audit log.** Sign-ins, sign-outs and failed attempts are recorded as `user@machine`, with the reason, in `%LOCALAPPDATA%\DevKit\audit\signin-<yyyy-MM>.log` on the server. Passwords and tokens never appear in it.
@@ -168,11 +174,40 @@ Without the file DevKit runs in local mode, which only lets in the machine it ru
 | `SessionDays` | `5` | How long a sign-in lasts, from 1 to 30 days. |
 | `HostNames` | this machine's names and addresses | The host names browsers may use; any other name is refused. |
 | `Domain` | this machine's domain | The domain of a username typed without one. |
-| `AuditFolder` | `%LOCALAPPDATA%\DevKit\audit` | Where the audit log is written. Everyone's settings are kept in `%LOCALAPPDATA%\DevKit\users`, and the keys that encrypt them and the sessions in `%LOCALAPPDATA%\DevKit\keys`. Back up both together: one without the other cannot be read. |
+| `AuditFolder` | `%LOCALAPPDATA%\DevKit\audit` | Where the audit log is written. The keys that encrypt sessions are in `%LOCALAPPDATA%\DevKit\keys`. |
 
 > Over plain `http`, the session cookie, the PAT someone types in Settings and every page cross the network unencrypted. *Sign in with your Windows account* sends no password, and the typed-password form is turned off. To serve https instead, give the same devkit.json a Kestrel endpoint with a certificate: it replaces the script's http address, the session cookie becomes `Secure`, and *Sign in as someone else* comes back.
 >
 > At start, DevKit opens one test connection to its https endpoint. It prints the link to share with the short machine name when the certificate covers it, since browsers sign in with Windows automatically only for names without dots. When the test fails, which a certificate whose private key Windows cannot use does, it logs an Error that says so.
+
+### Run it on another machine
+
+To keep DevKit running on a machine that stays on, make a package on your own machine and copy it there. That machine needs no .NET install and no copy of this repository.
+
+1. **Make the package** with `scripts\devkit-deploy.bat` (or `devkit publish`). It restores, cleans and publishes DevKit self-contained for 64-bit Windows into `Release\` at the root of this repository:
+
+   | In `Release\` | What it is |
+   |---|---|
+   | `devkit-run.bat` | Starts DevKit shared and keeps it running |
+   | `app\` | DevKit, with the .NET runtime it needs |
+   | `tools\` | The checks `devkit-run.bat` shares with `devkit-host.bat`, and the script that writes its Startup file |
+   | `README.md` | This file |
+
+   `Release\` is made again from nothing each time, so keep nothing else in it. No settings, tokens or keys ever go into it: DevKit keeps those per account on the machine it runs on. The script stops when a DevKit is running from `Release\` on your machine, and removes a package it could not finish.
+2. **Copy the whole `Release` folder** to the other machine, for example to `D:\DevKit`.
+3. **Create devkit.json there** for the account DevKit will run as, as in step 1 above, with a certificate if you want https. **When DevKit ran on another machine before**, run it here as the same Windows account: it then opens everyone's settings, which stay in their browsers, with nothing copied from the old machine, so nobody enters anything again. Under another account, people's settings stay unread until DevKit runs as the account that saved them, and anyone who saves in between replaces theirs.
+4. **Run `devkit-run.bat`** there, signed in as that account. Like `devkit-host.bat`, it stops before starting when devkit.json is missing or port 5850 is in use, then starts DevKit shared, in Production, on port 5850.
+
+How it stays up:
+
+- **When DevKit stops with an error**, `devkit-run.bat` starts it again after 30 seconds. When it stops with an error within 5 minutes of starting 5 times in a row, something needs fixing first, such as devkit.json or the certificate, so the script stops too and leaves the messages on screen.
+- **Each start and stop** is written, with the time and the exit code, to `devkit-run.log` beside devkit.json (`%LOCALAPPDATA%\DevKit\devkit-run.log`). DevKit's own messages stay in the window.
+- **To stop it**, press Ctrl+C in its window and answer Y, or close the window.
+- **It runs while that account is signed in.** A disconnected Remote Desktop session keeps it running; signing out stops it.
+- **It starts again by itself at sign-in.** Each start puts `DevKit.cmd`, a five-line file that starts `devkit-run.bat`, in that account's own Startup folder (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`, also `shell:startup`), or replaces it when the package moved or the port changed, and leaves it alone otherwise. So after a restart DevKit starts, in a minimized window, as soon as that account signs in; until someone signs in, it waits. No administrator rights or stored password are needed. To stop it starting by itself, delete `DevKit.cmd` from that folder, or run `devkit remove`. A run with its own `DEVKIT_SETTINGS_PATH`, such as a test copy, adds nothing there.
+- **No PowerShell.** `devkit-run.bat` and the script that writes `DevKit.cmd` are plain batch files, since endpoint protection such as Cortex XDR blocks a PowerShell script that writes to the Startup folder ("Suspicious script detected"). A `DevKit.lnk` shortcut an earlier DevKit put there is removed, so DevKit starts once.
+- **To update it**, make a new package, stop DevKit on that machine, replace its folder with the new `Release` folder, and run `devkit-run.bat` again. Everyone's settings stay in their browsers, and the session keys in `%LOCALAPPDATA%\DevKit` of that account, not in the package.
+- **Another port.** `set DEVKIT_PORT=5860` before running either script uses that port instead of 5850. With https, the port is the one in devkit.json's Kestrel `Url`, so keep the two the same.
 
 ### DevKit's own certificate (no IT needed)
 
@@ -255,8 +290,12 @@ DevKit/
 ├─ .github/workflows/ci.yml         # Windows CI: build, tests, coverage, Sonar report
 ├─ devkit.bat                       # CLI entry point: host / run / local / publish / autostart / status
 ├─ scripts/
-│  └─ devkit-host.bat               # Clean, restore, build, then start DevKit shared on this machine
+│  ├─ devkit-host.bat               # Clean, restore, build, then start DevKit shared on this machine
+│  ├─ devkit-deploy.bat             # Package DevKit into Release\ to run on another machine
+│  └─ devkit-run.bat                # In the package: start DevKit shared and keep it running
 ├─ tools/
+│  ├─ devkit-startup.bat            # In the package: writes DevKit.cmd in the account's Startup folder
+│  ├─ set-hosted-env.bat            # Checks and settings shared by devkit-host.bat and devkit-run.bat
 │  └─ set-sdk.bat                   # Resolves the SDK the CLI selects for global.json
 ├─ DevKit.Tests/                    # xUnit tests, end-to-end tests that run the built app
 └─ DevKit.Web/                      # Blazor Server application
@@ -304,7 +343,7 @@ DevKit/
 - Prefer an **`https`** server URL: the PAT is sent as HTTP Basic auth, so over plain `http` to a remote host it travels unencrypted; a Windows sign-in sends no password, but its exchange can be relayed and the data is readable. Settings warns when a non‑local `http` URL is used.
 - **Only the person who started DevKit can use it.** Everyone signed in to the same machine can reach a localhost port, and so can any web page open in your browser; without a lock they would all act with your PAT. Each start creates a random 256-bit key, prints the sign-in link and opens it; the link swaps the key for an `HttpOnly`, `SameSite=Strict` cookie and every other request gets a locked page. Requests from another machine, addressed to another host name (DNS rebinding), or sent from another origin (including the Blazor WebSocket) are refused. A restart creates a new key, so open the new link it prints; tabs from before it are signed out. Set `DEVKIT_NO_BROWSER=1` to only print the link.
 - In local mode the app answers on **`localhost`** only; shared mode answers on this machine's own names (see above). Both send hardening response headers (including a CSP).
-- **Shared mode** replaces the link with the sign-in page; see [Shared on a server](#shared-on-a-server). Requests for another host name, or sent from another site (forms, the WebSocket), are still refused; every sign-in form carries an anti-forgery token; and the session cookie is `HttpOnly`. The keys that encrypt sessions and everyone's settings files stay on the server, encrypted for the account DevKit runs as. If they are lost, everyone signs in again and enters their PAT again; the unreadable files are set aside, never deleted. A settings file or folder replaced by a link is refused.
+- **Shared mode** replaces the link with the sign-in page; see [Shared on a server](#shared-on-a-server). Requests for another host name, or sent from another site (forms, the WebSocket), are still refused; every sign-in form carries an anti-forgery token; and the session cookie is `HttpOnly`. The keys that encrypt sessions stay on the server, encrypted for the account DevKit runs as; losing them only signs everyone out. Everyone's settings are sealed in their own browsers, each under a key of their own that the domain locks to the account DevKit runs as (see [Shared on a server](#shared-on-a-server)), and the server keeps no settings and no key to them. The settings folder an earlier DevKit kept on the server, or a file in it, replaced by a link is refused.
 - The app ships with **zero NuGet packages**: PAT encryption uses the OS DPAPI directly via P/Invoke, and shared mode's Windows sign-in uses .NET's own NTLM support, with no third‑party dependency.
 
 ---
@@ -323,12 +362,15 @@ dotnet build DevKit.sln -c Release -p:DevKitSonarAnalyzer=true
 
 # Framework-dependent publish to ./publish
 dotnet publish DevKit.Web/DevKit.Web.csproj -c Release -o ./publish
+
+# Self-contained package in Release\ to run on another machine (see "Run it on another machine")
+scripts\devkit-deploy.bat
 ```
 
 ### .NET SDK selection
 
-[`scripts/devkit-host.bat`](scripts/devkit-host.bat) and `devkit.bat` do **not** hardcode an SDK
-version or install path. Each one calls [`tools/set-sdk.bat`](tools/set-sdk.bat)
+[`scripts/devkit-host.bat`](scripts/devkit-host.bat), [`scripts/devkit-deploy.bat`](scripts/devkit-deploy.bat)
+and `devkit.bat` do **not** hardcode an SDK version or install path. Each one calls [`tools/set-sdk.bat`](tools/set-sdk.bat)
 first, which runs `dotnet --version` from the repository root (the folder that owns
 `global.json`), lets the CLI apply the `rollForward` rule, then points
 `MSBuildSDKsPath` at exactly the SDK the CLI resolved. MSBuild and the CLI therefore
@@ -336,8 +378,8 @@ always agree.
 
 `global.json` is the only place a version number belongs. Installing a newer SDK needs
 no change here; if no installed SDK satisfies `global.json`, the scripts fail with the
-list of installed SDKs and exit 1. `scripts\devkit-host.bat` exits with the failing step's
-exit code; pass `--no-pause` to run it unattended. Never reintroduce a literal
+list of installed SDKs and exit 1. `scripts\devkit-host.bat` and `scripts\devkit-deploy.bat`
+exit with the failing step's exit code; pass `--no-pause` to run them unattended. Never reintroduce a literal
 `set MSBuildSDKsPath=C:\Program Files\dotnet\sdk\<version>\Sdks`. It breaks on the
 next patch install.
 
@@ -355,8 +397,11 @@ next patch install.
 | Shared mode over https: Edge or Chrome shows `ERR_HTTP2_INADEQUATE_TRANSPORT_SECURITY` | The server's cipher policy chose an AES-CBC suite for an RSA certificate. Make [DevKit's own certificate](#devkits-own-certificate-no-it-needed) with an ECDSA key, as shown there. |
 | Shared mode over https: the browser warns the connection is not private | That PC has not installed DevKit's certificate yet. Install the `.cer` file as described under [DevKit's own certificate](#devkits-own-certificate-no-it-needed). |
 | Shared mode: signed out before the 5 days were up | The PC's address changed (another network, Wi-Fi, VPN), and a session works only from the address it signed in from. Sign in again. |
-| `devkit-host.bat`: "Port 5850 is already in use" | A DevKit is already running. Close its window, then run the script again. |
-| Shared mode: Settings says the settings file was damaged | The server's keys changed (for example, DevKit now runs under another account, or `keys` was not restored with `users`), so that person's file can no longer be decrypted. It was set aside beside the others; enter your PAT again. |
+| `devkit-host.bat` or `devkit-run.bat`: "Port 5850 is already in use" | A DevKit is already running. Close its window, then run the script again. |
+| `devkit-deploy.bat`: "Release is in use, so it was left as it is" | A DevKit on your machine is running from `Release\` (for example one `devkit run` started), which locks its files. Close it, then run the script again. |
+| `devkit-run.bat`: "so it is not started again" | DevKit stopped with an error soon after starting, 5 times in a row. The messages above it in the window say why, often a missing `TfsUrl` or a certificate Windows cannot use. Fix that, then run `devkit-run.bat` again. |
+| Shared mode: Settings says your settings were saved by DevKit running under another Windows account | DevKit now runs as another account than the one that saved them, for example after a move to another machine. Stop DevKit, start it again as the account it ran as before, and reload the page; nothing is lost as long as nobody saved in between. Saving here instead replaces them with settings sealed for this account. |
+| Shared mode: Settings says DevKit could not open your settings just now | The domain did not open the person's key, usually because no domain controller answered. Nothing is saved meanwhile, so nothing is overwritten. Reload the page in a minute. If it keeps happening for everyone, DevKit's window says why at start: shared DevKit runs as a domain account, on a machine in the domain. |
 | Browser doesn't open, or the page says DevKit is locked | Open the `DevKit is ready: …` link from the DevKit window. A bookmark to http://localhost:5850 works once the browser has signed in during this run. |
 
 ---

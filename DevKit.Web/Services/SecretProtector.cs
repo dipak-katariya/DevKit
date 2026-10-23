@@ -144,3 +144,40 @@ internal static class SecretProtector
     [DllImport("kernel32.dll")]
     private static extern IntPtr LocalFree(IntPtr hMem);
 }
+
+/// <summary>How a settings store keeps the PAT inside the settings text it holds. Either way it is read with <see cref="SecretProtector.Unprotect"/>.</summary>
+internal abstract class PatAtRest
+{
+    /// <summary>
+    /// Encrypted on its own with DPAPI, for the Windows account and machine DevKit runs on and for its TFS server: the
+    /// settings file, which is plain text to anyone who can open it.
+    /// </summary>
+    public static readonly PatAtRest Dpapi = new DpapiPat();
+
+    /// <summary>
+    /// As it is, inside text the store encrypts as a whole with a key of its own (<see cref="ClientVault"/>). DPAPI would
+    /// tie it to this machine, and the settings in a person's browser are read by every DevKit server running as the
+    /// same account.
+    /// </summary>
+    public static readonly PatAtRest InSealedText = new SealedTextPat();
+
+    public abstract string Protect(string pat, string context);
+
+    /// <summary>Whether a stored PAT is already in the form this store writes, so it needs no saving again.</summary>
+    public abstract bool IsCurrent(string stored);
+
+    private sealed class DpapiPat : PatAtRest
+    {
+        public override string Protect(string pat, string context) => SecretProtector.Protect(pat, context);
+
+        public override bool IsCurrent(string stored) => SecretProtector.IsCurrent(stored);
+    }
+
+    private sealed class SealedTextPat : PatAtRest
+    {
+        public override string Protect(string pat, string context) => pat;
+
+        // One still encrypted with DPAPI came from the server or an earlier browser copy, and only this machine reads it.
+        public override bool IsCurrent(string stored) => !SecretProtector.IsProtected(stored);
+    }
+}

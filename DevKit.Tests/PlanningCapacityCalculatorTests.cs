@@ -39,16 +39,24 @@ public partial class PlanningCapacityCalculatorTests
 
     private static DateRange Off(DateTime from, DateTime? to = null) => new() { Start = from, End = to ?? from };
 
+    /// <summary>Capacity where each person is in one TFS team.</summary>
     private static SprintCapacity Capacity(params (string Name, double PerDay, DateRange[] Off)[] people)
     {
         var cap = new SprintCapacity { Start = SprintStart, Finish = SprintFinish, Loaded = true };
         foreach (var p in people)
         {
-            var key = PlanningCapacityCalculator.NormalizeMemberName(p.Name);
-            cap.Members[key] = new MemberCapacity { DisplayName = p.Name, NormalizedName = key, CapacityPerDay = p.PerDay, DaysOff = p.Off.ToList() };
+            AddMember(cap, p.Name, InTeam("Team", p.PerDay, p.Off));
         }
         return cap;
     }
+
+    private static void AddMember(SprintCapacity cap, string name, params TeamMemberCapacity[] teams)
+    {
+        cap.Members[PlanningCapacityCalculator.NormalizeMemberName(name)] = new MemberCapacity { DisplayName = name, Teams = teams.ToList() };
+    }
+
+    private static TeamMemberCapacity InTeam(string team, double perDay, params DateRange[] off) =>
+        new() { Team = team, CapacityPerDay = perDay, DaysOff = off.ToList() };
 
     private static SprintWorkData Data(IEnumerable<WorkItem> tasks, SprintCapacity sprintCapacity, params WorkItem[] parents) =>
         new(tasks.ToList(), sprintCapacity, parents.ToDictionary(p => p.Id, p => p));
@@ -205,8 +213,9 @@ public partial class PlanningCapacityCalculatorTests
     {
         const string who = "A";
         var holiday = new DateTime(2026, 9, 16);
-        var cap = Capacity((who, 8, new[] { Off(holiday) }));
-        cap.TeamDaysOff.Add(Off(holiday));
+
+        // A member's days off carry their team's days off beside their own, so one date can be listed twice.
+        var cap = Capacity((who, 8, new[] { Off(holiday), Off(holiday) }));
 
         var m = Only(Build(Data(new[] { Task(who, 10) }, cap)));
 
@@ -243,4 +252,96 @@ public partial class PlanningCapacityCalculatorTests
         Assert.Null(m.ExpectedPct);
     }
 
+    [Fact]
+    public void A_member_split_over_two_teams_gets_each_teams_hours_less_that_teams_own_leave()
+    {
+        // 4.5 h a day in Alpha, which is off on Wednesday 16th, and 4 h in Beta, which works all ten days.
+        const string who = "Split";
+        var cap = Capacity();
+        AddMember(cap, who, InTeam("Alpha", 4.5, Off(new DateTime(2026, 9, 16))), InTeam("Beta", 4));
+        var regular = new CapacityPlanningSettings { Mode = PlanningMode.Regular };
+
+        var m = Only(Build(Data(new[] { Task(who, 80.5) }, cap), regular));
+
+        Assert.True(m.CapacityFromTfs);
+        Assert.Equal(8.5, m.CapacityPerDay);
+        Assert.Equal(80.5, m.ActualCapacity);        // 4.5 × 9 + 4 × 10
+        Assert.Equal(0.53, m.LeaveDays);             // Alpha's day, worth 4.5 of the 8.5 hours
+        Assert.Equal(100, m.PlanningPctReviewDay);
+        Assert.Equal(
+            new[] { new TeamCapacityShare("Alpha", 4.5, 1, 40.5), new TeamCapacityShare("Beta", 4, 0, 40) },
+            m.TfsTeams);
+    }
+
+    [Fact]
+    public void A_split_members_expected_progress_weighs_each_teams_leave_by_its_hours()
+    {
+        // Monday 21st: 5 days are behind us. Alpha's 4.5 h had 4 of them (off on the 16th), Beta's 4 h all 5.
+        const string who = "Split";
+        var cap = Capacity();
+        AddMember(cap, who, InTeam("Alpha", 4.5, Off(new DateTime(2026, 9, 16))), InTeam("Beta", 4));
+
+        var m = Only(Build(Data(new[] { Task(who, 80) }, cap), today: new DateTime(2026, 9, 21)));
+
+        Assert.Equal(47.2, m.ExpectedPct);           // (4.5 × 4 + 4 × 5) of (4.5 × 9 + 4 × 10) hours
+    }
+
+    [Fact]
+    public void A_team_the_member_has_no_hours_in_takes_nothing_off_them()
+    {
+        const string who = "A";
+        var cap = Capacity();
+        AddMember(cap, who, InTeam("Alpha", 8), InTeam("Beta", 0, Off(new DateTime(2026, 9, 16), new DateTime(2026, 9, 18))));
+
+        var m = Only(Build(Data(new[] { Task(who, 10) }, cap)));
+
+        Assert.Equal(0, m.LeaveDays);
+        Assert.Equal(80, m.ActualCapacity);
+        Assert.Empty(m.TfsTeams);
+    }
+
+    [Fact]
+    public void Without_tfs_hours_a_member_in_two_teams_is_off_whenever_either_team_is()
+    {
+        const string who = "A";
+        var cap = Capacity();
+        AddMember(cap, who, InTeam("Alpha", 0, Off(new DateTime(2026, 9, 16))), InTeam("Beta", 0, Off(new DateTime(2026, 9, 17))));
+
+        var m = Only(Build(Data(new[] { Task(who, 10) }, cap)));
+
+        Assert.False(m.CapacityFromTfs);
+        Assert.Equal(2, m.LeaveDays);
+        Assert.Equal(68, m.ActualCapacity);          // the default 8.5 h × 8
+    }
+
+    [Fact]
+    public void With_tfs_hours_ignored_the_configured_hours_still_split_by_team_for_leave()
+    {
+        const string who = "A";
+        var cap = Capacity();
+        AddMember(cap, who, InTeam("Alpha", 6, Off(new DateTime(2026, 9, 16))), InTeam("Beta", 2));
+        var settings = new CapacityPlanningSettings { UseTfsMemberCapacity = false, HoursPerDay = 8 };
+
+        var m = Only(Build(Data(new[] { Task(who, 10) }, cap), settings));
+
+        Assert.False(m.CapacityFromTfs);
+        Assert.Equal(0.75, m.LeaveDays);             // Alpha holds 6 of the member's 8 TFS hours
+        Assert.Equal(74, m.ActualCapacity);          // 8 × (10 − 0.75)
+        Assert.Equal(
+            new[] { new TeamCapacityShare("Alpha", 6, 1, 54), new TeamCapacityShare("Beta", 2, 0, 20) },
+            m.TfsTeams);
+    }
+
+    [Fact]
+    public void A_member_no_team_lists_takes_the_days_off_every_team_shares()
+    {
+        var cap = Capacity();
+        cap.SharedDaysOff.Add(Off(new DateTime(2026, 9, 16)));
+
+        var m = Only(Build(Data(new[] { Task("Newcomer", 10) }, cap)));
+
+        Assert.False(m.CapacityFromTfs);
+        Assert.Equal(1, m.LeaveDays);
+        Assert.Equal(76.5, m.ActualCapacity);        // the default 8.5 h × 9
+    }
 }

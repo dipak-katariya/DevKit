@@ -159,8 +159,8 @@
             <summary>ƒ How the numbers are worked out</summary>
             <div class="cp-formula-body">
                 <div><span>Sprint days</span><code>@SprintDaysExplanation</code></div>
-                <div><span>Leave</span><code>member days off + team days off, on working days inside the sprint</code></div>
-                <div><span>Actual</span><code>(sprint days − leave) × capacity per day (@CapacityPerDayExplanation)</code></div>
+                <div><span>Leave</span><code>member days off + their own TFS team's days off, on working days inside the sprint. In several TFS teams: each team's leave, weighted by the member's hours in it</code></div>
+                <div><span>Actual</span><code>(sprint days − leave) × capacity per day (@CapacityPerDayExplanation). In several TFS teams this is the sum of each team's hours × (sprint days − that team's leave)</code></div>
                 @if (IsAi)
                 {
                     <div><span>AI hours</span><code>max(0, Actual − carved-out hours) × @OverPlanLabel (carved out: @ExcludedTagsLabel)</code></div>
@@ -177,6 +177,7 @@
                 <div><span>Bugs %</span><code>Completed Work on bug work ÷ all Completed Work. Bug work is a Bug, a task under a Bug, or a task tagged "@BugWork.MaintenanceTag".</code></div>
                 <div><span>Expected</span><code>available days already elapsed ÷ available days. Today counts once it is over; leave comes off both sides.</code></div>
                 <div><span>Teams</span><code>Development = @string.Join(", ", settings.DevDisciplines) · QA = @string.Join(", ", settings.QaDisciplines) · Entire = every discipline</code></div>
+                <div><span>TFS teams</span><code>Capacity comes from the TFS teams whose areas take in the selected area. A member with hours only in other teams keeps their hours from those teams. A member no team lists gets the days off all those teams share.</code></div>
             </div>
         </details>
     }
@@ -190,6 +191,10 @@
             <div class="modal-body">
                 <div class="modal-row"><span class="label">Cap / day</span><span>@breakdown.CapacityPerDay.ToString("0.##") h @(breakdown.CapacityFromTfs ? "(TFS)" : "(default)")</span></div>
                 <div class="modal-row"><span class="label">Sprint days</span><span>@breakdown.SprintDays − @breakdown.LeaveDays.ToString("0.##") leave = @breakdown.AvailableDays.ToString("0.##")</span></div>
+                @foreach (var team in breakdown.TfsTeams)
+                {
+                    <div class="modal-row"><span class="label">@team.Team</span><span>@team.CapacityPerDay.ToString("0.##") h × (@breakdown.SprintDays − @team.LeaveDays.ToString("0.##") leave) = @team.ActualCapacity.ToString("0.##") h</span></div>
+                }
                 <div class="modal-row"><span class="label">Actual</span><span style="font-weight:700;">@breakdown.ActualCapacity.ToString("0.##") h</span></div>
                 @if (IsAi)
                 {
@@ -281,7 +286,7 @@
             // Tasks and team capacity are independent, so they load side by side. WhenAll first, so
             // a failure in one never leaves the other's exception unobserved.
             var tasksTask = TfsApi.LoadTasksForCapacityAsync(area.Project, areaPath, iterPath, ct);
-            var capTask = TfsApi.GetSprintCapacityAsync(area.Project, iterPath, ct);
+            var capTask = TfsApi.GetSprintCapacityAsync(area.Project, areaPath, iterPath, ct);
             await Task.WhenAll(tasksTask, capTask);
             var tasks = await tasksTask;
             var cap = await capTask;
@@ -374,7 +379,7 @@
             }
             if (capacity.TeamsUnread > 0)
             {
-                return $"{capacity.TeamsUnread} of {capacity.TeamsScanned} teams could not be fully read, so some members use the default {settings.HoursPerDay:0.##} h a day or keep leave that should be deducted.";
+                return $"{capacity.TeamsUnread} of {capacity.TeamsScanned} teams could not be fully read, so some members may miss a team's hours, use the default {settings.HoursPerDay:0.##} h a day, or keep leave that should be deducted.";
             }
             if (capacity.Members.Count == 0)
             {
@@ -413,7 +418,7 @@
     }
 
     private string CapacityPerDayExplanation => settings.UseTfsMemberCapacity
-        ? $"the member's TFS capacity, else {settings.HoursPerDay:0.##} h"
+        ? $"the member's TFS capacity added up over their TFS teams, else {settings.HoursPerDay:0.##} h"
         : $"{settings.HoursPerDay:0.##} h for everyone";
 
     private string ExcludedTagsLabel

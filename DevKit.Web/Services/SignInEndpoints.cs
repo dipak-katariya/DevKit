@@ -270,7 +270,7 @@ internal static class SignInPage
               <div class="signin-divider"><span>or sign in as someone else</span></div>
             {{password}}
               <footer class="signin-footer">
-                After you sign in, your TFS token and settings are kept encrypted on the DevKit server and loaded only for your Windows account.
+                After you sign in, your TFS token and settings are kept encrypted in this browser on your PC, for your Windows account only, and never on the DevKit server.
                 Sign-ins, sign-outs and failed attempts are recorded as user@machine in the server's audit log.
               </footer>
             </main>

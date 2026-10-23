@@ -5,6 +5,8 @@
 
     var FOCUS_DELAY_MS = 30;
     var CLICK_BIND_DELAY_MS = 10;
+    var VAULT_ADDRESS = '/devkit-vault';
+    var HTTP_NO_CONTENT = 204;
 
     // The parser, and the escaping it applies to every link, image and span of text, live in
     // markdown.js. This file never builds markup of its own.
@@ -116,6 +118,32 @@
         renderMarkdown: function (src) {
             var el = document.getElementById('mdPreview');
             if (el) el.innerHTML = src ? parseMarkdown(src) : '';
+        },
+
+        // Shared mode keeps the person's settings in this browser's cookies, sealed by DevKit (ClientVault.cs). The
+        // cookies are HttpOnly, so this page only carries the sealed text between DevKit and the server, and cannot
+        // open it. A thrown error reaches DevKit as the reason the settings were not read or kept.
+        loadVault: async function () {
+            var response = await fetch(VAULT_ADDRESS, { credentials: 'same-origin', cache: 'no-store' });
+            if (response.status === HTTP_NO_CONTENT) {
+                return null;
+            }
+            if (!response.ok) {
+                throw new Error('The settings kept in this browser could not be read (HTTP ' + response.status + ').');
+            }
+            return await response.text();
+        },
+        saveVault: async function (sealed) {
+            var response = await fetch(VAULT_ADDRESS, {
+                method: 'POST',
+                credentials: 'same-origin',
+                cache: 'no-store',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sealed: sealed })
+            });
+            if (!response.ok) {
+                throw new Error('This browser did not keep the settings (HTTP ' + response.status + ').');
+            }
         },
 
         registerClickOutside: registerClickOutside,

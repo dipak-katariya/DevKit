@@ -23,6 +23,8 @@ secrets.json
 [Pp]ublish/
 [Dd]ebug/
 [Rr]elease/
+# The old package scripts\devkit-deploy.bat moves aside before deleting it
+[Rr]elease.old/
 [Dd]ebugPublic/
 [Rr]eleases/
 x64/

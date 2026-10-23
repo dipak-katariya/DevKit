@@ -5,9 +5,9 @@ using DevKit.Web.Models;
 namespace DevKit.Web.Services;
 
 /// <summary>
-/// The user's settings, held in memory and kept with the PAT encrypted at rest for the server it belongs to: in a
-/// per-user usersettings.json (see <see cref="SettingsFile"/>) in local mode, or in shared mode in the signed-in
-/// person's own file on the DevKit server (see <see cref="ServerSettingsStore"/>). Every change is saved as it is
+/// The user's settings, held in memory and kept with the PAT encrypted at rest: in a per-user usersettings.json (see
+/// <see cref="SettingsFile"/>) in local mode, with the PAT encrypted for its server, or in shared mode in the signed-in
+/// person's own browser, sealed as a whole (see <see cref="ClientSettingsStore"/>). Every change is saved as it is
 /// made, and a save that fails is reported through <see cref="LastSaveError"/> rather than lost. Repository branch
 /// settings live in SettingsService.Repos.cs; the stored shape is <see cref="UserSettings"/>.
 /// </summary>
@@ -54,7 +54,7 @@ public partial class SettingsService
     }
 
     /// <summary>
-    /// Shared mode: one person's settings, kept in their own file on the server. Nothing is in use until
+    /// Shared mode: one person's settings, kept in their own browser. Nothing is in use until
     /// <see cref="LoadFromStore"/> runs, once the store knows who is signed in.
     /// </summary>
     /// <param name="fixedTfsUrl">The one TFS server everyone works against; people cannot point DevKit elsewhere.</param>
@@ -67,7 +67,7 @@ public partial class SettingsService
         _settings.Tfs.Url = fixedTfsUrl;
     }
 
-    /// <summary>Where the settings are kept: the settings file, or (shared mode) this person's file on the server.</summary>
+    /// <summary>Where the settings are kept: the settings file, or (shared mode) this person's browser.</summary>
     public string SettingsFilePath => _store.Location;
 
     /// <summary>The TFS server everyone in shared mode works against; null in local mode, where the user picks it.</summary>
@@ -84,12 +84,34 @@ public partial class SettingsService
     /// server is always <see cref="FixedTfsUrl"/>; a PAT saved for another server is dropped rather than sent to this one.
     /// </summary>
     /// <param name="allowsWindowsSignIn">Whether this person is the account DevKit runs as.</param>
-    internal void LoadFromStore(bool allowsWindowsSignIn)
+    /// <param name="earlierText">
+    /// Settings an earlier DevKit kept somewhere else, read instead of the store's, which holds none, and then saved
+    /// into it; null to read the store.
+    /// </param>
+    internal void LoadFromStore(bool allowsWindowsSignIn, string? earlierText = null)
     {
         lock (_sync)
         {
             AllowsWindowsSignIn = allowsWindowsSignIn;
-            Load(_store.ReadText);
+            if (earlierText is null)
+            {
+                Load(_store.ReadText);
+                return;
+            }
+
+            Load(() => earlierText);
+            // The store keeps them from now on, also when nothing in them needed saving again.
+            Save();
+        }
+    }
+
+    /// <summary>A store that finishes a save after <see cref="Save"/> returned (a person's browser) reports here one that failed.</summary>
+    internal void ReportSaveFailed(string error)
+    {
+        lock (_sync)
+        {
+            LastSaveError = error;
+            Changed?.Invoke();
         }
     }
 
@@ -293,14 +315,15 @@ public partial class SettingsService
 
         try
         {
-            _store.Write(JsonSerializer.Serialize(BuildPersistableCopy(), FileFormat));
+            // Cleared first, so a failure the store reports while it writes (the browser's) is not wiped out after it.
             LastSaveError = null;
+            _store.Write(JsonSerializer.Serialize(BuildPersistableCopy(), FileFormat));
             return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or CryptographicException)
         {
             _logger.LogError(ex, "Settings could not be saved");
-            LastSaveError = SaveFailedMessage;
+            LastSaveError = _store.SaveFailedMessage ?? SaveFailedMessage;
             return false;
         }
     }
@@ -329,7 +352,7 @@ public partial class SettingsService
             _undecryptablePat = null;
         }
 
-        return !string.IsNullOrEmpty(loaded.Tfs.Pat) && !SecretProtector.IsCurrent(stored);
+        return !string.IsNullOrEmpty(loaded.Tfs.Pat) && !_store.Pat.IsCurrent(stored);
     }
 
     /// <summary>
@@ -395,10 +418,10 @@ public partial class SettingsService
     private string PersistedPat() =>
         string.IsNullOrEmpty(_settings.Tfs.Pat) && _undecryptablePat is not null
             ? _undecryptablePat
-            : SecretProtector.Protect(_settings.Tfs.Pat, PatContext(_settings.Tfs.Url));
+            : _store.Pat.Protect(_settings.Tfs.Pat, PatContext(_settings.Tfs.Url));
 
     // The PAT is held in memory as plaintext (the API client needs it) but persisted
-    // encrypted. Build a copy with the protected PAT so the in-memory value is untouched.
+    // encrypted, by itself or with the whole text. Build a copy so the in-memory value is untouched.
     private UserSettings BuildPersistableCopy() => new()
     {
         Tfs = new TfsSettings

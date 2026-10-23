@@ -2,7 +2,9 @@ using System.Net.Security;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Security.Principal;
+using System.Text;
 using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.Win32.SafeHandles;
 
@@ -12,6 +14,9 @@ namespace DevKit.Web.Services;
 /// <param name="IsOwner">Whether this is the Windows account DevKit itself runs as.</param>
 public sealed record SignedInUser(string Id, string Name, bool IsOwner)
 {
+    /// <summary>A hash of the account's identifier, which names the person's settings wherever they are kept without naming them.</summary>
+    public byte[] IdHash() => SHA256.HashData(Encoding.UTF8.GetBytes(Id));
+
     /// <summary>The account with this identifier and name; it is the owner when it is the account DevKit runs as.</summary>
     public static SignedInUser Of(string id, string name, string ownerId) =>
         new(id, name, string.Equals(id, ownerId, StringComparison.Ordinal));

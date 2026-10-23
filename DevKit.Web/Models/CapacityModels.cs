@@ -12,16 +12,32 @@ public class DateRange
     public DateTime End { get; set; }
 }
 
-/// <summary>A team member's capacity for a sprint, merged across the teams they belong to.</summary>
+/// <summary>
+/// A member's capacity in the sprint, with the record of every TFS team that counts it. Keyed in
+/// <see cref="SprintCapacity.Members"/> by the normalized member name.
+/// </summary>
 public class MemberCapacity
 {
     public string DisplayName { get; set; } = "";
-    public string NormalizedName { get; set; } = "";
+
+    /// <summary>One entry per TFS team, in team order. A member split over two teams has both shares here.</summary>
+    public List<TeamMemberCapacity> Teams { get; set; } = new();
+
+    /// <summary>Hours a day over all of the member's teams, such as 4.5 in one team and 4 in another making 8.5.</summary>
+    public double CapacityPerDay => Teams.Sum(team => team.CapacityPerDay);
+}
+
+/// <summary>A member's capacity in one TFS team for the sprint, as that team's capacity page records it.</summary>
+public class TeamMemberCapacity
+{
+    public string Team { get; set; } = "";
     public double CapacityPerDay { get; set; }
+
+    /// <summary>The member's own days off in this team plus the team's days off.</summary>
     public List<DateRange> DaysOff { get; set; } = new();
 }
 
-/// <summary>Capacity data for a single sprint: per-member capacity, team days off, and the iteration date range.</summary>
+/// <summary>Capacity data for a single sprint: per-member capacity and days off, and the iteration date range.</summary>
 public class SprintCapacity
 {
     public bool Loaded { get; set; }
@@ -42,8 +58,13 @@ public class SprintCapacity
     public int TeamsUnread { get; set; }
     public DateTime? Start { get; set; }
     public DateTime? Finish { get; set; }
-    public List<DateRange> TeamDaysOff { get; set; } = new();
     public Dictionary<string, MemberCapacity> Members { get; set; } = new();
+
+    /// <summary>
+    /// Days off that every team planning the area takes, such as a public holiday, one entry per day. A member no
+    /// team lists has no team of their own, so these are their team days off.
+    /// </summary>
+    public List<DateRange> SharedDaysOff { get; set; } = new();
 }
 
 /// <summary>Rounding shared by every planning figure, so a member row and its team total agree.</summary>
@@ -90,6 +111,12 @@ public enum PlanningScope
 /// <summary>Hours carved out of the AI over-plan base by one tag rule.</summary>
 public sealed record TagHours(string Tag, double Hours);
 
+/// <summary>
+/// The part of a member's row that one TFS team contributes: its hours a day, its leave, and
+/// hours a day × (sprint days − leave). The shares add up to the row's Cap/Day and Actual.
+/// </summary>
+public sealed record TeamCapacityShare(string Team, double CapacityPerDay, double LeaveDays, double ActualCapacity);
+
 /// <summary>One member's row in the planning table, for one <see cref="PlanningScope"/>.</summary>
 public class MemberPlanning
 {
@@ -100,11 +127,19 @@ public class MemberPlanning
     public bool CapacityFromTfs { get; set; }
 
     public int SprintDays { get; set; }
+
+    /// <summary>
+    /// Leave on working days. For a member in several TFS teams, each team's leave weighted by the member's
+    /// hours there, since a team's days off take only that team's hours away.
+    /// </summary>
     public double LeaveDays { get; set; }
     public double AvailableDays => Math.Max(0, SprintDays - LeaveDays);
 
     /// <summary>Capacity-per-day × available days.</summary>
     public double ActualCapacity { get; set; }
+
+    /// <summary>What each TFS team adds to the row when the member is in more than one; empty otherwise.</summary>
+    public IReadOnlyList<TeamCapacityShare> TfsTeams { get; set; } = Array.Empty<TeamCapacityShare>();
 
     /// <summary>Hours on tags carved out of the over-plan base, broken down by the rule that matched.</summary>
     public IReadOnlyList<TagHours> ExcludedByTag { get; set; } = Array.Empty<TagHours>();

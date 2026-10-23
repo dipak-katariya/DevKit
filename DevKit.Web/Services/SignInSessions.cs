@@ -153,27 +153,28 @@ internal sealed class LocalUserSession : UserSession
 }
 
 /// <summary>
-/// Shared mode: reads who is signed in to this page, then loads their own settings from their own file on the server,
-/// first moving there any copy an earlier DevKit kept in this browser.
+/// Shared mode: reads who is signed in to this page, then loads their own settings from their own browser. When it
+/// keeps none yet, a copy an earlier DevKit kept on this server or in this browser moves into it, and is deleted once it
+/// is there.
 /// </summary>
 internal sealed class SharedUserSession : UserSession
 {
     private readonly AuthenticationStateProvider _authentication;
-    private readonly ServerSettingsStore _store;
-    private readonly BrowserSettingsMigration _migration;
+    private readonly ClientSettingsStore _store;
+    private readonly EarlierSettingsCopies _earlier;
     private readonly SettingsService _settings;
     private readonly OwnerAccount _owner;
 
     public SharedUserSession(
         AuthenticationStateProvider authentication,
-        ServerSettingsStore store,
-        BrowserSettingsMigration migration,
+        ClientSettingsStore store,
+        EarlierSettingsCopies earlier,
         SettingsService settings,
         OwnerAccount owner)
     {
         _authentication = authentication;
         _store = store;
-        _migration = migration;
+        _earlier = earlier;
         _settings = settings;
         _owner = owner;
     }
@@ -193,11 +194,35 @@ internal sealed class SharedUserSession : UserSession
             return false;
         }
 
-        _store.Open(User);
-        await _migration.MoveToServerAsync(User, _store);
-        _settings.LoadFromStore(User.IsOwner);
+        await _store.OpenAsync(User);
+        if (_store.HasSettings)
+        {
+            _settings.LoadFromStore(User.IsOwner);
+            // A server copy left by a move whose delete failed. One is kept while the browser's copy cannot be read here.
+            if (_settings.LoadProblem is null)
+            {
+                _earlier.DeleteServerCopy(User);
+            }
+        }
+        else
+        {
+            await MoveEarlierCopyAsync(User);
+        }
+
         IsReady = true;
         return true;
+    }
+
+    /// <summary>Puts the newest earlier copy into the browser, and deletes the copies once the browser has kept it.</summary>
+    private async Task MoveEarlierCopyAsync(SignedInUser user)
+    {
+        var earlier = await _earlier.ReadAsync(user);
+        _settings.LoadFromStore(user.IsOwner, earlier);
+        // A save refused before it reached the browser leaves no write to wait for, only the error.
+        if (earlier is not null && _settings.LastSaveError is null && await _store.LastWriteAsync())
+        {
+            await _earlier.DeleteAsync(user);
+        }
     }
 }
 

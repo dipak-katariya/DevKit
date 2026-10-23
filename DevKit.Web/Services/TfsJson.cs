@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 
 namespace DevKit.Web.Services;
@@ -11,9 +12,24 @@ public static class TfsJson
     public static int Int(JsonElement el, string prop, int fallback = 0) =>
         el.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var n) ? n : fallback;
 
-    public static DateTime? Date(JsonElement el, string prop) =>
+    // A plain DateTime.TryParse turns a "...Z" value into the server's local time, so what it read depended
+    // on the zone the server runs in. These keep it in UTC on every server.
+    private const DateTimeStyles UtcStyles = DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal;
+
+    /// <summary>
+    /// A moment TFS recorded, such as a commit or a pull request being raised, in UTC. A value without an
+    /// offset is taken as UTC, as TFS writes them. Convert it with ToLocalTime only to show it.
+    /// </summary>
+    public static DateTime? Timestamp(JsonElement el, string prop) =>
         el.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.String
-        && DateTime.TryParse(v.GetString(), out var d) ? d : null;
+        && DateTime.TryParse(v.GetString(), CultureInfo.InvariantCulture, UtcStyles, out var d) ? d : null;
+
+    /// <summary>
+    /// A calendar day TFS sent, such as a sprint's start or a day off, as midnight UTC of that day. TFS sends
+    /// these as midnight UTC ("2026-09-23T00:00:00Z"), which on a server behind UTC is the evening before in
+    /// local time. Read its date parts; ToLocalTime would move it back to that evening.
+    /// </summary>
+    public static DateTime? Day(JsonElement el, string prop) => Timestamp(el, prop)?.Date;
 
     /// <summary>Display name from an identity field, which may be an object or a "Name &lt;email&gt;" string.</summary>
     public static string Person(JsonElement el, string prop, string fallback = "-")
@@ -50,7 +66,7 @@ public static class TfsJson
     /// <summary>A nested commit identity: { name, email, date }.</summary>
     public static (string Name, DateTime? Date) CommitPerson(JsonElement el, string prop) =>
         el.TryGetProperty(prop, out var p) && p.ValueKind == JsonValueKind.Object
-            ? (Str(p, "name"), Date(p, "date"))
+            ? (Str(p, "name"), Timestamp(p, "date"))
             : ("", null);
 
     /// <summary>The email of a nested commit identity, or empty when there is none.</summary>
