@@ -22,7 +22,7 @@ public partial class CodeMergingService
         // rows, so loading it once keeps the call count down and the two rows consistent.
         // Off-QA pull requests are included: "All PRs" reveals them without a reload, and a
         // revealed row showing no commits would read as the tool having lost them.
-        var distinct = rows.SelectMany(r => r.AllPullRequests).Distinct().ToList();
+        var distinct = rows.SelectMany(r => r.AllPullRequests()).Distinct().ToList();
         await Task.WhenAll(distinct.Select(pr => ReadCommitsAsync(pr, ct)));
 
         foreach (var row in rows)
@@ -43,7 +43,7 @@ public partial class CodeMergingService
         {
             return;
         }
-        var pending = row.AllPullRequests.Where(p => p.Commits.Count == 0 || p.CommitsError is not null).Distinct().ToList();
+        var pending = row.AllPullRequests().Where(p => p.Commits.Count == 0 || p.CommitsError is not null).Distinct().ToList();
         await Task.WhenAll(pending.Select(pr => ReadCommitsAsync(pr, ct)));
         row.CommitsLoaded = row.CommitsError is null;
     }

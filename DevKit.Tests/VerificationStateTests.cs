@@ -97,7 +97,7 @@ public sealed partial class VerificationStateTests : IDisposable
         var commit = Assert.Single(offQa.Commits);
         Assert.Null(commit.IsMergedToTargetBranch);
         Assert.Equal(CommitMatch.None, commit.MatchKind);
-        Assert.Equal(MergeRollup.NotChecked, MergeRollupCalculator.For(bundle.Requirements[0].AllPullRequests).State);
+        Assert.Equal(MergeRollup.NotChecked, MergeRollupCalculator.For(bundle.Requirements[0].AllPullRequests()).State);
     }
 
     [Fact]

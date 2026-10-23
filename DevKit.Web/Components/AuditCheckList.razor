@@ -64,7 +64,13 @@ else
     [Parameter] public List<AuditCheck> Checks { get; set; } = new();
 
     private int CountBy(AuditSeverity sev) => Checks.Where(c => c.Severity == sev).Sum(c => c.Count);
-    private void Toggle(AuditCheck c) { if (c.Count > 0) c.Expanded = !c.Expanded; }
+    private static void Toggle(AuditCheck c)
+    {
+        if (c.Count > 0)
+        {
+            c.Expanded = !c.Expanded;
+        }
+    }
 
     private static string SevClass(AuditCheck c) => c.Count == 0 ? "sev-ok"
         : c.Severity switch { AuditSeverity.Critical => "sev-crit", AuditSeverity.Warning => "sev-warn", _ => "sev-info" };

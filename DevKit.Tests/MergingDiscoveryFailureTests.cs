@@ -217,7 +217,7 @@ public sealed class MergingDiscoveryFailureTests : IDisposable
     /// <summary>The row's roll-up once a check has found every pull request of the sheet on the branch.</summary>
     private static MergeRollup RollupAfterEverythingMerged(CodeMergingBundle bundle, RequirementMergingRow row)
     {
-        foreach (var pr in bundle.Requirements.SelectMany(r => r.AllPullRequests))
+        foreach (var pr in bundle.Requirements.SelectMany(r => r.AllPullRequests()))
         {
             pr.IsMergedToTargetBranch = true;
         }

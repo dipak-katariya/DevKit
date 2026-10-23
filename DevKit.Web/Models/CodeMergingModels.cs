@@ -155,7 +155,7 @@ public class RequirementMergingRow
     public bool DiscoveryIncomplete => DiscoveryGaps.Count > 0;
 
     /// <summary>Everything found for this work item, ordered the same way as the QA-branch set.</summary>
-    public List<MergingPullRequest> AllPullRequests => PullRequests
+    public List<MergingPullRequest> AllPullRequests() => PullRequests
         .Concat(OffQaBranchPullRequests)
         .OrderBy(pr => pr.FirstActivityDate ?? DateTime.MaxValue)
         .ThenBy(pr => pr.PullRequestId)

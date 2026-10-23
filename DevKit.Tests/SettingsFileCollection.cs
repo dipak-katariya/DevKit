@@ -11,4 +11,9 @@ namespace DevKit.Tests;
 public sealed class SettingsFileCollection
 {
     public const string Name = "usersettings.json";
+
+    // Only a name for xunit to group by; nothing creates one.
+    private SettingsFileCollection()
+    {
+    }
 }

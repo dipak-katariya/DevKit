@@ -23,7 +23,7 @@
         <div style="flex:1;min-width:150px;"><div class="cfg-field"><label class="cfg-label">🏷 Type</label>
             <GlassDropdown Value="@State.TypeFilter" Placeholder="All" EmptyLabel="All" EmptyValue="" Options="@TypeOptions" OnChange="OnType" /></div></div>
         <div style="flex:1;min-width:150px;"><div class="cfg-field"><label class="cfg-label">👤 Assignee</label>
-            <GlassDropdown Value="@State.AssigneeFilter" Placeholder="All" EmptyLabel="All" EmptyValue="" Options="@AssigneeOptions" OnChange="OnAssignee" /></div></div>
+            <GlassDropdown Value="@State.AssigneeFilter" Placeholder="All" EmptyLabel="All" EmptyValue="" Options="@AssigneeOptions()" OnChange="OnAssignee" /></div></div>
     </div>
 }
 <div class="content" style="flex-direction:column;">
@@ -40,7 +40,7 @@
             }
             else
             {
-                var rows = Filtered;
+                var rows = Filtered();
                 <table class="req-table">
                     <thead><tr><th style="width:64px;">ID</th><th>Title</th><th style="width:120px;">Assigned</th><th style="width:90px;">State</th><th style="width:210px;"></th></tr></thead>
                     <tbody>
@@ -195,9 +195,9 @@
     private IReadOnlyList<WorkItem> Requirements =>
         State.LoadedKey.Length > 0 && State.LoadedKey == SelectionKey ? State.Requirements : Array.Empty<WorkItem>();
 
-    private List<WorkItem> Filtered => Requirements.Where(Matches).ToList();
+    private List<WorkItem> Filtered() => Requirements.Where(Matches).ToList();
 
-    private List<GlassDropdown.DropdownOption> AssigneeOptions => Requirements
+    private List<GlassDropdown.DropdownOption> AssigneeOptions() => Requirements
         .Select(r => r.Assigned).Where(a => !string.IsNullOrEmpty(a)).Distinct().OrderBy(a => a)
         .Select(a => new GlassDropdown.DropdownOption { Value = a, Label = a }).ToList();
 

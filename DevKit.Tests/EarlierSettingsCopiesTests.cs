@@ -48,8 +48,8 @@ public sealed class EarlierSettingsCopiesTests : SharedSettingsScratch
     {
         PutServerCopy(Alice, "TEAM-A");
         var file = Folder.PathFor(Alice);
-        File.WriteAllText(file + ".bak", "an earlier save");
-        File.WriteAllText(file + ".corrupt-20261020-101010", "a damaged copy");
+        await File.WriteAllTextAsync(file + ".bak", "an earlier save");
+        await File.WriteAllTextAsync(file + ".corrupt-20261020-101010", "a damaged copy");
 
         var alice = await SignedInAsync(Alice);
 
@@ -168,13 +168,13 @@ public sealed class EarlierSettingsCopiesTests : SharedSettingsScratch
         Directory.CreateDirectory(Root);
         MakeJunction(UsersPath, elsewhere);
         var outside = Path.Combine(elsewhere, Path.GetFileName(Folder.PathFor(Alice)));
-        File.WriteAllText(outside, "not DevKit's to read or delete");
+        await File.WriteAllTextAsync(outside, "not DevKit's to read or delete");
         var logger = new RecordingLogger<EarlierSettingsCopies>();
 
         var page = OpenPage(Alice, logger: logger);
         Assert.True(await page.Session.StartAsync());
 
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error && e.Exception is IOException);
-        Assert.Equal("not DevKit's to read or delete", File.ReadAllText(outside));
+        Assert.Equal("not DevKit's to read or delete", await File.ReadAllTextAsync(outside));
     }
 }

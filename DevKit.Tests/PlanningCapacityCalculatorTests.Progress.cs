@@ -199,7 +199,7 @@ public partial class PlanningCapacityCalculatorTests
         // Monday 21 Sep: the whole first week (5 days) is behind us; today is not over yet.
         const string who = "A";
 
-        var plan = Build(Data(new[] { Task(who, 80) }, Capacity((who, 8, NoLeave))), today: new DateTime(2026, 9, 21));
+        var plan = Build(Data(new[] { Task(who, 80) }, Capacity((who, 8, NoLeave))), today: Day(2026, 9, 21));
 
         Assert.Equal(5, plan.ElapsedDays);
         Assert.Equal(50, plan.ElapsedPct);
@@ -211,9 +211,9 @@ public partial class PlanningCapacityCalculatorTests
     {
         // One day off in the first week: 4 of 9 available days are behind the member.
         const string who = "A";
-        var data = Data(new[] { Task(who, 72) }, Capacity((who, 8, new[] { Off(new DateTime(2026, 9, 15)) })));
+        var data = Data(new[] { Task(who, 72) }, Capacity((who, 8, new[] { Off(Day(2026, 9, 15)) })));
 
-        var m = Only(Build(data, today: new DateTime(2026, 9, 21)));
+        var m = Only(Build(data, today: Day(2026, 9, 21)));
 
         Assert.Equal(1, m.LeaveDays);
         Assert.Equal(44.4, m.ExpectedPct);
@@ -228,7 +228,7 @@ public partial class PlanningCapacityCalculatorTests
     {
         const string who = "A";
 
-        var plan = Build(Data(new[] { Task(who, 10) }, Capacity((who, 8, NoLeave))), today: new DateTime(y, mo, d));
+        var plan = Build(Data(new[] { Task(who, 10) }, Capacity((who, 8, NoLeave))), today: Day(y, mo, d));
 
         Assert.Equal(expected, plan.ElapsedDays);
     }
@@ -237,9 +237,9 @@ public partial class PlanningCapacityCalculatorTests
     public void Team_expected_progress_is_weighted_by_planned_hours()
     {
         // A carries 90 of the 100 planned hours and is 50% through; B was off all of week one.
-        var cap = Capacity(("A", 8, NoLeave), ("B", 8, new[] { Off(SprintStart, new DateTime(2026, 9, 18)) }));
+        var cap = Capacity(("A", 8, NoLeave), ("B", 8, new[] { Off(SprintStart, Day(2026, 9, 18)) }));
 
-        var sum = Build(Data(new[] { Task("A", 90), Task("B", 10) }, cap), today: new DateTime(2026, 9, 21)).SummaryFor(PlanningScope.All);
+        var sum = Build(Data(new[] { Task("A", 90), Task("B", 10) }, cap), today: Day(2026, 9, 21)).SummaryFor(PlanningScope.All);
 
         Assert.Equal(45, sum.ExpectedPct);          // (90 × 50 + 10 × 0) ÷ 100
     }

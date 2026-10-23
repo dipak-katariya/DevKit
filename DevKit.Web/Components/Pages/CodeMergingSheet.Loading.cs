@@ -25,7 +25,7 @@ public partial class CodeMergingSheet
         // previous project would otherwise stay selected and silently return nothing.
         DropSprintsOutsideProject();
 
-        var valid = AvailableRepos.Select(r => r.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var valid = AvailableRepos().Select(r => r.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
         selectedRepoIds.RemoveWhere(id => !valid.Contains(id));
         if (selectedRepoIds.Count == 0) RestoreRepoIds();
 
@@ -120,7 +120,7 @@ public partial class CodeMergingSheet
         row.Branches.Any(b => string.Equals(b, branch, StringComparison.OrdinalIgnoreCase));
 
     private List<MultiSelectDropdown.Option> RepoOptions =>
-        RepoSelect.Options(AvailableRepos, Settings.MostUsedRepoIds, BranchHint);
+        RepoSelect.Options(AvailableRepos(), Settings.MostUsedRepoIds, BranchHint);
 
     /// <summary>
     /// Surfaces a repository's configured branches in the picker. Without it, a wrong or
@@ -181,7 +181,7 @@ public partial class CodeMergingSheet
             selectedArea!.Project,
             TfsApiService.ToWiqlPath(selectedArea.Path),
             selectedSprints.Select(TfsApiService.ToWiqlPath).ToList(),
-            SelectedRepos,
+            SelectedRepos(),
             deliverableOnly,
             QaBranchByRepoId,
             matchByBranchOrTitle);
@@ -299,7 +299,7 @@ public partial class CodeMergingSheet
         try
         {
             unlinked = await Merging.GetUnlinkedPullRequestsAsync(
-                SelectedRepos, unlinkedDays, QaBranchByRepoId, matchByBranchOrTitle, page.Token);
+                SelectedRepos(), unlinkedDays, QaBranchByRepoId, matchByBranchOrTitle, page.Token);
         }
         catch (OperationCanceledException ex) when (page.Token.IsCancellationRequested)
         {

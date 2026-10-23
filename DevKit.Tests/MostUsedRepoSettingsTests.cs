@@ -10,7 +10,7 @@ namespace DevKit.Tests;
 /// which matters because SettingsService persists to a single file beside the test assembly.
 /// </summary>
 [Collection(SettingsFileCollection.Name)]
-public class MostUsedRepoSettingsTests : IDisposable
+public sealed class MostUsedRepoSettingsTests : IDisposable
 {
     private static readonly string SettingsPath =
         Path.Combine(AppContext.BaseDirectory, "usersettings.json");

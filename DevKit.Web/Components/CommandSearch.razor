@@ -1,7 +1,7 @@
 @inherits ClickOutsideComponent
 @inject NavigationManager Nav
 
-@{ var matches = Matches; }
+@{ var matches = Matches(); }
 <div class="topbar-search @(open ? "open" : "")" @ref="Root">
     <div class="ts-box">
         <span class="ts-ico"><Icon Inner="@Icons.Search" /></span>
@@ -40,7 +40,7 @@
 
     protected override bool IsPanelOpen => open;
 
-    private List<ToolEntry> Matches => ToolCatalog.All()
+    private List<ToolEntry> Matches() => ToolCatalog.All()
         .Where(t => string.IsNullOrWhiteSpace(query)
             || t.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
             || t.Path.Contains(query, StringComparison.OrdinalIgnoreCase))
@@ -60,7 +60,7 @@
 
     private void OnKeyDown(KeyboardEventArgs e)
     {
-        var matches = Matches;
+        var matches = Matches();
         switch (e.Key)
         {
             case "ArrowDown" when matches.Count > 0: highlight = (highlight + 1) % matches.Count; break;

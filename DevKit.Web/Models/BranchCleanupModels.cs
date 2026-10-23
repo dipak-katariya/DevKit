@@ -65,10 +65,12 @@ public sealed class BranchCleanupRow
 
     public bool CanDelete => ProtectedReason is null;
 
-    public BranchLinkState LinkState =>
-        LinkedBy.Count > 0 ? BranchLinkState.Linked
-        : MentionsTeam ? BranchLinkState.Unattached
-        : BranchLinkState.NotChecked;
+    public BranchLinkState LinkState => this switch
+    {
+        { LinkedBy.Count: > 0 } => BranchLinkState.Linked,
+        { MentionsTeam: true } => BranchLinkState.Unattached,
+        _ => BranchLinkState.NotChecked
+    };
 
     /// <summary>Identifies the row across repositories, which can hold branches of the same name.</summary>
     public string Key => KeyOf(Repo.Id, Branch);

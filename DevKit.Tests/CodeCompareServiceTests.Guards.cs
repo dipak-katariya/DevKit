@@ -124,7 +124,7 @@ public sealed partial class CodeCompareServiceTests
 
         var running = _service.CompareAsync(new CodeCompareRequest(new[] { pr }, Branches(Release), CodeCompareScope.Sprint), null, stop.Token);
         await _git.RefsRequested.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        stop.Cancel();
+        await stop.CancelAsync();
         _git.RefsGate.SetResult();
         var summary = await running;
 
@@ -227,7 +227,7 @@ public sealed partial class CodeCompareServiceTests
 
         var running = _service.CompareAsync(new CodeCompareRequest(new[] { pr }, Branches(Release), CodeCompareScope.Sprint), null, stop.Token);
         await _git.DiffRequested.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        stop.Cancel();
+        await stop.CancelAsync();
         var summary = await running;
 
         Assert.True(summary.Stopped);

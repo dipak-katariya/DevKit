@@ -374,7 +374,7 @@ public sealed partial class Settings : IDisposable
 
     private static readonly int[] MostUsedCountChoices = { 0, 3, 5, 8, 10 };
 
-    private static List<GlassDropdown.DropdownOption> MostUsedCountOptions => MostUsedCountChoices
+    private static List<GlassDropdown.DropdownOption> MostUsedCountOptions() => MostUsedCountChoices
         .Select(n => new GlassDropdown.DropdownOption
         {
             Value = n.ToString(),
@@ -399,9 +399,7 @@ public sealed partial class Settings : IDisposable
     private void OnMostUsedReposChanged(HashSet<string> selected)
     {
         var ordered = mostUsedRepoIds.Where(selected.Contains).ToList();
-        var already = new HashSet<string>(ordered, StringComparer.OrdinalIgnoreCase);
-        foreach (var id in selected)
-            if (already.Add(id)) ordered.Add(id);
+        ordered.AddRange(selected.Except(ordered, StringComparer.OrdinalIgnoreCase).ToList());
 
         mostUsedMsg = ordered.Count > mostUsedCount
             ? $"Only the first {mostUsedCount} were kept. Raise the count above, or unpin one first."

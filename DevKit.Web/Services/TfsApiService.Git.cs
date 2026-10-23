@@ -76,12 +76,10 @@ public partial class TfsApiService
     {
         var filter = refName.Replace("refs/", "");
         var data = await GetJson(ProjectApi(project, $"git/repositories/{repoId}/refs?filter={Uri.EscapeDataString(filter)}&api-version={Ver}"), ct);
-        foreach (var r in data.GetProperty("value").EnumerateArray())
-        {
-            if (r.GetProperty("name").GetString() == refName)
-                return new TfsRef { Name = r.GetProperty("name").GetString()!, ObjectId = r.GetProperty("objectId").GetString()! };
-        }
-        return null;
+        return data.GetProperty("value").EnumerateArray()
+            .Where(r => r.GetProperty("name").GetString() == refName)
+            .Select(r => new TfsRef { Name = refName, ObjectId = r.GetProperty("objectId").GetString()! })
+            .FirstOrDefault();
     }
 
     // ═══ CREATE BRANCH ═══

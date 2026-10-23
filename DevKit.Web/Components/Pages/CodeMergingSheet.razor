@@ -33,7 +33,7 @@
                 </label>
                 <MultiSelectDropdown Options="@RepoOptions" Selected="@selectedRepoIds"
                                      SelectedChanged="OnReposChanged" ItemNoun="repository"
-                                     Disabled="@(AvailableRepos.Count == 0)"
+                                     Disabled="@(AvailableRepos().Count == 0)"
                                      Placeholder="Select repositories" SearchPlaceholder="Search repositories…" />
             </div>
             <div class="cm-fld" style="flex:0 0 auto;">
@@ -64,12 +64,12 @@
             <div class="cm-fld cm-fld-filter">
                 <label class="cfg-label @(Marked(filter.Member))">👤 Assigned To</label>
                 <GlassDropdown Value="@filter.Member" Placeholder="All members" EmptyLabel="All members"
-                               EmptyValue="" Options="@MemberOptions" OnChange="OnMemberChange" />
+                               EmptyValue="" Options="@MemberOptions()" OnChange="OnMemberChange" />
             </div>
             <div class="cm-fld cm-fld-filter">
                 <label class="cfg-label @(Marked(filter.Author))">✍ Created By</label>
                 <GlassDropdown Value="@filter.Author" Placeholder="All creators" EmptyLabel="All creators"
-                               EmptyValue="" Options="@AuthorOptions" OnChange="OnAuthorChange" />
+                               EmptyValue="" Options="@AuthorOptions()" OnChange="OnAuthorChange" />
             </div>
             <div class="cm-fld cm-fld-filter cm-fld-state">
                 <label class="cfg-label @(Marked(filter.MergeState))">✅ Merge State</label>

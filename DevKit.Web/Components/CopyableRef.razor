@@ -54,10 +54,10 @@
         }
 
         copied = true;
-        resetCts?.Cancel();
-        resetCts?.Dispose();
+        var previous = resetCts;
         resetCts = new CancellationTokenSource();
         var token = resetCts.Token;
+        await CancellationSources.CancelAndDisposeAsync(previous);
 
         // Clear the tick without blocking the click handler.
         _ = Task.Run(async () =>

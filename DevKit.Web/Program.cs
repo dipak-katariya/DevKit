@@ -35,7 +35,6 @@ builder.Services.AddRazorComponents()
 // Services. Who gets in and where settings live depend on this machine's devkit.json: local mode (the starter only,
 // with the printed link) or hosted mode (shared on a server, with Windows sign-in).
 var access = DevKitAccess.AddTo(builder);
-builder.Services.AddSingleton<ThemeService>();
 builder.Services.AddScoped<PageStateService>();
 builder.Services.AddScoped<BranchCacheService>();
 builder.Services.AddScoped<BranchCleanupService>();

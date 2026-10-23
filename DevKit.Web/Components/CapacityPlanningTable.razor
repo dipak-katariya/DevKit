@@ -129,7 +129,7 @@ else
     private string OverPlanLabel => $"{Settings.AiOverPlanPercent:0.##}%";
     private string TargetLabel => IsAi ? $"{100 + Settings.AiOverPlanPercent:0.##}%" : "100%";
 
-    private RenderFragment MemberCell(MemberPlanning m) => @<text>
+    private static RenderFragment MemberCell(MemberPlanning m) => @<text>
         <div class="cell-title">@m.DisplayName</div>
         <div class="cell-meta">
             @m.TaskCount task(s)@(m.CapacityFromTfs ? "" : $" · {m.CapacityPerDay:0.##} h default")
@@ -176,5 +176,11 @@ else
 
     private static bool IsFinished(double remaining, double completed) => remaining <= 0 && completed > 0;
 
-    private static string PctClass(double pct) => pct < 90 ? "pct-under" : pct > 110 ? "pct-over" : "pct-ok";
+    /// <summary>The colour of a Planning %: under 90 is short of the plan, over 110 is past it. The panel shares it.</summary>
+    internal static string PctClass(double pct) => pct switch
+    {
+        < 90 => "pct-under",
+        > 110 => "pct-over",
+        _ => "pct-ok"
+    };
 }

@@ -50,7 +50,7 @@ public class MergingSheetFilter
     /// </summary>
     public List<MergingPullRequest> VisiblePrs(RequirementMergingRow row)
     {
-        var prs = ShowAllPrs ? row.AllPullRequests : row.PullRequests;
+        var prs = ShowAllPrs ? row.AllPullRequests() : row.PullRequests;
         return string.IsNullOrEmpty(Author) ? prs : prs.Where(p => p.CreatedBy == Author).ToList();
     }
 

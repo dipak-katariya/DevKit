@@ -226,8 +226,8 @@ public class CodePresenceAnalyzerTests
     [Fact]
     public void A_qa_version_that_could_not_be_read_never_excuses_a_file_the_branch_lacks()
     {
-        // Known to be gone from QA, a file the branch lacks is left for a person (QA may have moved it);
-        // merely unknown, it is simply missing. Neither counts as present.
+        // Known to be gone from QA, a file the branch lacks is left for a person (QA may have moved it).
+        // Merely unknown, it is simply missing. Neither counts as present.
         Assert.Equal(FileCodeStatus.Unverified,
             CodePresenceAnalyzer.ClassifyByObjectId(FileChangeKind.Edit, new BlobIds("b", "a", null, null))?.Status);
         Assert.Equal(FileCodeStatus.Missing,

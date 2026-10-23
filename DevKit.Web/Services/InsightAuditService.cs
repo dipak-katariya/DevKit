@@ -120,7 +120,7 @@ public static class InsightAuditService
                  .Select(t => Row(t))));
 
         checks.Add(Check("Has Estimate, No Remaining, No Completed", AuditSeverity.Warning,
-            tasks.Where(t => (t.OriginalEstimate ?? 0) > 0 && (t.RemainingWork ?? 0) == 0 && (t.CompletedWork ?? 0) == 0 && !IsRejected(t))
+            tasks.Where(t => (t.OriginalEstimate ?? 0) > 0 && (t.RemainingWork ?? 0) <= 0 && (t.CompletedWork ?? 0) <= 0 && !IsRejected(t))
                  .Select(t => Row(t))));
 
         checks.Add(Check("Closed With Remaining Work", AuditSeverity.Warning,
@@ -168,12 +168,12 @@ public static class InsightAuditService
         var bugTasks = bugs.SelectMany(b => ChildrenOf(children, b).Select(c => (Bug: b, Task: c))).ToList();
 
         checks.Add(Check("Bug Tasks: Missing Bug/Maintenance Tag & No Work", AuditSeverity.Warning,
-            bugTasks.Where(x => !x.Task.HasTag(BugWork.MaintenanceTag) && (x.Task.CompletedWork ?? 0) == 0)
+            bugTasks.Where(x => !x.Task.HasTag(BugWork.MaintenanceTag) && (x.Task.CompletedWork ?? 0) <= 0)
                     .Select(x => Row(x.Task, $"Bug #{x.Bug.Id}")),
             extra: "Parent Bug"));
 
         checks.Add(Check("Bug Tasks: No Completed Work (Active/Resolved/Closed)", AuditSeverity.Warning,
-            bugTasks.Where(x => StateIn(x.Task, "Active", "Resolved", "Closed") && (x.Task.CompletedWork ?? 0) == 0 && !IsRejected(x.Task))
+            bugTasks.Where(x => StateIn(x.Task, "Active", "Resolved", "Closed") && (x.Task.CompletedWork ?? 0) <= 0 && !IsRejected(x.Task))
                     .Select(x => Row(x.Task, $"Bug #{x.Bug.Id}")),
             extra: "Parent Bug"));
 

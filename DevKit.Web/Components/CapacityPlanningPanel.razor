@@ -54,10 +54,10 @@
                     <div class="cp-team-head">
                         <span class="cp-team-name">@ScopeName(s)</span>
                         <span class="cp-team-count">@sum.MemberCount member(s)</span>
-                        <span class="pct-pill @PctClass(sum.PlanningPct) cp-team-pct" title="Planning %">@sum.PlanningPct.ToString("0.#")%</span>
+                        <span class="pct-pill @CapacityPlanningTable.PctClass(sum.PlanningPct) cp-team-pct" title="Planning %">@sum.PlanningPct.ToString("0.#")%</span>
                     </div>
                     <div class="cp-team-planned"><b>@H(sum.PlannedReviewDay)</b> planned of <b>@H(sum.TargetCapacity)</b> target</div>
-                    <div class="cp-meter"><div class="cp-meter-fill @PctClass(sum.PlanningPct)" style="width:@Css(Math.Min(100, sum.PlanningPct))%;"></div></div>
+                    <div class="cp-meter"><div class="cp-meter-fill @CapacityPlanningTable.PctClass(sum.PlanningPct)" style="width:@Css(Math.Min(100, sum.PlanningPct))%;"></div></div>
                     <div class="cp-team-split">
                         <span class="cp-del">● Deliverable @H(sum.Split.DeliverableHours) · @sum.Split.DeliverablePct.ToString("0.#")%</span>
                         <span class="cp-non">● Non-Deliverable @H(sum.Split.NonDeliverableHours) · @sum.Split.NonDeliverablePct.ToString("0.#")%</span>
@@ -230,7 +230,7 @@
 
 @if (settingsOpen)
 {
-    <CapacityPlanningSettingsDialog Settings="@settings" ObservedTags="@plan.ObservedTags" ObservedDisciplines="@ObservedDisciplines"
+    <CapacityPlanningSettingsDialog Settings="@settings" ObservedTags="@plan.ObservedTags" ObservedDisciplines="@ObservedDisciplines()"
                                     OnSave="OnSettingsSaved" OnClose="() => settingsOpen = false" />
 }
 
@@ -354,7 +354,7 @@
         ApplySettings(next);
     }
 
-    private IReadOnlyList<string> ObservedDisciplines => work.Tasks
+    private IReadOnlyList<string> ObservedDisciplines() => work.Tasks
         .Select(t => t.Discipline)
         .Where(d => !string.IsNullOrWhiteSpace(d))
         .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -449,8 +449,6 @@
     private static string H(double hours) => $"{hours:0.##} h";
 
     private static string Css(double v) => v.ToString(System.Globalization.CultureInfo.InvariantCulture);
-
-    private static string PctClass(double pct) => pct < 90 ? "pct-under" : pct > 110 ? "pct-over" : "pct-ok";
 
     public void Dispose() => CancellationSources.CancelAndDispose(ref loadCts);
 }

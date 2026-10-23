@@ -151,7 +151,7 @@ internal sealed class ClientVault
         && parts.Account == _keyLock.Account;
 
     /// <summary>The sealed settings the browser sent for <paramref name="user"/>, or null when it keeps none.</summary>
-    public string? ReadFrom(IRequestCookieCollection cookies, SignedInUser user)
+    public static string? ReadFrom(IRequestCookieCollection cookies, SignedInUser user)
     {
         ArgumentNullException.ThrowIfNull(cookies);
         var name = CookieNameFor(user);
@@ -287,7 +287,7 @@ internal static class ClientVaultEndpoints
         }
 
         context.Response.Headers.CacheControl = "no-store";
-        if (vault.ReadFrom(context.Request.Cookies, user) is not { } sealedText)
+        if (ClientVault.ReadFrom(context.Request.Cookies, user) is not { } sealedText)
         {
             return Results.NoContent();
         }

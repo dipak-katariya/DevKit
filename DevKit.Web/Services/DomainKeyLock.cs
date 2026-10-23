@@ -133,13 +133,13 @@ internal sealed class DomainKeyLock : IKeyLock
         }
 
         protected override bool ReleaseHandle() => NCryptCloseProtectionDescriptor(handle) == 0;
+
+        [DllImport("ncrypt.dll")]
+        private static extern int NCryptCloseProtectionDescriptor(IntPtr descriptor);
     }
 
     [DllImport("ncrypt.dll", CharSet = CharSet.Unicode)]
     private static extern int NCryptCreateProtectionDescriptor(string descriptorString, int flags, out DescriptorHandle descriptor);
-
-    [DllImport("ncrypt.dll")]
-    private static extern int NCryptCloseProtectionDescriptor(IntPtr descriptor);
 
     [DllImport("ncrypt.dll")]
     private static extern int NCryptProtectSecret(DescriptorHandle descriptor, int flags, byte[] data, int dataLength,

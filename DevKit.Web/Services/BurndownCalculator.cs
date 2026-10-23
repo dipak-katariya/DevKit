@@ -31,9 +31,9 @@ public static class BurndownCalculator
         BurndownScope window, IReadOnlySet<DayOfWeek> workingDays)
     {
         var columns = new Dictionary<string, (BurndownColumn Col, DateTime Sort)>();
-        foreach (var c in contributions)
+        foreach (var date in contributions.Select(c => c.Date))
         {
-            var (key, label, sort) = weekly ? WeekColumn(c.Date) : DayColumn(c.Date);
+            var (key, label, sort) = weekly ? WeekColumn(date) : DayColumn(date);
             if (columns.ContainsKey(key)) continue;
             var span = WorkingDaysIn(sort, weekly ? sort.AddDays(6) : sort, window, workingDays);
             columns[key] = (new BurndownColumn { Key = key, Label = label, WorkingDays = span }, sort);

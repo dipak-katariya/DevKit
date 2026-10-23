@@ -141,8 +141,10 @@ public partial class CodeMergingService
         if (query.MatchByBranchOrTitle)
         {
             var token = row.WorkItemId.ToString(CultureInfo.InvariantCulture);
-            foreach (var pr in prsByRepo.Values.SelectMany(v => v))
-                if (MentionsWorkItem(pr, token)) Sort(pr);
+            foreach (var pr in prsByRepo.Values.SelectMany(v => v).Where(pr => MentionsWorkItem(pr, token)))
+            {
+                Sort(pr);
+            }
         }
 
         // Assigned, not accumulated: a row can be resolved again on a re-load.

@@ -92,8 +92,8 @@ public sealed class TfsDateParsingTests : IDisposable
     {
         var sprint = Assert.Single(await _api.GetIterationsAsync(Project), it => it.Name == "Sprint 7");
 
-        Assert.Equal(new DateTime(2026, 9, 21), sprint.StartDate);
-        Assert.Equal(new DateTime(2026, 10, 2), sprint.FinishDate);
+        Assert.Equal(new DateTime(2026, 9, 21, 0, 0, 0, DateTimeKind.Utc), sprint.StartDate);
+        Assert.Equal(new DateTime(2026, 10, 2, 0, 0, 0, DateTimeKind.Utc), sprint.FinishDate);
         Assert.Equal(DateTimeKind.Utc, sprint.StartDate!.Value.Kind);
         Assert.Equal(DateTimeKind.Utc, sprint.FinishDate!.Value.Kind);
     }

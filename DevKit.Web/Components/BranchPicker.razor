@@ -23,12 +23,12 @@
                        @oninput="OnSearchInput" @ref="searchInput" @onkeydown="OnKeyDown" />
             </div>
             <div class="gdd-list">
-                @foreach (var b in Visible)
+                @foreach (var b in Visible())
                 {
                     <div class="gdd-item bpk-item @(b == Value ? "gdd-item-active" : "")"
                          title="@b" @onclick="() => Select(b)">@b</div>
                 }
-                @if (Visible.Count == 0)
+                @if (Visible().Count == 0)
                 {
                     <div class="gdd-empty">
                         @if (Loading)
@@ -79,13 +79,13 @@
 
     protected override bool IsPanelOpen => IsOpen;
 
-    private List<string> Matches => Branches
+    private List<string> Matches() => Branches
         .Where(b => string.IsNullOrEmpty(searchText) || b.Contains(searchText, StringComparison.OrdinalIgnoreCase))
         .ToList();
 
-    private List<string> Visible => Matches.Take(MaxRendered).ToList();
+    private List<string> Visible() => Matches().Take(MaxRendered).ToList();
 
-    private int HiddenCount => Math.Max(0, Matches.Count - MaxRendered);
+    private int HiddenCount => Math.Max(0, Matches().Count - MaxRendered);
 
     private async Task Toggle()
     {
@@ -133,7 +133,7 @@
         if (e.Key == "Escape") { await Toggle(); return; }
         if (e.Key != "Enter") return;
 
-        var first = Visible.FirstOrDefault();
+        var first = Visible().FirstOrDefault();
         if (first != null) await Select(first);
     }
 }

@@ -240,7 +240,7 @@ public sealed class TfsRequestClient
                 {
                     return null;
                 }
-                buffer.Write(chunk, 0, read);
+                await buffer.WriteAsync(chunk.AsMemory(0, read), token);
                 read = await body.ReadAsync(chunk.AsMemory(0, ReadChunkBytes), token);
             }
         }

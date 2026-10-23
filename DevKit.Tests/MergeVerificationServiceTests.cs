@@ -135,7 +135,7 @@ public sealed class MergeVerificationServiceTests : IDisposable
         public string History { get; set; } = NoCommits;
         public ConcurrentQueue<string> Queries { get; } = new();
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var uri = request.RequestUri!;
             Queries.Enqueue(Uri.UnescapeDataString(uri.PathAndQuery));

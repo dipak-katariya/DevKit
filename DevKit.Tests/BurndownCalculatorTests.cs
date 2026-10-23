@@ -11,9 +11,10 @@ namespace DevKit.Tests;
 public class BurndownCalculatorTests
 {
     // Monday 21 Sep 2026 through Friday 2 Oct 2026: a ten-working-day sprint over two whole weeks.
-    private static readonly DateTime FirstMonday = new(2026, 9, 21);
-    private static readonly DateTime SecondMonday = new(2026, 9, 28);
-    private static readonly DateTime SprintFinish = new(2026, 10, 2);
+    // Unspecified, as the burndown's IST days are.
+    private static readonly DateTime FirstMonday = new(2026, 9, 21, 0, 0, 0, DateTimeKind.Unspecified);
+    private static readonly DateTime SecondMonday = new(2026, 9, 28, 0, 0, 0, DateTimeKind.Unspecified);
+    private static readonly DateTime SprintFinish = new(2026, 10, 2, 0, 0, 0, DateTimeKind.Unspecified);
 
     private static readonly DayOfWeek[] MonToFri =
         { DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday };
