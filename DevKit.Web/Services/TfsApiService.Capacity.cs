@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using DevKit.Web.Models;
 
@@ -9,6 +10,9 @@ namespace DevKit.Web.Services;
 /// </summary>
 public partial class TfsApiService
 {
+    /// <summary>The team field of a team whose work is split by area path, as most are.</summary>
+    private const string AreaPathField = "System.AreaPath";
+
     // ═══ TEAMS + CAPACITY (Sprint Insights) ═══
 
     /// <summary>The project's teams. Throws when they cannot be read: no teams read is not "no teams".</summary>
@@ -21,8 +25,11 @@ public partial class TfsApiService
     }
 
     /// <summary>
-    /// Resolves per-member capacity for a sprint by scanning every team's iteration settings,
-    /// matching the selected iteration, and merging capacities + team days-off across teams.
+    /// Resolves per-member capacity for an area's sprint from every team that plans the sprint. Each team keeps
+    /// its own record of a member: a member split over two teams, such as 4.5 h a day in one and 4 h in the
+    /// other, has both, and each team's days off go with that team's share alone. Teams whose areas take in
+    /// <paramref name="areaPath"/> come first, so the capacity matches the tasks being planned (see
+    /// <see cref="KeepAreaTeams"/>).
     /// Degrades gracefully (Loaded=false + Error) so the caller can fall back to default capacity;
     /// a team list that cannot be read sets <see cref="SprintCapacity.ReadFailed"/>, and teams that
     /// cannot be read are counted in <see cref="SprintCapacity.TeamsUnread"/>, so neither reads as
@@ -30,30 +37,35 @@ public partial class TfsApiService
     ///
     /// Teams are independent, so they are read concurrently under the shared TFS gate instead of
     /// one after another; this scan was most of the wait on Load. The reads are merged afterwards
-    /// in team order, so the outcome is exactly that of a sequential scan: the first matching team
-    /// supplies the sprint dates, and a tie in capacity keeps the earlier team's figure.
+    /// in team order, so the outcome does not depend on which reply lands first: the first matching
+    /// team supplies the sprint dates and the member's display name.
     /// </summary>
-    public async Task<SprintCapacity> GetSprintCapacityAsync(string project, string iterationPath, CancellationToken ct = default)
+    public async Task<SprintCapacity> GetSprintCapacityAsync(string project, string areaPath, string iterationPath, CancellationToken ct = default)
     {
         var result = new SprintCapacity();
+        var started = Stopwatch.StartNew();
+        _logger.LogInformation("Capacity read for {Project} / {Area} / {Iter} started", project, areaPath, iterationPath);
         try
         {
             var teams = await GetTeamsAsync(project, ct);
             result.TeamsScanned = teams.Count;
 
-            var reads = await Task.WhenAll(teams.Select(team => ReadTeamCapacityAsync(project, team, iterationPath, ct)));
+            var reads = await Task.WhenAll(teams.Select(team => ReadTeamCapacityAsync(project, team, areaPath, iterationPath, ct)));
             result.TeamsUnread = reads.Count(read => read.Unread);
-            foreach (var capacity in reads.Select(read => read.Capacity).OfType<TeamCapacityRead>())
-            {
-                MergeTeamCapacity(capacity, result);
-            }
+            var sprintTeams = reads.Select(read => read.Capacity).OfType<TeamCapacityRead>().ToList();
+            MergeTeamCapacities(sprintTeams, result);
 
             result.Loaded = result.Members.Count > 0 && result.Start.HasValue && result.Finish.HasValue;
             result.Error = result.Loaded ? null : MissingCapacityReason(result);
+            _logger.LogInformation(
+                "Capacity read for {Project} / {Area} / {Iter} ended in {ElapsedMs} ms: {SprintTeams} of {Teams} teams plan the sprint, " +
+                "{AreaTeams} of them the area; {Members} members; {Unread} teams not fully read",
+                project, areaPath, iterationPath, started.ElapsedMilliseconds, sprintTeams.Count, result.TeamsScanned,
+                sprintTeams.Count(team => team.PlansArea), result.Members.Count, result.TeamsUnread);
         }
         catch (Exception ex) when (!TfsErrors.IsRequestedCancellation(ex, ct))
         {
-            _logger.LogError(ex, "Capacity for {Project} / {Iter} could not be read", project, iterationPath);
+            _logger.LogError(ex, "Capacity for {Project} / {Area} / {Iter} could not be read", project, areaPath, iterationPath);
             result.ReadFailed = true;
             result.Error = TfsErrors.Describe(ex);
         }
@@ -71,8 +83,12 @@ public partial class TfsApiService
             : "No team capacity is configured for this sprint.";
     }
 
-    /// <summary>One team's contribution to the sprint's capacity, before merging.</summary>
-    private sealed record TeamCapacityRead(IterationMatch Iteration, JsonElement Capacities, List<DateRange> DaysOff);
+    /// <summary>
+    /// One team's contribution to the sprint's capacity, before merging. <paramref name="DaysOff"/> is null when
+    /// they could not be read; <paramref name="PlansArea"/> says whether the team's areas take in the planned area.
+    /// </summary>
+    private sealed record TeamCapacityRead(
+        string Team, IterationMatch Iteration, JsonElement Capacities, List<DateRange>? DaysOff, bool PlansArea);
 
     /// <summary>
     /// What reading one team gave: its capacity, or none when it does not plan the sprint. <paramref name="Unread"/>
@@ -81,10 +97,11 @@ public partial class TfsApiService
     private readonly record struct TeamRead(TeamCapacityRead? Capacity, bool Unread);
 
     /// <summary>
-    /// Reads one team's settings for the sprint. A team that fails is counted rather than failing the load:
-    /// the others still describe most of the people in the sprint.
+    /// Reads one team's settings for the sprint: its members' capacities, its areas and its days off, side by
+    /// side. A team that fails is counted rather than failing the load: the others still describe most of the
+    /// people in the sprint.
     /// </summary>
-    private async Task<TeamRead> ReadTeamCapacityAsync(string project, TfsTeam team, string iterationPath, CancellationToken ct)
+    private async Task<TeamRead> ReadTeamCapacityAsync(string project, TfsTeam team, string areaPath, string iterationPath, CancellationToken ct)
     {
         try
         {
@@ -95,13 +112,20 @@ public partial class TfsApiService
                 return new TeamRead(null, Unread: false);
             }
 
-            var caps = await GetJson(ProjectTeamApi(project, team.Id, $"work/teamsettings/iterations/{iteration.Id}/capacities?api-version={Ver}"), ct);
-            var daysOff = await ReadTeamDaysOffAsync(project, team, iteration.Id, ct);
-            return new TeamRead(new TeamCapacityRead(iteration, caps, daysOff ?? new List<DateRange>()), Unread: daysOff is null);
+            // WhenAll first, so a failure in one never leaves another's exception unobserved.
+            var caps = GetJson(ProjectTeamApi(project, team.Id, $"work/teamsettings/iterations/{iteration.Id}/capacities?api-version={Ver}"), ct);
+            var areas = GetJson(ProjectTeamApi(project, team.Id, $"work/teamsettings/teamfieldvalues?api-version={Ver}"), ct);
+            var daysOff = ReadTeamDaysOffAsync(project, team, iteration.Id, ct);
+            await Task.WhenAll(caps, areas, daysOff);
+
+            var read = new TeamCapacityRead(team.Name, iteration, await caps, await daysOff, PlansArea(await areas, areaPath));
+            return new TeamRead(read, Unread: read.DaysOff is null);
         }
         catch (Exception ex) when (!TfsErrors.IsRequestedCancellation(ex, ct))
         {
-            _logger.LogError(ex, "Capacity settings of team {Team} could not be read; its members use the default capacity", team.Name);
+            _logger.LogError(ex,
+                "Capacity settings of team {Team} for {Project} / {Iter} could not be read; its members keep only their other teams' capacity, else the default",
+                team.Name, project, iterationPath);
             return new TeamRead(null, Unread: true);
         }
     }
@@ -124,16 +148,100 @@ public partial class TfsApiService
         }
     }
 
-    private static void MergeTeamCapacity(TeamCapacityRead read, SprintCapacity result)
+    /// <summary>
+    /// Puts the teams' reads together in team order, then keeps each member to the teams that plan the area,
+    /// when any does. When no team plans the area, every team counts.
+    /// </summary>
+    private static void MergeTeamCapacities(IReadOnlyList<TeamCapacityRead> reads, SprintCapacity result)
     {
-        // First matching team with dates wins, exactly as the sequential scan behaved.
-        if (result.Start == null)
+        foreach (var read in reads)
         {
-            if (read.Iteration.Start.HasValue) result.Start = read.Iteration.Start;
-            if (read.Iteration.Finish.HasValue) result.Finish = read.Iteration.Finish;
+            // First matching team with dates wins, exactly as the sequential scan behaved.
+            if (result.Start == null)
+            {
+                result.Start = read.Iteration.Start;
+                result.Finish = read.Iteration.Finish ?? result.Finish;
+            }
+            MergeCapacities(read, result);
         }
-        MergeCapacities(read.Capacities, result);
-        result.TeamDaysOff.AddRange(read.DaysOff);
+
+        var planning = reads.Where(read => read.PlansArea).ToList();
+        var planningTeams = planning.Select(read => read.Team).ToHashSet(StringComparer.Ordinal);
+        foreach (var member in result.Members.Values)
+        {
+            KeepAreaTeams(member, planningTeams);
+        }
+
+        result.SharedDaysOff = SharedDaysOff(planning.Count > 0 ? planning : reads, result.Start, result.Finish);
+    }
+
+    /// <summary>
+    /// Keeps a member to the teams that plan the area when those teams hold their hours, or when they have hours
+    /// in no team. A member whose hours are all in other teams keeps every team: they are helping out in this
+    /// area, and TFS lists many people in a project-wide team with no hours, which must not cost them their own.
+    /// </summary>
+    private static void KeepAreaTeams(MemberCapacity member, IReadOnlySet<string> planningTeams)
+    {
+        var inArea = member.Teams.FindAll(team => planningTeams.Contains(team.Team));
+        if (inArea.Count > 0 && (inArea.Sum(team => team.CapacityPerDay) > 0 || member.CapacityPerDay <= 0))
+        {
+            member.Teams = inArea;
+        }
+    }
+
+    /// <summary>
+    /// The days inside the sprint that all the given teams take off, one entry per day. A team whose days off could
+    /// not be read says nothing about which days are shared, so it is left out.
+    /// </summary>
+    private static List<DateRange> SharedDaysOff(IEnumerable<TeamCapacityRead> teams, DateTime? start, DateTime? finish)
+    {
+        if (start is not { } from || finish is not { } to)
+        {
+            return [];
+        }
+
+        HashSet<DateTime>? shared = null;
+        foreach (var daysOff in teams.Select(team => team.DaysOff).OfType<List<DateRange>>())
+        {
+            var days = PlanningCapacityCalculator.DaysCovered(daysOff, from, to);
+            if (shared == null)
+            {
+                shared = days;
+            }
+            else
+            {
+                shared.IntersectWith(days);
+            }
+        }
+        return shared?.Order().Select(day => new DateRange { Start = day, End = day }).ToList() ?? [];
+    }
+
+    /// <summary>
+    /// Whether a team plans work in the area: one of its area paths is the area, lies under it, or holds it with
+    /// its sub-areas. A team whose work is split by a field other than the area path cannot be placed by area,
+    /// so it is taken to plan every area.
+    /// </summary>
+    private static bool PlansArea(JsonElement teamFieldValues, string areaPath)
+    {
+        var field = teamFieldValues.TryGetProperty("field", out var f) && f.ValueKind == JsonValueKind.Object
+            ? TfsJson.Str(f, "referenceName")
+            : "";
+        if (!string.Equals(field, AreaPathField, StringComparison.OrdinalIgnoreCase)
+            || !teamFieldValues.TryGetProperty("values", out var values) || values.ValueKind != JsonValueKind.Array)
+        {
+            return true;
+        }
+
+        var area = NormalizePath(areaPath);
+        return values.EnumerateArray().Where(v => v.ValueKind == JsonValueKind.Object).Any(v =>
+        {
+            var teamArea = NormalizePath(TfsJson.Str(v, "value"));
+            var withSubAreas = v.TryGetProperty("includeChildren", out var children) && children.ValueKind == JsonValueKind.True;
+            return teamArea.Length > 0
+                && (teamArea == area
+                    || teamArea.StartsWith(area + "\\", StringComparison.Ordinal)
+                    || (withSubAreas && area.StartsWith(teamArea + "\\", StringComparison.Ordinal)));
+        });
     }
 
     /// <summary>
@@ -231,22 +339,19 @@ public partial class TfsApiService
             // TryGetProperty throws on a non-object, so a null "attributes" is checked first.
             var dated = it.TryGetProperty("attributes", out var attr) && attr.ValueKind == JsonValueKind.Object;
             return new IterationMatch(id,
-                dated ? IterationDate(attr, "startDate") : null,
-                dated ? IterationDate(attr, "finishDate") : null);
+                dated ? TfsJson.Day(attr, "startDate") : null,
+                dated ? TfsJson.Day(attr, "finishDate") : null);
         }
         return null;
     }
 
-    private static DateTime? IterationDate(JsonElement attributes, string prop) =>
-        attributes.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.String && DateTime.TryParse(v.GetString(), out var d)
-            ? d.Date
-            : null;
+    /// <summary>A classification path compared without case, edge backslashes or forward slashes.</summary>
+    private static string NormalizePath(string path) => path.Replace('/', '\\').Trim().Trim('\\').ToLowerInvariant();
 
     private static bool IterationMatches(string selectedPath, string teamPath, string teamName)
     {
-        static string Norm(string s) => s.Replace('/', '\\').Trim().Trim('\\').ToLowerInvariant();
-        var sel = Norm(selectedPath);
-        var tp = Norm(teamPath);
+        var sel = NormalizePath(selectedPath);
+        var tp = NormalizePath(teamPath);
         if (sel.Length == 0) return false;
         if (sel == tp) return true;
         var selLeaf = sel.Contains('\\') ? sel[(sel.LastIndexOf('\\') + 1)..] : sel;
@@ -256,41 +361,55 @@ public partial class TfsApiService
         return tpLeaf.Length > 0 && (sel.EndsWith("\\" + tpLeaf) || tp.EndsWith("\\" + selLeaf));
     }
 
-    private static void MergeCapacities(JsonElement caps, SprintCapacity result)
+    /// <summary>
+    /// Adds one team's record of each of its members: their hours a day in this team, and their own days off
+    /// with the team's. A member in several teams gets one record from each, so no team's share is dropped.
+    /// </summary>
+    private static void MergeCapacities(TeamCapacityRead read, SprintCapacity result)
     {
-        if (!caps.TryGetProperty("value", out var arr) || arr.ValueKind != JsonValueKind.Array) return;
-        foreach (var m in arr.EnumerateArray())
+        foreach (var m in TfsJson.ObjectValues(read.Capacities))
         {
-            var displayName = m.TryGetProperty("teamMember", out var tm) && tm.TryGetProperty("displayName", out var d)
-                ? d.GetString() ?? "" : "";
-            if (string.IsNullOrEmpty(displayName)) continue;
-
-            var capPerDay = 0.0;
-            if (m.TryGetProperty("activities", out var acts) && acts.ValueKind == JsonValueKind.Array)
-                foreach (var a in acts.EnumerateArray())
-                    if (a.TryGetProperty("capacityPerDay", out var cpd) && cpd.TryGetDouble(out var cv)) capPerDay += cv;
+            var displayName = TfsJson.Person(m, "teamMember", "");
+            if (string.IsNullOrEmpty(displayName))
+            {
+                continue;
+            }
 
             var key = PlanningCapacityCalculator.NormalizeMemberName(displayName);
-            // Highest non-zero capacity wins across teams; first entry otherwise.
-            if (result.Members.TryGetValue(key, out var existing) && existing.CapacityPerDay >= capPerDay) continue;
-            result.Members[key] = new MemberCapacity
+            if (!result.Members.TryGetValue(key, out var member))
             {
-                DisplayName = displayName,
-                NormalizedName = key,
-                CapacityPerDay = capPerDay,
-                DaysOff = ParseDateRanges(m, "daysOff")
-            };
+                result.Members[key] = member = new MemberCapacity { DisplayName = displayName };
+            }
+            member.Teams.Add(new TeamMemberCapacity
+            {
+                Team = read.Team,
+                CapacityPerDay = CapacityPerDay(m),
+                DaysOff = [.. ParseDateRanges(m, "daysOff"), .. read.DaysOff ?? []]
+            });
         }
     }
+
+    /// <summary>A member's hours a day in one team: the sum over their activities, as the team's capacity page shows.</summary>
+    private static double CapacityPerDay(JsonElement member) =>
+        member.TryGetProperty("activities", out var activities) && activities.ValueKind == JsonValueKind.Array
+            ? activities.EnumerateArray().Sum(a =>
+                a.ValueKind == JsonValueKind.Object && a.TryGetProperty("capacityPerDay", out var perDay)
+                && perDay.ValueKind == JsonValueKind.Number ? perDay.GetDouble() : 0)
+            : 0;
 
     private static List<DateRange> ParseDateRanges(JsonElement el, string prop)
     {
         var list = new List<DateRange>();
         if (el.TryGetProperty(prop, out var arr) && arr.ValueKind == JsonValueKind.Array)
+        {
             foreach (var r in arr.EnumerateArray())
-                if (r.TryGetProperty("start", out var s) && r.TryGetProperty("end", out var e)
-                    && DateTime.TryParse(s.GetString(), out var sd) && DateTime.TryParse(e.GetString(), out var ed))
-                    list.Add(new DateRange { Start = sd.Date, End = ed.Date });
+            {
+                if (TfsJson.Day(r, "start") is { } start && TfsJson.Day(r, "end") is { } end)
+                {
+                    list.Add(new DateRange { Start = start, End = end });
+                }
+            }
+        }
         return list;
     }
 

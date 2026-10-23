@@ -181,8 +181,8 @@ public partial class TfsApiService : ITfsMetadataSource
                     Name = name.GetString()!,
                     Path = path,
                     Project = project,
-                    StartDate = dated ? TfsJson.Date(attrs, "startDate") : null,
-                    FinishDate = dated ? TfsJson.Date(attrs, "finishDate") : null
+                    StartDate = dated ? TfsJson.Day(attrs, "startDate") : null,
+                    FinishDate = dated ? TfsJson.Day(attrs, "finishDate") : null
                 });
             }
 

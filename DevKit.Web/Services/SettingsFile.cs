@@ -8,12 +8,24 @@ namespace DevKit.Web.Services;
 
 /// <summary>
 /// Where <see cref="SettingsService"/> keeps the settings text: the per-user file in local mode, or in shared mode
-/// the signed-in person's own encrypted file on the server (<see cref="ServerSettingsStore"/>).
+/// the signed-in person's own browser (<see cref="ClientSettingsStore"/>).
 /// </summary>
 internal interface ISettingsStore
 {
     /// <summary>Where the settings are kept, as the Settings page names it.</summary>
     string Location { get; }
+
+    /// <summary>How the PAT is kept inside the stored text.</summary>
+    PatAtRest Pat => PatAtRest.Dpapi;
+
+    /// <summary>What a person is told when a save failed; null for the settings file's own message.</summary>
+    string? SaveFailedMessage => null;
+
+    /// <summary>What a person is told when the stored text could not be read and nothing replaced it; null for the settings file's own message.</summary>
+    string? UnreadableMessage => null;
+
+    /// <summary>What a person is told when the stored text could not be read now, so nothing is saved over it; null for the settings file's own message.</summary>
+    string? ReadFailedMessage => null;
 
     /// <summary>The stored text, or null when there is none yet.</summary>
     string? ReadText();

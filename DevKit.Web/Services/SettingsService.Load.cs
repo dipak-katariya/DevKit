@@ -42,8 +42,8 @@ public partial class SettingsService
         }
         catch (CryptographicException ex)
         {
-            // Shared mode's file, encrypted with keys the server no longer has or for another account: damaged, as far
-            // as this account goes, so it is set aside like a damaged file and never overwritten.
+            // Shared mode's settings, sealed with another server's key or for another account: damaged, as far as this
+            // account goes, so they are set aside like a damaged file where the store can, and never read as theirs.
             _logger.LogError(ex, "The stored settings could not be decrypted for this account");
             RecoverFromBackup();
             return;
@@ -87,7 +87,7 @@ public partial class SettingsService
                 return;
             }
 
-            LoadProblem = DiscardedMessage;
+            LoadProblem = _store.UnreadableMessage ?? DiscardedMessage;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -128,7 +128,7 @@ public partial class SettingsService
 
     private void BlockSaving()
     {
-        _saveBlockedReason = LoadFailedMessage;
-        LoadProblem = LoadFailedMessage;
+        _saveBlockedReason = _store.ReadFailedMessage ?? LoadFailedMessage;
+        LoadProblem = _saveBlockedReason;
     }
 }

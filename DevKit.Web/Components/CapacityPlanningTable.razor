@@ -8,7 +8,7 @@
             <tr>
                 <th>Member</th>
                 <th class="cp-num" title="Capacity per day × available days">Actual</th>
-                <th class="cp-num" title="Leave and team days off on working days">Leave</th>
+                <th class="cp-num" title="Own days off plus their TFS team's days off, on working days. Weighted by hours for a member in several TFS teams">Leave</th>
                 <th class="cp-num" title="Planned Deliverable hours and their share of planned hours">Deliverable</th>
                 <th class="cp-num" title="Planned Non-Deliverable hours and their share of planned hours">Non-Deliverable</th>
                 <th class="cp-num" title="Planned hours (revised else original) and Planning % against the target">Planning</th>
@@ -57,9 +57,9 @@ else
         <thead>
             <tr>
                 <th>Member</th>
-                <th class="cp-num" title="Capacity per day">Cap/Day</th>
+                <th class="cp-num" title="Capacity per day, added up over the member's TFS teams">Cap/Day</th>
                 <th class="cp-num" title="Working days in the sprint">Days</th>
-                <th class="cp-num" title="Leave and team days off on working days">Leave</th>
+                <th class="cp-num" title="Own days off plus their TFS team's days off, on working days. Weighted by hours for a member in several TFS teams">Leave</th>
                 <th class="cp-num" title="Capacity per day × available days">Actual</th>
                 @if (IsAi) { <th class="cp-num" title="(Actual − carved-out hours) × @OverPlanLabel">AI h</th> }
                 <th class="cp-num" title="@(IsAi ? "Actual + AI hours" : "Regular mode: the target is the actual capacity")">Target (@TargetLabel)</th>
@@ -134,8 +134,12 @@ else
         <div class="cell-meta">
             @m.TaskCount task(s)@(m.CapacityFromTfs ? "" : $" · {m.CapacityPerDay:0.##} h default")
             @if (m.WorksAcrossTeams) { <span class="cp-cross" title="Has both development and QA work">· Dev + QA</span> }
+            @if (m.TfsTeams.Count > 1) { <span class="cp-cross" title="@TfsTeamsTitle(m)">· @m.TfsTeams.Count TFS teams</span> }
         </div>
     </text>;
+
+    private static string TfsTeamsTitle(MemberPlanning m) =>
+        "Hours a day by TFS team: " + string.Join(", ", m.TfsTeams.Select(t => $"{t.Team} {t.CapacityPerDay:0.##} h"));
 
     private RenderFragment BreakdownButton(MemberPlanning m) =>
         @<button type="button" class="btn-sm" @onclick="() => OnBreakdown.InvokeAsync(m)" title="Show the calculation for @m.DisplayName">ƒ</button>;

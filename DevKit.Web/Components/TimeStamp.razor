@@ -1,10 +1,9 @@
 @* The one place a date is rendered, so format and timezone cannot drift between pages.
 
-   Dates arrive in two kinds. TfsJson.Date parses a "…Z" string with DateTime.TryParse, which
-   converts to local time; TfsApiService reads the same field with JsonElement.GetDateTime, which
-   keeps it in UTC. That is why the merging sheet and the merge tool showed the same commit at
-   times an offset apart. ToLocalTime settles both: it is a no-op on a value already local, and
-   converts one still in UTC. *@
+   TfsJson.Timestamp and JsonElement.GetDateTime both keep a "…Z" string in UTC. The merging sheet
+   and the merge tool once showed the same commit at times an offset apart, because TfsJson then
+   converted to local time and GetDateTime did not. ToLocalTime shows either in the server's zone:
+   it converts a value in UTC and is a no-op on one already local. *@
 
 @if (Value is { } raw)
 {

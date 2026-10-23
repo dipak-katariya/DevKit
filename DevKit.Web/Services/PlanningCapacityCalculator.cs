@@ -10,8 +10,10 @@ namespace DevKit.Web.Services;
 /// Per member:
 /// <code>
 ///   Sprint days   = working weekdays in the iteration      (or weeks × working days per week)
-///   Leave         = member + team days off on working weekdays inside the sprint
+///   Leave         = member + own team's days off on working weekdays inside the sprint
+///                   In several TFS teams: each team's leave, weighted by the member's hours a day in that team
 ///   Actual        = capacity-per-day × (sprint days − leave)
+///                   In several TFS teams: Σ team hours a day × (sprint days − that team's leave)
 ///   AI hours      = max(0, Actual − Excluded) × over-plan %   Excluded = hours on tags carved out of the base
 ///   Target        = Actual + AI hours                         Regular mode: over-plan is 0, so Target = Actual
 ///   Planning %    = planned (revised, else original estimate) ÷ Target
@@ -62,11 +64,10 @@ public static partial class PlanningCapacityCalculator
     }
 
     /// <summary>
-    /// Distinct working-day dates inside [start, finish] that any range covers. A set, so a
-    /// personal day off that falls on a team holiday is counted once.
+    /// Distinct dates inside [start, finish] that any range covers. A set, so a personal day
+    /// off that falls on a team holiday is counted once.
     /// </summary>
-    public static int CountLeaveOnWorkingDays(
-        IEnumerable<DateRange> ranges, DateTime start, DateTime finish, IReadOnlySet<DayOfWeek> workingDays)
+    public static HashSet<DateTime> DaysCovered(IEnumerable<DateRange> ranges, DateTime start, DateTime finish)
     {
         var dates = new HashSet<DateTime>();
         foreach (var r in ranges)
@@ -74,9 +75,11 @@ public static partial class PlanningCapacityCalculator
             var from = r.Start.Date < start.Date ? start.Date : r.Start.Date;
             var to = r.End.Date > finish.Date ? finish.Date : r.End.Date;
             for (var d = from; d <= to; d = d.AddDays(1))
-                if (workingDays.Contains(d.DayOfWeek)) dates.Add(d);
+            {
+                dates.Add(d);
+            }
         }
-        return dates.Count;
+        return dates;
     }
 
     /// <summary>
@@ -152,7 +155,17 @@ public static partial class PlanningCapacityCalculator
 
     // ─── Per-member capacity (the same in every scope) ───
 
-    private sealed record MemberCapacityFacts(double PerDay, bool FromTfs, double LeaveDays, double Actual, double? ExpectedPct);
+    private sealed record MemberCapacityFacts(
+        double PerDay, bool FromTfs, double LeaveDays, double Actual, double? ExpectedPct, IReadOnlyList<TeamCapacityShare> TfsTeams);
+
+    /// <summary>
+    /// A part of a member's capacity whose leave is counted on its own. <paramref name="Share"/> is the part's
+    /// fraction of the member's hours a day; the shares of one member add up to 1.
+    /// </summary>
+    private sealed record CapacityPart(string Team, double Share, IReadOnlyList<DateRange> DaysOff);
+
+    /// <summary>A part's leave on working days of the sprint, its available days, and its leave already behind us.</summary>
+    private readonly record struct PartLeave(string Team, double Share, int Leave, double Available, int LeaveSoFar);
 
     private static MemberCapacityFacts MemberCapacityFor(
         string memberKey, SprintCapacity capacity, SprintWindow sprint, CapacityPlanningSettings settings, IReadOnlySet<DayOfWeek> workingDays)
@@ -162,31 +175,65 @@ public static partial class PlanningCapacityCalculator
         var perDay = fromTfs ? cap!.CapacityPerDay : settings.HoursPerDay;
 
         if (sprint.Start is not { } start || sprint.Finish is not { } finish)
-            return new MemberCapacityFacts(perDay, fromTfs, 0, PlanningMath.Round2(perDay * sprint.Days), null);
+        {
+            return new MemberCapacityFacts(perDay, fromTfs, 0, PlanningMath.Round2(perDay * sprint.Days), null, []);
+        }
 
-        // A set of dates, so a personal day off on a team holiday is counted once.
-        var ranges = new List<DateRange>(capacity.TeamDaysOff);
-        if (cap != null) ranges.AddRange(cap.DaysOff);
+        var parts = CapacityParts(cap, capacity.SharedDaysOff)
+            .Select(part => LeaveOf(part, sprint, start, finish, workingDays))
+            .ToList();
+        var available = parts.Sum(p => p.Share * p.Available);
+        var tfsTeams = parts.Count > 1
+            ? parts.Select(p => new TeamCapacityShare(
+                p.Team, PlanningMath.Round2(perDay * p.Share), p.Leave, PlanningMath.Round2(perDay * p.Share * p.Available))).ToList()
+            : [];
 
-        var leave = Math.Min(sprint.Days, CountLeaveOnWorkingDays(ranges, start, finish, workingDays));
-        var available = Math.Max(0, sprint.Days - leave);
-        var actual = PlanningMath.Round2(perDay * available);
+        return new MemberCapacityFacts(
+            perDay, fromTfs, PlanningMath.Round2(sprint.Days - available), PlanningMath.Round2(perDay * available),
+            ExpectedPct(sprint, parts, available), tfsTeams);
+    }
 
-        return new MemberCapacityFacts(perDay, fromTfs, leave, actual, ExpectedPct(sprint, ranges, available, workingDays));
+    /// <summary>
+    /// How a member's capacity divides for counting leave. A team's days off take only the hours the member
+    /// works for that team, so with TFS hours there is one part per team they have hours in, sized by those
+    /// hours. Without TFS hours the split is unknown: the member is one part, off whenever any of their teams
+    /// is off, and a member no team lists takes the days off every team planning the area shares.
+    /// </summary>
+    private static List<CapacityPart> CapacityParts(MemberCapacity? cap, IReadOnlyList<DateRange> sharedDaysOff)
+    {
+        if (cap is { CapacityPerDay: > 0 and var hours })
+        {
+            return cap.Teams
+                .Where(team => team.CapacityPerDay > 0)
+                .Select(team => new CapacityPart(team.Team, team.CapacityPerDay / hours, team.DaysOff))
+                .ToList();
+        }
+
+        IReadOnlyList<DateRange> daysOff = cap is { Teams.Count: > 0 } ? cap.Teams.SelectMany(team => team.DaysOff).ToList() : sharedDaysOff;
+        return [new CapacityPart("", 1, daysOff)];
+    }
+
+    private static PartLeave LeaveOf(CapacityPart part, SprintWindow sprint, DateTime start, DateTime finish, IReadOnlySet<DayOfWeek> workingDays)
+    {
+        var leaveDates = DaysCovered(part.DaysOff, start, finish).Where(day => workingDays.Contains(day.DayOfWeek)).ToList();
+        var leave = Math.Min(sprint.Days, leaveDates.Count);
+        var leaveSoFar = sprint.ElapsedEnd is { } elapsedEnd ? leaveDates.Count(day => day <= elapsedEnd) : 0;
+        return new PartLeave(part.Team, part.Share, leave, Math.Max(0, sprint.Days - leave), leaveSoFar);
     }
 
     /// <summary>
     /// How far through their own plan a member should be by now: the share of their available
     /// days already behind them. Leave comes off both sides, so a week away does not read as a
-    /// week behind.
+    /// week behind. Each part of a member split over teams counts by its share of their hours.
     /// </summary>
-    private static double? ExpectedPct(SprintWindow sprint, List<DateRange> ranges, double available, IReadOnlySet<DayOfWeek> workingDays)
+    private static double? ExpectedPct(SprintWindow sprint, IReadOnlyList<PartLeave> parts, double available)
     {
-        if (sprint.ElapsedDays is not { } elapsedDays || sprint.Start is not { } start || sprint.ElapsedEnd is not { } elapsedEnd)
+        if (sprint.ElapsedDays is not { } elapsedDays)
+        {
             return null;
+        }
 
-        var leaveSoFar = elapsedEnd < start ? 0 : CountLeaveOnWorkingDays(ranges, start, elapsedEnd, workingDays);
-        var availableSoFar = Math.Clamp(elapsedDays - leaveSoFar, 0, available);
+        var availableSoFar = parts.Sum(p => p.Share * Math.Clamp(elapsedDays - p.LeaveSoFar, 0, p.Available));
         return PlanningMath.Pct(availableSoFar, available);
     }
 
@@ -211,6 +258,7 @@ public static partial class PlanningCapacityCalculator
             SprintDays = sprintDays,
             LeaveDays = cap.LeaveDays,
             ActualCapacity = cap.Actual,
+            TfsTeams = cap.TfsTeams,
             ExcludedByTag = tally.ExcludedBreakdown(),
             ExcludedHours = PlanningMath.Round2(excluded),
             AiHours = PlanningMath.Round2(aiHours),

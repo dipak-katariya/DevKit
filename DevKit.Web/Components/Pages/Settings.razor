@@ -90,7 +90,7 @@
                 Saved in <code style="font-size:.62rem;color:var(--cyan);">@SettingsSvc.SettingsFilePath</code>.
                 @if (SettingsSvc.FixedTfsUrl is not null)
                 {
-                    <text>They are encrypted, loaded only for your Windows account, and come back on any PC or browser you sign in from, also after DevKit is updated or moves to another address.</text>
+                    <text>They are encrypted for your Windows account and kept only here, never on the DevKit server. They stay when DevKit is updated or moves to another server; in another browser or on another PC, enter them once there.</text>
                 }
                 else if (SettingsSvc.Tfs.Auth == TfsAuthMode.Windows)
                 {

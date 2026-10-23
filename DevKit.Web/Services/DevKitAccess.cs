@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Runtime.Versioning;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
@@ -128,6 +129,9 @@ public sealed class DevKitHostingOptions
         var network = IPGlobalProperties.GetIPGlobalProperties();
         return string.IsNullOrEmpty(network.DomainName) ? network.HostName : $"{network.HostName}.{network.DomainName}";
     }
+
+    /// <summary>This machine's DNS domain, such as example.com; empty when it has none.</summary>
+    internal static string MachineDnsDomain() => IPGlobalProperties.GetIPGlobalProperties().DomainName;
 
     /// <summary>Localhost, this machine's name and full name, and its IPv4 addresses, read without asking DNS.</summary>
     private static List<string> ThisMachinesNames() =>
@@ -300,10 +304,13 @@ internal sealed class HostedAccess : DevKitAccess
 
     public override void UseSignIn(WebApplication app)
     {
+        // Made now, so the log says at start whether the domain locks keys for the account DevKit runs as.
+        app.Services.GetRequiredService<ClientVault>();
         app.UseAuthentication();
         app.UseRateLimiter();
         app.UseAuthorization();
         app.MapSignInEndpoints();
+        app.MapClientVaultEndpoints();
     }
 
     /// <summary>Hosted mode has no link to keep secret: it prints the address to give people, who sign in with Windows.</summary>
@@ -361,19 +368,25 @@ internal sealed class HostedAccess : DevKitAccess
         services.AddSingleton<WindowsSignIn>();
         services.AddSingleton<SignInFlow>();
 
-        // Each person's settings, in a file of their own beside the keys: outside the build and the site's address.
+        services.AddSingleton(NewClientVault);
+        services.AddScoped<ClientSettingsStore>();
+        services.AddScoped(sp =>
+        {
+            var store = sp.GetRequiredService<ClientSettingsStore>();
+            var settings = new SettingsService(sp.GetRequiredService<ILogger<SettingsService>>(), store, Options.TfsUrl);
+            store.WriteFailed += settings.ReportSaveFailed;
+            return settings;
+        });
+        // The files an earlier DevKit kept on this server, moved into each person's browser on their next visit.
         services.AddSingleton(sp => new ServerSettingsFolder(
             Path.Combine(DevKitMachineConfig.Folder, ServerSettingsFolder.FolderName), sp.GetRequiredService<IDataProtectionProvider>()));
-        services.AddScoped<ServerSettingsStore>();
-        services.AddScoped<BrowserSettingsMigration>();
-        services.AddScoped(sp => new SettingsService(
-            sp.GetRequiredService<ILogger<SettingsService>>(), sp.GetRequiredService<ServerSettingsStore>(), Options.TfsUrl));
+        services.AddScoped<EarlierSettingsCopies>();
         services.AddScoped<UserSession, SharedUserSession>();
         services.AddScoped<AuthenticationStateProvider, SessionAuthenticationStateProvider>();
 
-        // The keys that encrypt sessions and everyone's settings files. They stay on this server, encrypted for the
-        // account DevKit runs as; losing them signs everyone out and leaves their settings unreadable (set aside, not
-        // deleted), so they are backed up together with the settings folder.
+        // The keys that encrypt sessions, and that open the settings files an earlier DevKit kept on this server until
+        // each has moved into its person's browser. They stay on this server, encrypted for the account DevKit runs as;
+        // losing them signs everyone out, and leaves any file not moved yet unreadable.
         services.AddDataProtection()
             .SetApplicationName("DevKit")
             .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(DevKitMachineConfig.Folder, "keys")))
@@ -391,6 +404,15 @@ internal sealed class HostedAccess : DevKitAccess
             limits.AddPolicy(WindowsSignInRateLimitPolicy, PerAddress(WindowsRequestsPerMinute));
         });
     }
+
+    /// <summary>
+    /// Each person's settings stay in their own browser, sealed with a key of their own that the domain locks to the
+    /// account DevKit runs as, so any DevKit server running as that account opens them with nothing copied to it.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    private static ClientVault NewClientVault(IServiceProvider services) => new(
+        DomainKeyLock.For(services.GetRequiredService<OwnerAccount>(), services.GetRequiredService<ILogger<DomainKeyLock>>()),
+        DevKitHostingOptions.MachineDnsDomain());
 
     /// <summary>At most <paramref name="perMinute"/> requests a minute from one address.</summary>
     private static Func<HttpContext, RateLimitPartition<string>> PerAddress(int perMinute) =>
