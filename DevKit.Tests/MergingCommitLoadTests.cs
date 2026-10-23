@@ -106,7 +106,7 @@ public sealed class MergingCommitLoadTests : IDisposable
         _failingCommits.Add(AlphaPr);
         var bundle = await LoadAsync();
 
-        foreach (var pr in bundle.Requirements.SelectMany(r => r.AllPullRequests))
+        foreach (var pr in bundle.Requirements.SelectMany(r => r.AllPullRequests()))
         {
             pr.IsMergedToTargetBranch = true;
         }

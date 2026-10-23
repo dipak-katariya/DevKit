@@ -26,7 +26,7 @@ else
                             var expected = Expected(col.WorkingDays);
                             var overBug = expected is { } e && cell?.Bug < e;
                             <td class="bd-cell" title="@ExpectedTitle(col.WorkingDays)" @onclick="() => Show(row.MemberDisplay, col.Label, cell)">
-                                @if (cell is null || cell.Total == 0)
+                                @if (cell is null || Math.Abs(cell.Total) < HalfHundredth)
                                 {
                                     <span class="bd-zero">·</span>
                                 }
@@ -72,7 +72,7 @@ else
                         @foreach (var it in sel.Items.OrderByDescending(i => i.Delta))
                         {
                             <tr>
-                                <td><a class="id-link" href="@TfsApi.WorkItemUrl(ProjectFor(it), it.ItemId)" target="_blank" rel="noopener">#@it.ItemId</a></td>
+                                <td><a class="id-link" href="@TfsApi.WorkItemUrl(Project, it.ItemId)" target="_blank" rel="noopener">#@it.ItemId</a></td>
                                 <td>
                                     <div class="cell-title">@it.ItemTitle</div>
                                     <div class="cell-meta" title="@it.ItemArea">@(it.ItemArea.Split('\\').LastOrDefault())</div>
@@ -107,7 +107,8 @@ else
         sel = cell; selMember = member; selPeriod = period;
     }
 
-    private string ProjectFor(BurndownContribution _) => Project;
+    // Cells hold hours rounded to hundredths, so a total nearer zero than half of one is no hours.
+    private const double HalfHundredth = 0.005;
 
     /// <summary>
     /// Hours expected over a period, so a week is measured against a week's working days, and
@@ -133,8 +134,18 @@ else
         }
     }
 
-    private static string RegClass(double v, double? expected) =>
-        v <= 0 ? "bd-zero"
-        : expected is not { } hours ? "bd-reg-none"
-        : v < hours ? "bd-reg-red" : "bd-reg-green";
+    private static string RegClass(double v, double? expected)
+    {
+        if (v <= 0)
+        {
+            return "bd-zero";
+        }
+
+        if (expected is not { } hours)
+        {
+            return "bd-reg-none";
+        }
+
+        return v < hours ? "bd-reg-red" : "bd-reg-green";
+    }
 }

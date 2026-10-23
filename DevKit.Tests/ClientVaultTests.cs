@@ -174,8 +174,8 @@ public sealed class ClientVaultTests
         });
 
         var next = Request("devkit-b.example.test", cookies);
-        Assert.Equal(sealedText, _vault.ReadFrom(next.Request.Cookies, Alice));
-        Assert.Null(_vault.ReadFrom(next.Request.Cookies, Bob));
+        Assert.Equal(sealedText, ClientVault.ReadFrom(next.Request.Cookies, Alice));
+        Assert.Null(ClientVault.ReadFrom(next.Request.Cookies, Bob));
     }
 
     [Theory]

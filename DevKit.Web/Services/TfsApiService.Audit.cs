@@ -242,14 +242,18 @@ public partial class TfsApiService
     private static DateTime? ChangedDateIst(JsonElement fields)
     {
         if (fields.TryGetProperty("System.ChangedDate", out var cd) && cd.TryGetProperty("newValue", out var nv)
-            && nv.ValueKind == JsonValueKind.String && DateTimeOffset.TryParse(nv.GetString(), out var dto))
+            && nv.ValueKind == JsonValueKind.String
+            && DateTimeOffset.TryParse(nv.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.None, out var dto))
+        {
             return dto.ToOffset(IstOffset).Date;
+        }
+
         return null;
     }
 
     private static DateTime? RevisedDateIst(JsonElement update)
         => update.TryGetProperty("revisedDate", out var rd) && rd.ValueKind == JsonValueKind.String
-           && DateTimeOffset.TryParse(rd.GetString(), out var dto) && dto.Year > 1
+           && DateTimeOffset.TryParse(rd.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.None, out var dto) && dto.Year > 1
             ? dto.ToOffset(IstOffset).Date : null;
 
     // ─── audit helpers ───
@@ -427,15 +431,4 @@ public partial class TfsApiService
         }
         return "-";
     }
-
-    private static TfsCommitPerson? ParsePerson(JsonElement el, string prop)
-    {
-        if (!el.TryGetProperty(prop, out var p)) return null;
-        return new TfsCommitPerson
-        {
-            Name = p.TryGetProperty("name", out var n) ? n.GetString() : null,
-            Date = p.TryGetProperty("date", out var d) ? d.GetDateTime() : null
-        };
-    }
-
 }

@@ -11,9 +11,9 @@ namespace DevKit.Tests;
 public partial class PlanningCapacityCalculatorTests
 {
     // Monday 14 to Friday 25 September 2026: a two-week, ten-working-day sprint.
-    private static readonly DateTime SprintStart = new(2026, 9, 14);
-    private static readonly DateTime SprintFinish = new(2026, 9, 25);
-    private static readonly DateTime AfterSprint = new(2026, 9, 28);
+    private static readonly DateTime SprintStart = Day(2026, 9, 14);
+    private static readonly DateTime SprintFinish = Day(2026, 9, 25);
+    private static readonly DateTime AfterSprint = Day(2026, 9, 28);
     private static readonly DateRange[] NoLeave = Array.Empty<DateRange>();
 
     private static int _nextId = 1000;
@@ -38,6 +38,9 @@ public partial class PlanningCapacityCalculatorTests
         new() { Id = itemId, Type = kind, Tags = tagList };
 
     private static DateRange Off(DateTime from, DateTime? to = null) => new() { Start = from, End = to ?? from };
+
+    /// <summary>A calendar day at midnight UTC, as <see cref="TfsJson.Day"/> reads sprint dates and days off from TFS.</summary>
+    private static DateTime Day(int year, int month, int day) => new(year, month, day, 0, 0, 0, DateTimeKind.Utc);
 
     /// <summary>Capacity where each person is in one TFS team.</summary>
     private static SprintCapacity Capacity(params (string Name, double PerDay, DateRange[] Off)[] people)
@@ -79,7 +82,7 @@ public partial class PlanningCapacityCalculatorTests
             Task(who, 5.5, tagList: "Team B Support"),
             Task(who, 50, parentId: "P1")
         };
-        var cap = Capacity((who, 8.5, new[] { Off(new DateTime(2026, 9, 21), new DateTime(2026, 9, 23)) }));
+        var cap = Capacity((who, 8.5, new[] { Off(Day(2026, 9, 21), Day(2026, 9, 23)) }));
 
         var m = Only(Build(Data(tasks, cap, Parent("P1", tagList: "Deliverable"))));
 
@@ -195,7 +198,7 @@ public partial class PlanningCapacityCalculatorTests
     public void A_six_day_week_counts_saturday_both_as_a_sprint_day_and_as_leave()
     {
         const string who = "A";
-        var saturday = new DateTime(2026, 9, 19);
+        var saturday = Day(2026, 9, 19);
         var sixDay = new CapacityPlanningSettings { WorkingDays = { DayOfWeek.Saturday } };   // added to Monday to Friday
         var data = Data(new[] { Task(who, 10) }, Capacity((who, 8, new[] { Off(saturday) })));
 
@@ -212,7 +215,7 @@ public partial class PlanningCapacityCalculatorTests
     public void Leave_and_a_team_holiday_on_the_same_day_are_counted_once()
     {
         const string who = "A";
-        var holiday = new DateTime(2026, 9, 16);
+        var holiday = Day(2026, 9, 16);
 
         // A member's days off carry their team's days off beside their own, so one date can be listed twice.
         var cap = Capacity((who, 8, new[] { Off(holiday), Off(holiday) }));
@@ -258,7 +261,7 @@ public partial class PlanningCapacityCalculatorTests
         // 4.5 h a day in Alpha, which is off on Wednesday 16th, and 4 h in Beta, which works all ten days.
         const string who = "Split";
         var cap = Capacity();
-        AddMember(cap, who, InTeam("Alpha", 4.5, Off(new DateTime(2026, 9, 16))), InTeam("Beta", 4));
+        AddMember(cap, who, InTeam("Alpha", 4.5, Off(Day(2026, 9, 16))), InTeam("Beta", 4));
         var regular = new CapacityPlanningSettings { Mode = PlanningMode.Regular };
 
         var m = Only(Build(Data(new[] { Task(who, 80.5) }, cap), regular));
@@ -279,9 +282,9 @@ public partial class PlanningCapacityCalculatorTests
         // Monday 21st: 5 days are behind us. Alpha's 4.5 h had 4 of them (off on the 16th), Beta's 4 h all 5.
         const string who = "Split";
         var cap = Capacity();
-        AddMember(cap, who, InTeam("Alpha", 4.5, Off(new DateTime(2026, 9, 16))), InTeam("Beta", 4));
+        AddMember(cap, who, InTeam("Alpha", 4.5, Off(Day(2026, 9, 16))), InTeam("Beta", 4));
 
-        var m = Only(Build(Data(new[] { Task(who, 80) }, cap), today: new DateTime(2026, 9, 21)));
+        var m = Only(Build(Data(new[] { Task(who, 80) }, cap), today: Day(2026, 9, 21)));
 
         Assert.Equal(47.2, m.ExpectedPct);           // (4.5 × 4 + 4 × 5) of (4.5 × 9 + 4 × 10) hours
     }
@@ -291,7 +294,7 @@ public partial class PlanningCapacityCalculatorTests
     {
         const string who = "A";
         var cap = Capacity();
-        AddMember(cap, who, InTeam("Alpha", 8), InTeam("Beta", 0, Off(new DateTime(2026, 9, 16), new DateTime(2026, 9, 18))));
+        AddMember(cap, who, InTeam("Alpha", 8), InTeam("Beta", 0, Off(Day(2026, 9, 16), Day(2026, 9, 18))));
 
         var m = Only(Build(Data(new[] { Task(who, 10) }, cap)));
 
@@ -305,7 +308,7 @@ public partial class PlanningCapacityCalculatorTests
     {
         const string who = "A";
         var cap = Capacity();
-        AddMember(cap, who, InTeam("Alpha", 0, Off(new DateTime(2026, 9, 16))), InTeam("Beta", 0, Off(new DateTime(2026, 9, 17))));
+        AddMember(cap, who, InTeam("Alpha", 0, Off(Day(2026, 9, 16))), InTeam("Beta", 0, Off(Day(2026, 9, 17))));
 
         var m = Only(Build(Data(new[] { Task(who, 10) }, cap)));
 
@@ -319,7 +322,7 @@ public partial class PlanningCapacityCalculatorTests
     {
         const string who = "A";
         var cap = Capacity();
-        AddMember(cap, who, InTeam("Alpha", 6, Off(new DateTime(2026, 9, 16))), InTeam("Beta", 2));
+        AddMember(cap, who, InTeam("Alpha", 6, Off(Day(2026, 9, 16))), InTeam("Beta", 2));
         var settings = new CapacityPlanningSettings { UseTfsMemberCapacity = false, HoursPerDay = 8 };
 
         var m = Only(Build(Data(new[] { Task(who, 10) }, cap), settings));
@@ -336,7 +339,7 @@ public partial class PlanningCapacityCalculatorTests
     public void A_member_no_team_lists_takes_the_days_off_every_team_shares()
     {
         var cap = Capacity();
-        cap.SharedDaysOff.Add(Off(new DateTime(2026, 9, 16)));
+        cap.SharedDaysOff.Add(Off(Day(2026, 9, 16)));
 
         var m = Only(Build(Data(new[] { Task("Newcomer", 10) }, cap)));
 

@@ -10,7 +10,8 @@ namespace DevKit.Tests;
 /// <summary>
 /// The real domain lock, on this machine and as the account the tests run as: a key locked to that account opens again
 /// for any lock of the same account, with nothing kept on disk, and a key locked to another account, or bytes that are
-/// no locked key, never open. Like shared DevKit, these need a domain account on a machine in the domain.
+/// no locked key, never open. The tests that lock a key need a domain account, as shared DevKit does, and are skipped
+/// elsewhere (<see cref="DomainAccountFactAttribute"/>).
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class DomainKeyLockTests
@@ -19,7 +20,7 @@ public sealed class DomainKeyLockTests
 
     private static readonly OwnerAccount ThisAccount = OwnerAccount.Current();
 
-    [Fact]
+    [DomainAccountFact]
     public void A_key_locked_to_this_account_opens_again_for_any_lock_of_it()
     {
         var logger = new RecordingLogger<DomainKeyLock>();
@@ -33,7 +34,7 @@ public sealed class DomainKeyLockTests
         Assert.Empty(logger.Entries);
     }
 
-    [Fact]
+    [DomainAccountFact]
     public void A_key_locked_to_another_account_does_not_open_here()
     {
         var krbtgt = new SecurityIdentifier(ThisAccount.Id).AccountDomainSid + "-502";
@@ -67,5 +68,22 @@ public sealed class DomainKeyLockTests
         DomainKeyLock.For(new OwnerAccount("S-1-5-21-1-2-3-4242"), logger);
 
         Assert.Equal(LogLevel.Error, Assert.Single(logger.Entries).Level);
+    }
+}
+
+/// <summary>
+/// A test that runs only as a domain account. The domain locks keys for nothing else, so as a local account, such as on
+/// a CI runner outside the domain, the test is skipped and says why rather than failing.
+/// </summary>
+[AttributeUsage(AttributeTargets.Method)]
+public sealed class DomainAccountFactAttribute : FactAttribute
+{
+    public DomainAccountFactAttribute()
+    {
+        // A local account's domain is the machine itself.
+        if (string.Equals(Environment.UserDomainName, Environment.MachineName, StringComparison.OrdinalIgnoreCase))
+        {
+            Skip = "Needs a domain account on a machine in the domain, which the domain locks keys for.";
+        }
     }
 }

@@ -315,6 +315,9 @@ public sealed class LineIndex
     /// <summary>How many times the line occurs.</summary>
     public int Count(int id) => _positions.TryGetValue(id, out var positions) ? positions.Count : 0;
 
+    /// <summary>How many contiguous occurrences of <paramref name="block"/> there are.</summary>
+    public int Count(ReadOnlySpan<int> block) => Occurrences(block).Count;
+
     /// <summary>
     /// Start of a contiguous occurrence of <paramref name="block"/>, the one nearest
     /// <paramref name="near"/> when there are several; -1 when there is none.
@@ -334,9 +337,6 @@ public sealed class LineIndex
         }
         return best;
     }
-
-    /// <summary>How many contiguous occurrences of <paramref name="block"/> there are.</summary>
-    public int Count(ReadOnlySpan<int> block) => Occurrences(block).Count;
 
     /// <summary>Start of every contiguous occurrence of <paramref name="block"/>, in order.</summary>
     public List<int> Occurrences(ReadOnlySpan<int> block)

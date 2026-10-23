@@ -34,10 +34,10 @@ else if (Bundle.PullRequests.Count == 0)
                 </text>
             }
         </p>
-        @if (UnfilteredRepos.Count > 0)
+        @if (UnfilteredRepos().Count > 0)
         {
             <p class="upr-hint">
-                No QA branch is set for <b>@string.Join(", ", UnfilteredRepos)</b>, so every branch was
+                No QA branch is set for <b>@string.Join(", ", UnfilteredRepos())</b>, so every branch was
                 included. Set one under Branch setup to narrow this.
             </p>
         }
@@ -60,10 +60,10 @@ else
                         <b>Links only</b> to include those here.
                     </text>
                 }
-                @if (UnfilteredRepos.Count > 0)
+                @if (UnfilteredRepos().Count > 0)
                 {
                     <text>
-                        No QA branch is set for <b>@string.Join(", ", UnfilteredRepos)</b>, so every
+                        No QA branch is set for <b>@string.Join(", ", UnfilteredRepos())</b>, so every
                         branch was included there.
                     </text>
                 }
@@ -174,7 +174,7 @@ else
     private string? expandedPr;
 
     /// <summary>Repositories with no QA branch configured, so nothing narrowed their results.</summary>
-    private List<string> UnfilteredRepos => Bundle.QaBranchByRepo
+    private List<string> UnfilteredRepos() => Bundle.QaBranchByRepo
         .Where(kv => string.IsNullOrWhiteSpace(kv.Value))
         .Select(kv => kv.Key)
         .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)

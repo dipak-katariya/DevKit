@@ -9,7 +9,7 @@ namespace DevKit.Web.Components.Pages;
 /// expansion and the deferred commit reads. Choosing and loading a sprint lives in
 /// CodeMergingSheet.Loading.cs.
 /// </summary>
-public partial class CodeMergingSheet
+public sealed partial class CodeMergingSheet
 {
     private const int SearchDebounceMs = 220;
 
@@ -109,12 +109,12 @@ public partial class CodeMergingSheet
         }
     }
 
-    private IReadOnlyList<TfsRepo> AvailableRepos => selectedArea == null
+    private IReadOnlyList<TfsRepo> AvailableRepos() => selectedArea == null
         ? repos
         : repos.Where(r => string.Equals(r.Project, selectedArea.Project, StringComparison.OrdinalIgnoreCase)).ToList();
 
-    private List<TfsRepo> SelectedRepos =>
-        AvailableRepos.Where(r => selectedRepoIds.Contains(r.Id)).ToList();
+    private List<TfsRepo> SelectedRepos() =>
+        AvailableRepos().Where(r => selectedRepoIds.Contains(r.Id)).ToList();
 
     /// <summary>Branch each repository's pull requests must target to appear in the sheet.</summary>
     private Dictionary<string, string> QaBranchByRepoId => branchRows
@@ -195,14 +195,18 @@ public partial class CodeMergingSheet
     private void RestoreRepoIds()
     {
         selectedRepoIds.Clear();
-        foreach (var id in Settings.CodeMergingRepoIds)
-            if (!string.IsNullOrEmpty(id) && AvailableRepos.Any(r => r.Id == id)) selectedRepoIds.Add(id);
-
-        if (selectedRepoIds.Count > 0) return;
+        var available = AvailableRepos().Select(r => r.Id).ToHashSet();
+        selectedRepoIds.UnionWith(Settings.CodeMergingRepoIds.Where(available.Contains));
+        if (selectedRepoIds.Count > 0)
+        {
+            return;
+        }
 
         var fallback = Settings.DefaultRepoId;
-        if (!string.IsNullOrEmpty(fallback) && AvailableRepos.Any(r => r.Id == fallback))
+        if (!string.IsNullOrEmpty(fallback) && available.Contains(fallback))
+        {
             selectedRepoIds.Add(fallback);
+        }
     }
 
     /// <summary>
@@ -214,7 +218,7 @@ public partial class CodeMergingSheet
     {
         var existing = branchRows.ToDictionary(r => r.Repo.Id, StringComparer.OrdinalIgnoreCase);
 
-        branchRows = SelectedRepos.Select(repo =>
+        branchRows = SelectedRepos().Select(repo =>
         {
             var saved = Settings.GetRepoBranches(repo.Id);
             if (existing.TryGetValue(repo.Id, out var row))
@@ -264,10 +268,10 @@ public partial class CodeMergingSheet
     {
         filter.Search = e.Value?.ToString() ?? "";
 
-        searchDebounce?.Cancel();
-        searchDebounce?.Dispose();
+        var previous = searchDebounce;
         searchDebounce = new CancellationTokenSource();
         var token = searchDebounce.Token;
+        await CancellationSources.CancelAndDisposeAsync(previous);
         try
         {
             await Task.Delay(SearchDebounceMs, token);
@@ -415,12 +419,12 @@ public partial class CodeMergingSheet
 
     private List<MultiSelectDropdown.Option> SprintOptions => AreaSprintSelect.SprintOptions(iterations, selectedArea);
 
-    private List<GlassDropdown.DropdownOption> MemberOptions => bundle.Requirements
+    private List<GlassDropdown.DropdownOption> MemberOptions() => bundle.Requirements
         .Select(r => r.AssignedTo).Where(a => !string.IsNullOrEmpty(a)).Distinct()
         .OrderBy(a => a, StringComparer.OrdinalIgnoreCase)
         .Select(a => new GlassDropdown.DropdownOption { Value = a, Label = a }).ToList();
 
-    private List<GlassDropdown.DropdownOption> AuthorOptions => bundle.AllPullRequests
+    private List<GlassDropdown.DropdownOption> AuthorOptions() => bundle.AllPullRequests
         .Select(p => p.CreatedBy).Where(a => !string.IsNullOrEmpty(a)).Distinct()
         .OrderBy(a => a, StringComparer.OrdinalIgnoreCase)
         .Select(a => new GlassDropdown.DropdownOption { Value = a, Label = a }).ToList();

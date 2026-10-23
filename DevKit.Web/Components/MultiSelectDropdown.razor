@@ -21,14 +21,14 @@
             </div>
 
             <div class="msd-bulk">
-                <button class="msd-bulk-btn" @onclick="SelectAllVisible" disabled="@(Visible.Count == 0)">
+                <button class="msd-bulk-btn" @onclick="SelectAllVisible" disabled="@(Visible().Count == 0)">
                     Select all@(HasSearch ? " matching" : "")
                 </button>
                 <button class="msd-bulk-btn" @onclick="ClearAll" disabled="@(Selected.Count == 0)">Clear</button>
             </div>
 
             <div class="gdd-list">
-                @foreach (var opt in Visible)
+                @foreach (var opt in Visible())
                 {
                     var isOn = Selected.Contains(opt.Value);
                     <div class="gdd-item msd-item @(isOn ? "gdd-item-active" : "")"
@@ -37,7 +37,7 @@
                         <span class="msd-label">@opt.Label</span>
                     </div>
                 }
-                @if (Visible.Count == 0)
+                @if (Visible().Count == 0)
                 {
                     <div class="gdd-empty">No matches</div>
                 }
@@ -79,13 +79,13 @@
 
     private bool HasSearch => !string.IsNullOrWhiteSpace(searchText);
 
-    private List<Option> Matches => Options
+    private List<Option> Matches() => Options
         .Where(o => !HasSearch || o.Label.Contains(searchText, StringComparison.OrdinalIgnoreCase))
         .ToList();
 
-    private List<Option> Visible => Matches.Take(MaxRendered).ToList();
+    private List<Option> Visible() => Matches().Take(MaxRendered).ToList();
 
-    private int HiddenCount => Math.Max(0, Matches.Count - MaxRendered);
+    private int HiddenCount => Math.Max(0, Matches().Count - MaxRendered);
 
     private string TriggerLabel
     {
@@ -129,7 +129,7 @@
 
     private Task SelectAllVisible()
     {
-        foreach (var opt in Visible) Selected.Add(opt.Value);
+        Selected.UnionWith(Visible().Select(opt => opt.Value));
         return SelectedChanged.InvokeAsync(Selected);
     }
 

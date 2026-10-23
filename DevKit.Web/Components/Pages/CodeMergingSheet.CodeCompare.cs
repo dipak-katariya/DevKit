@@ -25,7 +25,7 @@ public partial class CodeMergingSheet
     private bool ShowMergeColumns =>
         bundle.TargetBranchName is not null || (bundle.Requirements.Count > 0 && MergingBranchByRepoId.Count > 0);
 
-    private string CompareAllTooltip =>
+    private const string CompareAllTooltip =
         "Compare the code of every completed pull request shown with its repository's merging branch, " +
         "file by file. Reads any commits not loaded yet and runs Verify All first.";
 

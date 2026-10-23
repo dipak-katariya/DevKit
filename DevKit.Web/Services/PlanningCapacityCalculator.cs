@@ -190,7 +190,7 @@ public static partial class PlanningCapacityCalculator
 
         return new MemberCapacityFacts(
             perDay, fromTfs, PlanningMath.Round2(sprint.Days - available), PlanningMath.Round2(perDay * available),
-            ExpectedPct(sprint, parts, available), tfsTeams);
+            ExpectedPctFor(sprint, parts, available), tfsTeams);
     }
 
     /// <summary>
@@ -226,7 +226,7 @@ public static partial class PlanningCapacityCalculator
     /// days already behind them. Leave comes off both sides, so a week away does not read as a
     /// week behind. Each part of a member split over teams counts by its share of their hours.
     /// </summary>
-    private static double? ExpectedPct(SprintWindow sprint, IReadOnlyList<PartLeave> parts, double available)
+    private static double? ExpectedPctFor(SprintWindow sprint, IReadOnlyList<PartLeave> parts, double available)
     {
         if (sprint.ElapsedDays is not { } elapsedDays)
         {

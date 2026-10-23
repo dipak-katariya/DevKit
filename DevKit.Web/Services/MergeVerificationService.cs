@@ -113,7 +113,7 @@ public partial class MergeVerificationService
             bundle.ScannedCommitCount = 0;
             bundle.CommitWindowCapped = false;
             bundle.ScannedFrom = null;
-            foreach (var pr in bundle.Requirements.SelectMany(r => r.AllPullRequests))
+            foreach (var pr in bundle.Requirements.SelectMany(r => r.AllPullRequests()))
             {
                 ClearPullRequest(pr);
             }
@@ -280,20 +280,9 @@ public partial class MergeVerificationService
     /// range, which is what makes the answer exact rather than "the most recent N commits".
     /// Falls back to the sprint floor when no commit carries a date.
     /// </summary>
-    private static DateTime? ScanFloor(IEnumerable<MergingPullRequest> prs, DateTime? sprintFloor)
-    {
-        DateTime? earliest = null;
-        foreach (var pr in prs)
-        {
-            var candidate = pr.FirstActivityDate;
-            if (candidate.HasValue && (earliest is null || candidate < earliest))
-            {
-                earliest = candidate;
-            }
-        }
-
-        return earliest?.Subtract(CommitDateSkewBuffer) ?? sprintFloor;
-    }
+    // Min skips the pull requests without a date, and is null when none has one.
+    private static DateTime? ScanFloor(IEnumerable<MergingPullRequest> prs, DateTime? sprintFloor) =>
+        prs.Min(pr => pr.FirstActivityDate)?.Subtract(CommitDateSkewBuffer) ?? sprintFloor;
 
     /// <summary>Returns null when the branch history could not be read, so the caller falls back.</summary>
     private async Task<BranchHistoryIndex?> TryLoadRepoTargetKeysAsync(

@@ -10,7 +10,7 @@ namespace DevKit.Web.Components.Pages;
 /// work item links, and anything else a search finds. What may be deleted is decided by
 /// <see cref="BranchCleanupClassifier"/>; this page only lets the user choose among what it allows.
 /// </summary>
-public partial class BranchDelete : IDisposable
+public sealed partial class BranchDelete : IDisposable
 {
     /// <summary>Each repository is a paged listing plus a pull-request read, so a load is bounded.</summary>
     private const int MaxSelectableRepos = 10;
@@ -63,13 +63,13 @@ public partial class BranchDelete : IDisposable
     private bool CanDelete => selectedKeys.Count > 0 && !Busy;
     private int DeletedCount => deleteLog.Count(o => o.Deleted);
 
-    private IReadOnlyList<TfsRepo> AvailableRepos => selectedArea == null
+    private IReadOnlyList<TfsRepo> AvailableRepos() => selectedArea == null
         ? repos
         : repos.Where(r => string.Equals(r.Project, selectedArea.Project, StringComparison.OrdinalIgnoreCase)).ToList();
 
     private List<GlassDropdown.DropdownGroup> AreaGroups => AreaSprintSelect.AreaGroups(areas);
     private List<MultiSelectDropdown.Option> SprintOptions => AreaSprintSelect.SprintOptions(iterations, selectedArea);
-    private List<MultiSelectDropdown.Option> RepoOptions => RepoSelect.Options(AvailableRepos, Settings.MostUsedRepoIds);
+    private List<MultiSelectDropdown.Option> RepoOptions => RepoSelect.Options(AvailableRepos(), Settings.MostUsedRepoIds);
 
     protected override async Task OnInitializedAsync()
     {
@@ -87,7 +87,7 @@ public partial class BranchDelete : IDisposable
         // No sprint is pre-selected: the default sprint is the current one, and cleaning that up is the
         // one choice that should never happen by accident.
         var defaultRepo = Settings.DefaultRepoId;
-        if (!string.IsNullOrEmpty(defaultRepo) && AvailableRepos.Any(r => r.Id == defaultRepo))
+        if (!string.IsNullOrEmpty(defaultRepo) && AvailableRepos().Any(r => r.Id == defaultRepo))
             selectedRepoIds.Add(defaultRepo);
     }
 
@@ -106,7 +106,7 @@ public partial class BranchDelete : IDisposable
             var sprints = SprintOptions.Select(o => o.Value).ToHashSet(StringComparer.OrdinalIgnoreCase);
             selectedSprints.RemoveWhere(path => !sprints.Contains(path));
         }
-        var repoIds = AvailableRepos.Select(r => r.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var repoIds = AvailableRepos().Select(r => r.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
         selectedRepoIds.RemoveWhere(id => !repoIds.Contains(id));
         MarkStale();
     }
@@ -146,7 +146,7 @@ public partial class BranchDelete : IDisposable
 
         var query = new BranchCleanupQuery
         {
-            Repos = AvailableRepos.Where(r => selectedRepoIds.Contains(r.Id)).ToList(),
+            Repos = AvailableRepos().Where(r => selectedRepoIds.Contains(r.Id)).ToList(),
             Area = selectedArea,
             SprintPaths = selectedArea == null ? Array.Empty<string>() : selectedSprints.ToList(),
             TeamName = teamName,
@@ -169,9 +169,9 @@ public partial class BranchDelete : IDisposable
             RefreshStats();
             Refilter();
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (OperationCanceledException ex) when (ct.IsCancellationRequested)
         {
-            Logger.LogDebug("Branch Cleanup load was superseded or the page was left");
+            Logger.LogDebug(ex, "Branch Cleanup load was superseded or the page was left");
         }
         catch (Exception ex)
         {
@@ -306,9 +306,9 @@ public partial class BranchDelete : IDisposable
             RefreshStats();
             Refilter();
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (OperationCanceledException ex) when (ct.IsCancellationRequested)
         {
-            Logger.LogDebug("Branch Cleanup delete was interrupted because the page was left");
+            Logger.LogDebug(ex, "Branch Cleanup delete was interrupted because the page was left");
         }
         catch (Exception ex)
         {
@@ -328,8 +328,12 @@ public partial class BranchDelete : IDisposable
 
     // ═══ DISPLAY ═══
 
-    private string RowClass(BranchCleanupRow row) =>
-        !row.CanDelete ? "bdel-row-locked" : selectedKeys.Contains(row.Key) ? "selected" : "";
+    private string RowClass(BranchCleanupRow row) => row switch
+    {
+        { CanDelete: false } => "bdel-row-locked",
+        _ when selectedKeys.Contains(row.Key) => "selected",
+        _ => ""
+    };
 
     private static string UnattachedHint(BranchCleanupRow row) => row.Parsed != null
         ? $"Named after work item #{row.Parsed.WorkItemId}, which does not link it or no longer exists. No work item in the selected sprints links it either."

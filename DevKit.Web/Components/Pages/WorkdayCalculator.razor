@@ -203,8 +203,10 @@
         if (string.IsNullOrEmpty(raw)) return null;
 
         // Try standard parsing
-        if (DateTime.TryParse(raw, out var dt))
+        if (DateTime.TryParse(raw, System.Globalization.CultureInfo.CurrentCulture, System.Globalization.DateTimeStyles.None, out var dt))
+        {
             return baseDate.Date.Add(dt.TimeOfDay);
+        }
 
         // Try common patterns
         var s = System.Text.RegularExpressions.Regex.Replace(raw, @"\s+", " ").Trim();

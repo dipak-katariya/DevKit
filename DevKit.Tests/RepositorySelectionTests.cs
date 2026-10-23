@@ -118,7 +118,7 @@ public sealed class RepositorySelectionTests : IDisposable
         public Dictionary<int, object> ById { get; } = new();
         public string[] Links { get; set; } = Array.Empty<string>();
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = Uri.UnescapeDataString(request.RequestUri!.AbsolutePath);
             Requests.Enqueue(path);

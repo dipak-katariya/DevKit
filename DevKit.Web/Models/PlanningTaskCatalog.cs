@@ -69,6 +69,9 @@ public static class PlanningTaskCatalog
     public static IReadOnlyList<string> DefaultTasksFor(string? parentType) =>
         BugWork.IsBugType(parentType) ? BugDefaultTasks : PlannedDefaultTasks;
 
-    public static string[] DevPrefixes => Categories.Where(c => c.Discipline == "Development").Select(c => c.Prefix).ToArray();
-    public static string[] TestPrefixes => Categories.Where(c => c.Discipline == "Test").Select(c => c.Prefix).ToArray();
+    public static IReadOnlyList<string> DevPrefixes { get; } = PrefixesOf("Development");
+    public static IReadOnlyList<string> TestPrefixes { get; } = PrefixesOf("Test");
+
+    private static string[] PrefixesOf(string discipline) =>
+        Categories.Where(c => c.Discipline == discipline).Select(c => c.Prefix).ToArray();
 }

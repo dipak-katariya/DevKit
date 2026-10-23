@@ -84,7 +84,7 @@ internal sealed class FakeGitServer : HttpMessageHandler
         return sha;
     }
 
-    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         var uri = request.RequestUri ?? throw new InvalidOperationException("A request without a URL.");
         var path = Uri.UnescapeDataString(uri.AbsolutePath);
@@ -107,7 +107,7 @@ internal sealed class FakeGitServer : HttpMessageHandler
             DiffRequested.TrySetResult();
             if (Gate is { } gate)
             {
-                await gate.Task.WaitAsync(ct);
+                await gate.Task.WaitAsync(cancellationToken);
             }
             return Diff(query);
         }

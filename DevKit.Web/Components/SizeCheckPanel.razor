@@ -63,7 +63,7 @@
         <div class="cfg-col" style="flex:0 0 auto;">
             <div class="cfg-field">
                 <label class="cfg-label">🏷 Type</label>
-                <MultiSelectDropdown Style="min-width:200px;" Options="@TypeOptions" Selected="@typeFilter"
+                <MultiSelectDropdown Style="min-width:200px;" Options="@TypeOptions()" Selected="@typeFilter"
                                      SelectedChanged="OnTypeFilterChanged" ItemNoun="type"
                                      Placeholder="None" SearchPlaceholder="Search types…" />
             </div>
@@ -156,9 +156,7 @@
                                 {
                                     var hasSize = pi.WorkItem.Effort.HasValue && pi.WorkItem.Effort.Value > 0;
                                     var mismatch = hasSize && pi.TaskTotalEstimate > 0 && Math.Abs(pi.SizeMismatch) > 0.01;
-                                    var reqBg = !hasSize ? "rgba(248,113,113,.06)" : mismatch ? "rgba(251,191,36,.06)" : "rgba(16,185,129,.05)";
-
-                                    <tr style="background:@reqBg;border-top:2px solid rgba(255,255,255,.08);">
+                                    <tr style="background:@RowBackground(hasSize, mismatch);border-top:2px solid rgba(255,255,255,.08);">
                                         <td>
                                             <span @onclick="() => ToggleExpand(pi)"
                                                   style="cursor:pointer;display:inline-block;width:13px;color:var(--muted);user-select:none;transition:transform .12s;transform:@(pi.IsExpanded ? "rotate(90deg)" : "none");"
@@ -224,7 +222,7 @@
                                         <td style="text-align:center;font-family:var(--mono);font-size:.7rem;color:var(--purple);font-weight:700;">
                                             @(pi.TaskTotalRevised > 0 ? pi.TaskTotalRevised.ToString("0.##") : "")
                                         </td>
-                                        <td style="text-align:center;font-family:var(--mono);font-size:.66rem;font-weight:700;color:@(mismatch ? "var(--amber)" : hasSize ? "var(--green)" : "var(--muted)");">
+                                        <td style="text-align:center;font-family:var(--mono);font-size:.66rem;font-weight:700;color:@SizeDifferenceColour(hasSize, mismatch);">
                                             @if (hasSize && pi.TaskTotalEstimate > 0)
                                             {
                                                 @(pi.SizeMismatch > 0 ? "+" : "")@pi.SizeMismatch.ToString("0.##")

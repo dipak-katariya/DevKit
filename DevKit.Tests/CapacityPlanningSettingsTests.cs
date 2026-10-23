@@ -236,7 +236,7 @@ public class CapacityPlanningSettingsTests
 
 /// <summary>Persistence through SettingsService: migration, round-trip, and copy semantics.</summary>
 [Collection(SettingsFileCollection.Name)]
-public class CapacityPlanningSettingsServiceTests : IDisposable
+public sealed class CapacityPlanningSettingsServiceTests : IDisposable
 {
     private static readonly string SettingsPath = Path.Combine(AppContext.BaseDirectory, "usersettings.json");
 

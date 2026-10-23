@@ -118,7 +118,7 @@ public partial class TfsApiService
             var daysOff = ReadTeamDaysOffAsync(project, team, iteration.Id, ct);
             await Task.WhenAll(caps, areas, daysOff);
 
-            var read = new TeamCapacityRead(team.Name, iteration, await caps, await daysOff, PlansArea(await areas, areaPath));
+            var read = new TeamCapacityRead(team.Name, iteration, await caps, await daysOff, TakesInArea(await areas, areaPath));
             return new TeamRead(read, Unread: read.DaysOff is null);
         }
         catch (Exception ex) when (!TfsErrors.IsRequestedCancellation(ex, ct))
@@ -221,7 +221,7 @@ public partial class TfsApiService
     /// its sub-areas. A team whose work is split by a field other than the area path cannot be placed by area,
     /// so it is taken to plan every area.
     /// </summary>
-    private static bool PlansArea(JsonElement teamFieldValues, string areaPath)
+    private static bool TakesInArea(JsonElement teamFieldValues, string areaPath)
     {
         var field = teamFieldValues.TryGetProperty("field", out var f) && f.ValueKind == JsonValueKind.Object
             ? TfsJson.Str(f, "referenceName")

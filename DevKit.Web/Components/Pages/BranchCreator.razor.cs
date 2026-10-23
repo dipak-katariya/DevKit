@@ -9,7 +9,7 @@ namespace DevKit.Web.Components.Pages;
 /// State, selections and the work-item grid for the Branch Creator. The branch workflow itself
 /// (existing links, validation, creating and linking) lives in BranchCreator.Branches.cs.
 /// </summary>
-public partial class BranchCreator
+public sealed partial class BranchCreator
 {
     // Data (shared)
     private IReadOnlyList<TfsArea> areas => PageState.TfsData.Areas;
@@ -281,9 +281,9 @@ public partial class BranchCreator
     private List<GlassDropdown.DropdownGroup> AreaGroups => AreaSprintSelect.AreaGroups(areas);
     private List<GlassDropdown.DropdownGroup> SprintGroups => AreaSprintSelect.SprintGroups(iterations);
     private List<GlassDropdown.DropdownGroup> RepoGroups => RepoSelect.Groups(repos, Settings.MostUsedRepoIds);
-    private List<GlassDropdown.DropdownOption> TypeOptions => workItems.Select(w => w.Type).Distinct().OrderBy(t => t)
+    private List<GlassDropdown.DropdownOption> TypeOptions() => workItems.Select(w => w.Type).Distinct().OrderBy(t => t)
         .Select(t => new GlassDropdown.DropdownOption { Value = t, Label = t }).ToList();
-    private List<GlassDropdown.DropdownOption> AssigneeOptions => workItems.Select(w => w.Assigned).Where(a => a != "-").Distinct().OrderBy(a => a)
+    private List<GlassDropdown.DropdownOption> AssigneeOptions() => workItems.Select(w => w.Assigned).Where(a => a != "-").Distinct().OrderBy(a => a)
         .Select(a => new GlassDropdown.DropdownOption { Value = a, Label = a }).ToList();
 
     private string BaseBranchHint

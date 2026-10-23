@@ -181,7 +181,7 @@ public partial class BranchCreator
         }
     }
 
-    private string ExistingBranchTitle(WorkItemBranchLink link) =>
+    private static string ExistingBranchTitle(WorkItemBranchLink link) =>
         string.IsNullOrEmpty(link.RepositoryName)
             ? $"{link.BranchName} (repository not in this collection)"
             : $"{link.RepositoryName} · {link.BranchName}";
@@ -202,10 +202,7 @@ public partial class BranchCreator
         var name = (raw ?? "").Trim();
         if (name.Length == 0) return "Branch name is required.";
 
-        foreach (var rule in BranchNameRules)
-            if (rule.Fails(name)) return rule.Message;
-
-        return null;
+        return BranchNameRules.Where(rule => rule.Fails(name)).Select(rule => rule.Message).FirstOrDefault();
     }
 
     // ─── Check Branch ───
@@ -277,7 +274,7 @@ public partial class BranchCreator
             await TfsApi.CreateBranchAsync(repo.Project, repo.Id, name, baseRef.ObjectId, CancellationToken.None);
             AdoptCreatedBranch(repo, name);
 
-            resultMsg = BuildSuccessMessage(repo, item, name, baseRef.ObjectId, await LinkWorkItemAsync(repo, item, name));
+            resultMsg = BuildSuccessMessage(repo, name, baseRef.ObjectId, await LinkWorkItemAsync(repo, item, name));
             resultOk = true;
 
             await LoadExistingBranches(item);
@@ -373,7 +370,7 @@ public partial class BranchCreator
     private static string LinkRow(string colour, string encodedContent) =>
         $"<div class='modal-row'><span class='label'>Linked</span><span style='color:{colour};'>{encodedContent}</span></div>";
 
-    private string BuildSuccessMessage(TfsRepo repo, WorkItem item, string branch, string sha, string linkedMsg)
+    private string BuildSuccessMessage(TfsRepo repo, string branch, string sha, string linkedMsg)
     {
         var areaDisp = selectedArea != null
             ? $"\\{selectedArea.Project}\\Area\\{TfsApiService.AreaDisplayPath(selectedArea.Path)}"

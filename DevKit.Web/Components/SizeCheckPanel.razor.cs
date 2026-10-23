@@ -62,7 +62,7 @@ public sealed partial class SizeCheckPanel : IDisposable
         showMismatchOnly = false;
     }
 
-    private void ToggleExpand(PlanningItem pi) => pi.IsExpanded = !pi.IsExpanded;
+    private static void ToggleExpand(PlanningItem pi) => pi.IsExpanded = !pi.IsExpanded;
 
     private void ToggleExpandAll()
     {
@@ -78,7 +78,7 @@ public sealed partial class SizeCheckPanel : IDisposable
     private double TotalRevised => planningItems.Sum(p => p.TaskTotalRevised);
 
     private int MismatchedCount => planningItems.Count(p =>
-        !p.WorkItem.Effort.HasValue || p.WorkItem.Effort == 0
+        p.WorkItem.Effort is not > 0
         || (p.TaskTotalEstimate > 0 && Math.Abs(p.SizeMismatch) > 0.01));
 
     private void ToggleVerifySize()
@@ -350,11 +350,27 @@ public sealed partial class SizeCheckPanel : IDisposable
     }
 
     /// <summary>Known types plus anything the sprint actually returned, so the list cannot drift from the query.</summary>
-    private List<MultiSelectDropdown.Option> TypeOptions => KnownTypes
+    private List<MultiSelectDropdown.Option> TypeOptions() => KnownTypes
         .Concat(planningItems.Select(p => p.WorkItem.Type))
         .Where(t => !string.IsNullOrWhiteSpace(t))
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .OrderBy(t => t, StringComparer.OrdinalIgnoreCase)
         .Select(t => new MultiSelectDropdown.Option { Value = t, Label = t })
         .ToList();
+
+    /// <summary>A requirement row's background: red without a size, amber when its tasks disagree with it, else green.</summary>
+    private static string RowBackground(bool hasSize, bool mismatch) => (hasSize, mismatch) switch
+    {
+        (false, _) => "rgba(248,113,113,.06)",
+        (_, true) => "rgba(251,191,36,.06)",
+        _ => "rgba(16,185,129,.05)"
+    };
+
+    /// <summary>The colour of the size difference: amber when the tasks disagree with the size, green when they agree.</summary>
+    private static string SizeDifferenceColour(bool hasSize, bool mismatch) => (hasSize, mismatch) switch
+    {
+        (_, true) => "var(--amber)",
+        (true, _) => "var(--green)",
+        _ => "var(--muted)"
+    };
 }

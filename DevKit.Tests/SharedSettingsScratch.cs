@@ -93,7 +93,7 @@ public abstract class SharedSettingsScratch : IDisposable
     }
 
     /// <summary>Another DevKit server, with nothing copied from this one, running as <paramref name="runsAs"/> (the same account by default).</summary>
-    private protected ClientVault OtherServer(string? runsAs = null) => new(new FakeKeyLock(runsAs ?? Owner.Id), Domain);
+    private protected static ClientVault OtherServer(string? runsAs = null) => new(new FakeKeyLock(runsAs ?? Owner.Id), Domain);
 
     /// <summary>What an earlier DevKit kept on this server for <paramref name="user"/>, encrypted with <paramref name="keys"/> (this server's by default).</summary>
     private protected void PutServerCopy(SignedInUser user, string team, IDataProtectionProvider? keys = null)

@@ -385,8 +385,8 @@ internal sealed class HostedAccess : DevKitAccess
         services.AddScoped<AuthenticationStateProvider, SessionAuthenticationStateProvider>();
 
         // The keys that encrypt sessions, and that open the settings files an earlier DevKit kept on this server until
-        // each has moved into its person's browser. They stay on this server, encrypted for the account DevKit runs as;
-        // losing them signs everyone out, and leaves any file not moved yet unreadable.
+        // each has moved into its person's browser. They stay on this server, encrypted for the account DevKit runs as.
+        // Losing them signs everyone out, and leaves any file not moved yet unreadable.
         services.AddDataProtection()
             .SetApplicationName("DevKit")
             .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(DevKitMachineConfig.Folder, "keys")))

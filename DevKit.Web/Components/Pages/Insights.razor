@@ -107,7 +107,7 @@
 </div>
 
 @code {
-    private record TabDef(string Key, string Label, string Icon, string Summary);
+    private sealed record TabDef(string Key, string Label, string Icon, string Summary);
 
     private static readonly TabDef[] Tabs =
     {

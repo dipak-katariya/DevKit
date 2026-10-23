@@ -341,6 +341,21 @@ public static class CancellationSources
         cts.Dispose();
         cts = null;
     }
+
+    /// <summary>
+    /// Cancels and disposes a source the caller has already replaced, if there is one, without blocking. Replacing it
+    /// first keeps a second call that runs during the await from cancelling the new source or leaving one behind.
+    /// </summary>
+    public static async Task CancelAndDisposeAsync(CancellationTokenSource? replaced)
+    {
+        if (replaced is null)
+        {
+            return;
+        }
+
+        await replaced.CancelAsync();
+        replaced.Dispose();
+    }
 }
 
 /// <summary>

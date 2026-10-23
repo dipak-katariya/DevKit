@@ -225,7 +225,13 @@ public static partial class PlanningCapacityCalculator
             {
                 case PlanningScope.Development: result.Merge(_byTeam[(int)Team.Dev]); break;
                 case PlanningScope.Qa: result.Merge(_byTeam[(int)Team.Qa]); break;
-                default: foreach (var t in _byTeam) result.Merge(t); break;
+                default:
+                    foreach (var t in _byTeam)
+                    {
+                        result.Merge(t);
+                    }
+
+                    break;
             }
             return result;
         }

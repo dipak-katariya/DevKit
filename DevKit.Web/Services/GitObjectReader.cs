@@ -140,9 +140,9 @@ public sealed class GitObjectReader
         }
 
         var total = 0;
-        foreach (var count in counts.EnumerateObject())
+        foreach (var count in counts.EnumerateObject().Select(change => change.Value))
         {
-            if (count.Value.ValueKind == JsonValueKind.Number && count.Value.TryGetInt32(out var n))
+            if (count.ValueKind == JsonValueKind.Number && count.TryGetInt32(out var n))
             {
                 total += n;
             }

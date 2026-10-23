@@ -67,14 +67,14 @@
             <div class="cfg-field">
                 <label class="cfg-label">🏷 Type</label>
                 <GlassDropdown Value="@typeFilter" Placeholder="All" EmptyLabel="All" EmptyValue=""
-                               Options="@TypeOptions" OnChange="OnTypeFilter" />
+                               Options="@TypeOptions()" OnChange="OnTypeFilter" />
             </div>
         </div>
         <div style="flex:1;">
             <div class="cfg-field">
                 <label class="cfg-label">👤 Assignee</label>
                 <GlassDropdown Value="@assigneeFilter" Placeholder="All" EmptyLabel="All" EmptyValue=""
-                               Options="@AssigneeOptions" OnChange="OnAssigneeFilter" />
+                               Options="@AssigneeOptions()" OnChange="OnAssigneeFilter" />
             </div>
         </div>
     </div>
