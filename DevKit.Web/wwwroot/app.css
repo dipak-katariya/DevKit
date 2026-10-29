@@ -1,9 +1,11 @@
 /* ═══════════════════════════════════════════════════════
    DevKit: dark dashboard theme
-   Near-black surfaces, ambient purple→red glow, blue accent
+   Near-black surfaces in depth planes, blue accent
    ═══════════════════════════════════════════════════════ */
 
 :root{
+  /* The browser's own parts (scrollbars, date and select pop-ups, autofill) draw dark to match. */
+  color-scheme:dark;
   --bg:#08080b;
   --bg-elev:#0c0c11;
   --surface:#121218;
@@ -14,172 +16,243 @@
 
   --accent:#4f7cff;--accent2:#7aa0ff;--accent-soft:rgba(79,124,255,.14);--accent-line:rgba(79,124,255,.35);
   --green:#34d399;--red:#f87171;--amber:#fbbf24;--cyan:#38bdf8;--purple:#a78bfa;
+  /* Text on a tint of its own colour: a selected item on --accent-soft, an error on a red tint. */
+  --accent-ink:#cdd9ff;--red-ink:#fca5a5;--amber-ink:#fcd34d;--purple-ink:#c4b5fd;--green-ink:#6ee7b7;
 
-  --text:#ececf1;--muted:#62626f;--muted2:#9595a4;
+  /* --muted is the faintest text DevKit has (placeholders, captions); it still reads at 4.5:1 on --surface3. */
+  --text:#ececf1;--muted:#858592;--muted2:#9595a4;
   --mono:'JetBrains Mono','SF Mono','Cascadia Code','Consolas',monospace;
-  --sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+  /* Segoe UI Variable ships with Windows 11 and Server 2022 on, in a Text and a Display cut; older Windows
+     falls back to Segoe UI. Nothing is downloaded. */
+  --sans:'Segoe UI Variable Text','Segoe UI',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
+  --display:'Segoe UI Variable Display','Segoe UI',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
+  /* Type roles of the redesigned pages: page title, tool or item name, body, and meta (group names, status). */
+  --fs-title:1.5rem;--fs-name:1rem;--fs-body:.8125rem;--fs-meta:.75rem;
 
   --r:16px;--r2:11px;--r3:20px;--pill:999px;
-  --t:.2s cubic-bezier(.4,0,.2,1);
+
+  /* Motion. A strong ease-out for everything that answers the user or comes in, the drawer curve for the
+     phone sidebar. --tr-ui names the properties a control animates, so nothing else fades by accident.
+     The travel tokens (--rise to --dialog-scale) are what reduced motion sets to zero below. */
+  --ease-out:cubic-bezier(.23,1,.32,1);
+  --ease-in-out:cubic-bezier(.77,0,.175,1);
+  --ease-drawer:cubic-bezier(.32,.72,0,1);
+  --t:.16s var(--ease-out);
+  --tr-ui:background-color var(--t),color var(--t),border-color var(--t),box-shadow var(--t),transform var(--t),opacity var(--t);
+  --dur-drawer:.26s;
+  --rise:4px;--lift:-2px;--press:.97;--press-tile:.985;--pop-scale:.97;--dialog-scale:.96;
   --shadow:0 1px 2px rgba(0,0,0,.5),0 10px 30px rgba(0,0,0,.35);
   --shadow-lg:0 24px 70px rgba(0,0,0,.55);
 
+  /* Depth, back to front: the room, the window on it (--bg-elev), panels in the window, then what floats.
+     A raised plane is lit from above (--rim) and casts a shadow that grows with its height; a field
+     sits below its panel (--well). Glass is only for floating layers with real content behind them. */
+  --room:#050507;
+  --rim:inset 0 1px 0 rgba(255,255,255,.06),inset 0 0 0 1px rgba(255,255,255,.04);
+  /* The same light from above on a surface filled with the accent, which needs a brighter edge to show it. */
+  --rim-accent:inset 0 1px 0 rgba(255,255,255,.22);
+  --well:inset 0 1px 2px rgba(0,0,0,.55),inset 0 0 0 1px rgba(255,255,255,.05);
+  --elev-1:0 1px 2px rgba(0,0,0,.5),0 6px 18px -6px rgba(0,0,0,.55);
+  --elev-2:0 2px 6px rgba(0,0,0,.45),0 18px 44px -14px rgba(0,0,0,.7);
+  --elev-3:0 6px 14px rgba(0,0,0,.4),0 34px 80px -18px rgba(0,0,0,.8);
+  --glass:rgba(22,22,30,.74);
+  --glass-blur:blur(20px) saturate(150%);
+  --r-window:18px;
+
   --sidebar-w:250px;--topbar-h:62px;
+}
+/* Reduced motion keeps every fade and drops every movement: nothing rises, lifts, shrinks or slides. */
+@media (prefers-reduced-motion:reduce){
+  :root{--rise:0px;--lift:0px;--press:1;--press-tile:1;--pop-scale:1;--dialog-scale:1;--dur-drawer:0s;}
 }
 
 *{box-sizing:border-box;margin:0;padding:0;}
 html,body{height:100%;overflow:hidden;}
 body{
-  font-family:var(--sans);background:var(--bg);color:var(--text);
+  font-family:var(--sans);background:var(--room);color:var(--text);
   -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
 }
+/* One focus ring, in the brand blue, on every control the keyboard reaches. Text fields keep their own ring. */
+:where(a,button,summary,[tabindex]:not([tabindex="-1"])):focus-visible{outline:2px solid var(--accent2);outline-offset:2px;}
+/* Focus is moved to these by code, not by Tab: the page's h1 after a navigation (Routes.razor), the page or the
+   drawer from the skip link and the menu. None of them is a control, so none shows a ring. */
+h1:focus,main:focus,.sidebar:focus{outline:none;}
+::selection{background:rgba(79,124,255,.42);color:#fff;}
+input,textarea{caret-color:var(--accent2);}
 
-/* Ambient glow behind the whole app */
-body::before{
-  content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
-  background:
-    radial-gradient(900px 620px at 88% -12%, rgba(201,78,55,.20), transparent 58%),
-    radial-gradient(820px 720px at -10% 112%, rgba(96,66,205,.20), transparent 60%);
+/* Off screen until it has keyboard focus. */
+.skip-link{
+  position:fixed;top:10px;left:10px;z-index:1000;padding:10px 16px;border-radius:var(--r2);
+  background:var(--accent);color:#fff;font-size:var(--fs-body);font-weight:600;text-decoration:none;
+  transform:translateY(-200%);
 }
-body>*{position:relative;z-index:1;}
+.skip-link:focus-visible{transform:none;}
+
+/* Read by screen readers and never shown, such as a page heading the top bar already gives. */
+.sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap;}
 
 .ic{width:18px;height:18px;flex-shrink:0;display:block;}
 .ic-xl{width:42px;height:42px;}
+/* The tool glyphs (Icons.Tool*) are layered: g-back is a dim plate, g-solid a filled part, g-dim a faded
+   stroke. Where a glyph is hovered, g-up lifts off the plate and g-off drifts away (components.css). */
+.ic .g-back{fill:currentColor;stroke:none;opacity:.34;}
+.ic .g-solid{fill:currentColor;stroke:none;}
+.ic .g-dim{opacity:.4;}
+.ic .g-up,.ic .g-off{transform-box:fill-box;transition:transform var(--t);}
 
 /* ─── SCROLLBAR ─── */
 ::-webkit-scrollbar{width:6px;height:6px;}
 ::-webkit-scrollbar-track{background:transparent;}
 ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.09);border-radius:4px;}
 ::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.16);}
+/* Chrome drops every ::-webkit-scrollbar rule on an element that sets scrollbar-width or scrollbar-color and draws
+   its own bright 10px bar, so panels leave both unset and only browsers without the pseudo-elements get them. */
+@supports not selector(::-webkit-scrollbar){
+  *{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.12) transparent;}
+}
 
 /* ═══ APP SHELL ═══ */
-.devkit-app{display:flex;height:100vh;width:100%;overflow:hidden;}
+/* 100dvh after 100vh: on a phone the visible height, so the bottom never sits behind the browser's own bar. */
+.devkit-app{display:flex;height:100vh;height:100dvh;width:100%;overflow:hidden;}
 
 /* ─── SIDEBAR ─── */
+/* The sidebar has no surface of its own: it sits on the room, beside the raised window. */
 .sidebar{
   width:var(--sidebar-w);flex-shrink:0;display:flex;flex-direction:column;
-  background:var(--bg-elev);border-right:1px solid var(--border);
   padding:14px 12px;gap:6px;
 }
 .sidebar-profile{
-  display:flex;align-items:center;gap:11px;padding:8px 10px;border-radius:var(--r2);
-  transition:var(--t);
+  display:flex;align-items:center;gap:11px;padding:8px 10px;margin-bottom:10px;border-radius:var(--r2);
 }
-.sidebar-profile:hover{background:var(--surface);}
 .profile-avatar{
   width:38px;height:38px;border-radius:11px;flex-shrink:0;
-  background:linear-gradient(135deg,var(--accent),#9a5bff);
+  background:var(--accent);
   display:flex;align-items:center;justify-content:center;
-  font-size:.82rem;font-weight:800;color:#fff;letter-spacing:-.02em;
-  box-shadow:0 4px 14px rgba(79,124,255,.4);
+  font-size:var(--fs-body);font-weight:600;color:#fff;letter-spacing:-.01em;
+  box-shadow:var(--rim-accent);
 }
-.profile-meta{display:flex;flex-direction:column;min-width:0;flex:1;}
-.profile-name{font-size:.82rem;font-weight:700;color:var(--text);line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.profile-sub{font-size:.62rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.profile-bell{margin-left:auto;color:var(--muted);display:flex;}
+.profile-meta{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1;}
+.profile-name{font-size:var(--fs-body);font-weight:600;color:var(--text);line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.profile-sub{font-size:var(--fs-meta);color:var(--muted2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
-.sidebar-sep{height:1px;background:var(--border);margin:8px 4px;}
-.sidebar-cap{font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);padding:6px 12px 4px;}
+/* A group name: more room above it than below, so it belongs to the tools under it. */
+.sidebar-cap{font-size:var(--fs-meta);font-weight:600;color:var(--muted2);padding:16px 12px 6px;}
 
-.sidebar-nav{flex:1;display:flex;flex-direction:column;gap:2px;overflow-y:auto;scrollbar-width:thin;}
-.sidebar-foot{display:flex;flex-direction:column;gap:8px;padding-top:6px;border-top:1px solid var(--border);}
+.sidebar-nav{flex:1;display:flex;flex-direction:column;gap:2px;overflow-y:auto;}
+.sidebar-foot{display:flex;flex-direction:column;gap:8px;padding-top:6px;}
 
 .nav-item{
   display:flex;align-items:center;gap:11px;padding:9px 12px;border-radius:var(--r2);
-  font-size:.8rem;font-weight:600;color:var(--muted2);text-decoration:none;
-  transition:var(--t);cursor:pointer;white-space:nowrap;position:relative;
+  font-size:var(--fs-body);font-weight:500;color:var(--muted2);text-decoration:none;
+  transition:var(--tr-ui);cursor:pointer;white-space:nowrap;position:relative;
 }
-.nav-item .ic{color:var(--muted);transition:var(--t);}
+.nav-item .ic{color:var(--muted);transition:color var(--t);}
 .nav-item:hover{background:var(--surface);color:var(--text);}
 .nav-item:hover .ic{color:var(--text);}
-.nav-item.active{background:var(--accent-soft);color:#cdd9ff;font-weight:700;}
+.nav-item:active{background:var(--surface2);}
+.nav-item.active{background:var(--accent-soft);color:var(--accent-ink);font-weight:600;}
 .nav-item.active .ic{color:var(--accent2);}
 .nav-item.active::before{
   content:"";position:absolute;left:0;top:50%;transform:translateY(-50%);
   width:3px;height:18px;border-radius:0 3px 3px 0;background:var(--accent);
 }
-.nav-badge{margin-left:auto;font-size:.6rem;font-weight:700;color:var(--muted2);
-  background:var(--surface2);padding:1px 7px;border-radius:var(--pill);}
 
 /* connection status in sidebar foot */
 .conn-pill{
-  display:flex;align-items:center;gap:8px;font-size:.7rem;color:var(--muted2);
+  display:flex;align-items:center;gap:8px;font-size:var(--fs-meta);color:var(--muted2);
   background:var(--surface);border:1px solid var(--border);
   padding:8px 12px;border-radius:var(--r2);
 }
 .conn-pill .dot{width:7px;height:7px;border-radius:50%;background:var(--amber);flex-shrink:0;}
 .conn-pill.ok{color:#a7f3d0;border-color:rgba(52,211,153,.22);}
-.conn-pill.ok .dot{background:var(--green);box-shadow:0 0 8px var(--green);}
-.conn-pill.err{color:#fca5a5;border-color:rgba(248,113,113,.2);}
-.conn-pill.err .dot{background:var(--red);box-shadow:0 0 8px var(--red);}
+.conn-pill.ok .dot{background:var(--green);}
+.conn-pill.err{color:var(--red-ink);border-color:rgba(248,113,113,.2);}
+.conn-pill.err .dot{background:var(--red);}
 
-/* ─── MAIN COLUMN ─── */
-.main{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden;}
+/* ─── MAIN COLUMN: the window ─── */
+/* overflow:hidden clips the content to the window's corners; fixed overlays inside it are not clipped. */
+.main{
+  flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden;
+  margin:8px 8px 8px 0;border-radius:var(--r-window);
+  background:var(--bg-elev);box-shadow:var(--rim),var(--elev-2);
+}
 
 /* ─── TOPBAR ─── */
 .topbar{
   height:var(--topbar-h);flex-shrink:0;display:flex;align-items:center;gap:12px;
-  padding:0 22px;border-bottom:1px solid var(--border);
+  padding:0 22px;
 }
 .tb-nav{display:flex;align-items:center;gap:6px;}
 .tb-btn{
-  width:34px;height:34px;border-radius:10px;border:1px solid var(--border);
-  background:var(--surface);color:var(--muted2);cursor:pointer;
-  display:flex;align-items:center;justify-content:center;transition:var(--t);
+  width:34px;height:34px;border-radius:10px;border:0;
+  background:var(--surface);color:var(--muted2);cursor:pointer;box-shadow:var(--rim);
+  display:flex;align-items:center;justify-content:center;transition:var(--tr-ui);
 }
-.tb-btn:hover{background:var(--surface2);color:var(--text);border-color:var(--border2);}
+.tb-btn:hover{background:var(--surface2);color:var(--text);}
+.tb-btn:active{transform:scale(var(--press));}
+/* Only below 900px, where the sidebar is a drawer (tools.css). */
+.tb-menu,.nav-scrim{display:none;}
 .tb-spacer{flex:1;}
 .tb-actions{display:flex;align-items:center;gap:8px;flex-shrink:0;}
 /* Shared mode: who is signed in, and the way out for the next person. */
 .tb-user{display:flex;align-items:center;gap:8px;}
-.tb-user-name{font-size:.7rem;color:var(--muted2);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.tb-btn.tb-signout{width:auto;padding:0 12px;font:inherit;font-size:.7rem;}
+.tb-user-name{font-size:var(--fs-meta);color:var(--muted2);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tb-btn.tb-signout{width:auto;padding:0 12px;font:inherit;font-size:var(--fs-meta);}
 
 /* ─── COMMAND SEARCH ─── */
 .topbar-search{position:relative;flex:1;max-width:460px;}
 .ts-box{
   display:flex;align-items:center;gap:9px;height:38px;padding:0 12px;
-  background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);
-  transition:var(--t);
+  background:var(--bg);border-radius:var(--r2);box-shadow:var(--well);
+  transition:box-shadow var(--t);cursor:text;
 }
-.topbar-search.open .ts-box,.ts-box:focus-within{border-color:var(--accent-line);box-shadow:0 0 0 3px var(--accent-soft);}
+.topbar-search.open .ts-box,.ts-box:focus-within{box-shadow:var(--well),0 0 0 1px var(--accent-line),0 0 0 4px var(--accent-soft);}
 .ts-ico{color:var(--muted);display:flex;flex-shrink:0;}
-.ts-input{flex:1;min-width:0;background:transparent;border:none;outline:none;color:var(--text);font-family:inherit;font-size:.8rem;}
+.ts-input{flex:1;align-self:stretch;min-width:0;background:transparent;border:none;outline:none;color:var(--text);font-family:inherit;font-size:var(--fs-body);}
 .ts-input::placeholder{color:var(--muted);}
 .kbd{
-  display:inline-flex;align-items:center;gap:2px;font-size:.6rem;font-weight:700;color:var(--muted2);
-  background:var(--surface2);border:1px solid var(--border);border-radius:6px;
+  display:inline-flex;align-items:center;gap:2px;font-size:var(--fs-meta);font-weight:600;color:var(--muted2);
+  background:var(--surface2);border-radius:5px;box-shadow:var(--rim);
   padding:2px 7px;font-family:var(--mono);flex-shrink:0;
 }
+/* No entrance: search is opened many times a day, often with Ctrl K, and any delay there reads as lag. */
 .ts-panel{
   position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:600;
-  background:var(--surface);border:1px solid var(--border2);border-radius:14px;
-  box-shadow:var(--shadow-lg);overflow:hidden;padding:6px;
-  animation:pop .16s ease;
+  background:var(--glass);-webkit-backdrop-filter:var(--glass-blur);backdrop-filter:var(--glass-blur);
+  border-radius:14px;box-shadow:var(--rim),var(--elev-3);overflow:hidden;padding:6px;
 }
-@keyframes pop{from{opacity:0;transform:translateY(-6px);}to{opacity:1;transform:translateY(0);}}
 .ts-item{
-  display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:10px;cursor:pointer;
+  display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:8px;cursor:pointer;
   color:var(--muted2);transition:background .12s;
 }
 .ts-item .ic{color:var(--muted);width:17px;height:17px;}
-.ts-item:hover,.ts-item.hl{background:var(--accent-soft);color:#cdd9ff;}
+.ts-item:hover,.ts-item.hl{background:var(--accent-soft);color:var(--accent-ink);}
 .ts-item:hover .ic,.ts-item.hl .ic{color:var(--accent2);}
-.ts-item-name{font-size:.8rem;font-weight:600;}
-.ts-item-path{margin-left:auto;font-size:.62rem;color:var(--muted);font-family:var(--mono);}
-.ts-empty{padding:14px;text-align:center;font-size:.74rem;color:var(--muted);}
+.ts-item-name{font-size:var(--fs-body);font-weight:500;}
+.ts-item-path{margin-left:auto;font-size:var(--fs-meta);color:var(--muted);font-family:var(--mono);}
+.ts-empty{padding:14px;text-align:center;font-size:var(--fs-body);color:var(--muted2);}
 
 /* ─── SHELL (content region) ─── */
 .shell{flex:1;overflow:auto;padding:22px;display:flex;}
+/* A page's root is a new element after each switch, so this plays once per page and never on clicks inside
+   it. No fill mode: once it ends the root carries no transform, so its fixed dialogs stay on the viewport. */
+.shell>*{animation:page-in .18s var(--ease-out);}
+@keyframes page-in{from{opacity:0;transform:translateY(var(--rise));}}
 
 /* ─── SETUP GUARD ─── */
 .setup-guard{flex:1;display:flex;align-items:center;justify-content:center;}
 .setup-card{
-  background:var(--surface);border:1px solid var(--border);border-radius:var(--r3);
-  padding:40px;text-align:center;max-width:440px;box-shadow:var(--shadow);
+  background:var(--surface);border-radius:var(--r3);
+  padding:40px;text-align:center;max-width:440px;box-shadow:var(--rim),var(--elev-1);
 }
-.setup-card h2{font-size:1.15rem;margin-bottom:8px;}
-.setup-card p{font-size:.8rem;color:var(--muted2);line-height:1.6;}
+.setup-card h2{font-family:var(--display);font-size:var(--fs-title);font-weight:600;letter-spacing:-.01em;margin-bottom:8px;}
+.setup-card p{font-size:var(--fs-body);color:var(--muted2);line-height:1.6;}
+.setup-icon{display:flex;justify-content:center;margin-bottom:14px;color:var(--accent2);}
+/* Inline, so the card's centred text centres it too. Scoped to the card so it outranks .btn-primary's full
+   width and block display, which components.css sets after this file. */
+.setup-card .setup-action{display:inline-flex;width:auto;margin-top:18px;padding:10px 24px;}
+/* .spin is the small inline spinner (components.css); here it is the card's own, centred above the title. */
+.setup-card .setup-spin{display:block;width:22px;height:22px;margin:0 auto 16px;color:var(--accent2);}
 
 /* The rest of the stylesheet is split across components.css, tools.css and merging.css,
    linked in that order after this file. The cascade depends on that order. */

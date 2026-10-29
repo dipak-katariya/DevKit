@@ -1,0 +1,20 @@
+@* What a list or grid shows before it has anything to list: the tool's glyph, a heading and a line on what to do.
+   One look on every page (blank-state in components.css). *@
+<div class="blank-state">
+    @if (Glyph is not null)
+    {
+        <div class="blank-state-icon"><Icon Inner="@Glyph" CssClass="ic-xl" /></div>
+    }
+    <h2>@Title</h2>
+    <p>@ChildContent</p>
+</div>
+
+@code {
+    /// <summary>The tool's glyph, from <see cref="Icons"/>.</summary>
+    [Parameter] public string? Glyph { get; set; }
+
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+
+    /// <summary>The line under the heading: what to do, or why there is nothing.</summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

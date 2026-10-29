@@ -61,6 +61,17 @@ public sealed class WorkItemBadgesTests
         Assert.Equal(expected, WorkItemBadges.PrStatusClass(status));
     }
 
+    [Theory]
+    [InlineData("id", "id", true, "ascending")]
+    [InlineData("id", "id", false, "descending")]
+    [InlineData("title", "id", true, null)]
+    [InlineData("ID", "id", true, null)]
+    [InlineData(null, "id", false, null)]
+    public void Only_the_sorted_header_announces_a_direction(string? sorted, string column, bool ascending, string? expected)
+    {
+        Assert.Equal(expected, WorkItemBadges.AriaSort(sorted, column, ascending));
+    }
+
     [Fact]
     public void No_component_keeps_its_own_badge_rule()
     {

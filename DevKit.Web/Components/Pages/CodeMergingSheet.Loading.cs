@@ -168,6 +168,7 @@ public partial class CodeMergingSheet
     {
         if (!CanLoad) return;
         loading = true;
+        filtersOpen = false;
 
         // Anything still running belongs to the sheet about to be replaced: the comparison is cancelled,
         // and moving that sheet to a new generation stops any check from writing to it.
@@ -200,6 +201,7 @@ public partial class CodeMergingSheet
 
         Refilter();
         loading = false;
+        announcement = bundle.Requirements.Count > 0 ? $"Loaded {bundle.Requirements.Count} work items." : bundle.ErrorMessage;
         StateHasChanged();
 
         await LoadBranchesForSelectedRepos();
@@ -222,6 +224,7 @@ public partial class CodeMergingSheet
         verifying = true;
         StateHasChanged();
 
+        string? failure = null;
         try
         {
             await LoadRemainingCommits();
@@ -234,10 +237,11 @@ public partial class CodeMergingSheet
         catch (Exception ex)
         {
             Log.LogError(ex, "Verify All failed for {Rows} work items", sheet.Requirements.Count);
-            sheet.ErrorMessage = $"Verification failed: {TfsErrors.Describe(ex)}";
+            failure = sheet.ErrorMessage = $"Verification failed: {TfsErrors.Describe(ex)}";
         }
         verifying = false;
         Refilter();
+        announcement = failure ?? $"Verify All finished. {MergingInsights.Summarize(filter.CountByRollup(scopeRows), scopeRows.Count)}";
     }
 
     /// <summary>
@@ -311,6 +315,7 @@ public partial class CodeMergingSheet
             unlinked = new UnlinkedPrBundle { HasRun = true, ErrorMessage = $"Search failed: {TfsErrors.Describe(ex)}" };
         }
         unlinkedSearching = false;
+        announcement = unlinked.ErrorMessage ?? $"Found {unlinked.PullRequests.Count} unlinked pull requests.";
     }
 
     private void OnUnlinkedDaysChanged(ChangeEventArgs e)

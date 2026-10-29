@@ -4,15 +4,20 @@
 @inject PageStateService PageState
 @inject BranchCacheService BranchCache
 @inject ILogger<BranchCreator> Logger
+@inject IJSRuntime JS
 @implements IDisposable
 
-<div style="display:flex;flex-direction:column;gap:0;flex:1;overflow:hidden;">
-    <!-- Config Bar -->
+<div class="bc-page">
+    @* The top bar already names the page, so the heading is for screen readers and for the focus a new page gets. *@
+    <h1 class="sr-only">Branch Creator</h1>
+    @* One raised toolbar with two groups, what to load and how to narrow the table. They share a line when the
+       window has room for both and wrap as whole groups when it does not. *@
+    <div class="bc-toolbar">
     <div class="cfg-bar">
-        <div class="cfg-col" style="flex:0 0 auto;">
+        <div class="cfg-col">
             <div class="cfg-field">
                 <label class="cfg-label">📂 Area Path</label>
-                <GlassDropdown Style="min-width:260px;"
+                <GlassDropdown CssClass="bc-area" Label="Area path" ShowEmptyOption="false"
                                Value="@(selectedArea != null ? AreaSprintSelect.Serialize(selectedArea) : "")"
                                Placeholder="Select area"
                                Disabled="@(areas.Count==0)"
@@ -20,18 +25,16 @@
                                OnChange="OnAreaChange" />
             </div>
         </div>
-        <div class="cfg-divider"></div>
-        <div class="cfg-col" style="flex:0 0 auto;">
+        <div class="cfg-col">
             <div class="cfg-field">
                 <label class="cfg-label">👥 Team Name</label>
-                <input class="cfg-fi" style="width:110px;" value="@teamName" @onchange="OnTeamNameChange" placeholder="TEAM" />
+                <input class="cfg-fi bc-team" value="@teamName" @onchange="OnTeamNameChange" placeholder="TEAM" aria-label="Team name" />
             </div>
         </div>
-        <div class="cfg-divider"></div>
-        <div class="cfg-col" style="flex:0 0 auto;">
+        <div class="cfg-col">
             <div class="cfg-field">
                 <label class="cfg-label">📅 Sprint</label>
-                <GlassDropdown Style="min-width:180px;"
+                <GlassDropdown CssClass="bc-sprint" Label="Sprint"
                                Value="@(selectedSprint ?? "")"
                                Placeholder="All"
                                EmptyLabel="All" EmptyValue=""
@@ -40,37 +43,31 @@
                                OnChange="OnSprintChange" />
             </div>
         </div>
-        <div class="cfg-divider"></div>
-        <div class="cfg-col" style="flex:0 0 auto;">
+        <div class="cfg-col">
             <button class="cfg-load-btn" @onclick="LoadWorkItems" disabled="@(selectedArea == null || loading)">
-                @if (loading) { <span class="spin spin-sm" style="color:var(--text);"></span> }
-                else { <span>⬇</span> }
+                @if (loading) { <span class="spin spin-sm"></span> }
+                else { <span aria-hidden="true">⬇</span> }
                 Load
             </button>
-            @if (workItems.Count > 0)
-            {
-                <span class="chip chip-green" style="font-size:.56rem;">@workItems.Count items</span>
-            }
         </div>
     </div>
-    @if (!string.IsNullOrEmpty(metadataError)) { <div class="notice warn">⚠ @metadataError</div> }
 
     <!-- Filter bar -->
     <div class="cfg-bar-filters">
-        <div style="flex:2;">
+        <div class="bc-f-search">
             <div class="cfg-field">
                 <label class="cfg-label">🔍 Search</label>
-                <input class="cfg-fi" placeholder="ID, title, assignee…" @oninput="OnSearch" />
+                <input class="cfg-fi" placeholder="ID, title, assignee…" aria-label="Search work items" value="@searchQ" @oninput="OnSearch" />
             </div>
         </div>
-        <div style="flex:1;">
+        <div class="bc-f-pick" role="group" aria-label="Type">
             <div class="cfg-field">
                 <label class="cfg-label">🏷 Type</label>
                 <GlassDropdown Value="@typeFilter" Placeholder="All" EmptyLabel="All" EmptyValue=""
                                Options="@TypeOptions()" OnChange="OnTypeFilter" />
             </div>
         </div>
-        <div style="flex:1;">
+        <div class="bc-f-pick" role="group" aria-label="Assignee">
             <div class="cfg-field">
                 <label class="cfg-label">👤 Assignee</label>
                 <GlassDropdown Value="@assigneeFilter" Placeholder="All" EmptyLabel="All" EmptyValue=""
@@ -78,40 +75,82 @@
             </div>
         </div>
     </div>
+    </div>
+    @if (!string.IsNullOrEmpty(metadataError)) { <div class="notice warn" role="alert">⚠ @metadataError</div> }
+    @if (!string.IsNullOrEmpty(loadError)) { <div class="notice warn" role="alert">⚠ @loadError</div> }
 
     <!-- Main content: left table + right branch form -->
-    <div class="content" style="flex:1;overflow:hidden;">
+    <div class="content bc-content">
         <div class="content-left">
-            <div class="gpanel" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+            <div class="gpanel bc-list">
                 <div class="phead">
-                    <span class="ptitle">📋 Requirements / Change Requests / Bugs</span>
-                    @if (filtered.Count > 0) { <span class="chip chip-cyan">@filtered.Count item(s)</span> }
+                    <span class="ptitle"><span aria-hidden="true">📋</span> Requirements / Change Requests / Bugs</span>
+                    @* "10/33" once a filter hides some, so the one count also says how many were loaded. *@
+                    @if (filtered.Count > 0)
+                    {
+                        <span class="bc-count">@filtered.Count@(filtered.Count != workItems.Count ? $"/{workItems.Count}" : "") item(s)</span>
+                    }
                 </div>
-                <div class="pbody" style="padding:0;flex:1;overflow:hidden;">
-                    <div class="grid-wrap" style="overflow:auto;height:100%;">
-                        <table class="req-table">
+                <div class="pbody bc-list-body">
+                    <div class="grid-wrap bc-grid">
+                        @* One line per work item, like the merging grid: titles end in an ellipsis and the cell's
+                           tooltip has them whole. *@
+                        <table class="req-table bc-table">
+                            @* Each header is a button; the sorted column says so (aria-sort) and shows its arrow. *@
                             <thead><tr>
-                                <th style="width:70px;" @onclick='() => Sort("id")'>ID</th>
-                                <th @onclick='() => Sort("title")'>Title & Details</th>
-                                <th style="width:80px;" @onclick='() => Sort("state")'>State</th>
-                                <th style="width:110px;" @onclick='() => Sort("assigned")'>Assigned</th>
+                                <th class="bc-c-id" aria-sort="@AriaSort("id")"><button type="button" class="bc-sort" @onclick='() => Sort("id")'>ID</button></th>
+                                <th aria-sort="@AriaSort("title")"><button type="button" class="bc-sort" @onclick='() => Sort("title")'>Title & Details</button></th>
+                                <th class="bc-c-type" aria-sort="@AriaSort("type")"><button type="button" class="bc-sort" @onclick='() => Sort("type")'>Type</button></th>
+                                <th class="bc-c-state" aria-sort="@AriaSort("state")"><button type="button" class="bc-sort" @onclick='() => Sort("state")'>State</button></th>
+                                <th class="bc-c-user" aria-sort="@AriaSort("assigned")"><button type="button" class="bc-sort" @onclick='() => Sort("assigned")'>Assigned</button></th>
                             </tr></thead>
-                            <tbody>
+                            @* Each load brings a new list, so the body is new and fades in once; filtering, sorting and
+                               selecting keep the same list and never replay it. The rows are one Tab stop: the arrow
+                               keys, Home and End move between their titles (app.js), and Enter or Space picks one. *@
+                            <tbody @key="workItems" data-roving>
                                 @if (filtered.Count == 0)
                                 {
-                                    <tr><td colspan="4" class="tbl-empty">@(workItems.Count == 0 ? "Select an area above, then click Load." : "No items match the filter.")</td></tr>
+                                    <tr>
+                                        <td colspan="5" class="tbl-empty">
+                                            @if (loading)
+                                            {
+                                                <span class="bc-loading" role="status"><span class="spin spin-sm"></span> Reading work items…</span>
+                                            }
+                                            else
+                                            {
+                                                @EmptyTableText
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                                @{
+                                    var chosenArea = selectedArea?.Name;
+                                    var tabRowId = TabRowId;
                                 }
                                 @foreach (var item in filtered)
                                 {
-                                    <tr class="@(selectedItem?.Id == item.Id ? "selected" : "")" @onclick="() => SelectItem(item)">
-                                        <td><a class="id-link" href="@TfsApi.WorkItemUrl(item.Project, item.Id)" target="_blank" @onclick:stopPropagation>#@item.Id</a></td>
-                                        <td>
-                                            <span class="type-pill @WorkItemBadges.TypeClass(item.Type)">@item.Type</span>
-                                            <div class="cell-title">@item.Title</div>
-                                            <div class="cell-meta">@item.Area.Split('\\').LastOrDefault()</div>
+                                    // Everything under the chosen area loads, so a row names its area only when it comes from below it.
+                                    var area = item.Area.Split('\\').LastOrDefault() ?? "";
+                                    var fromSubArea = !string.Equals(area, chosenArea, StringComparison.OrdinalIgnoreCase);
+                                    var isSelected = selectedItem?.Id == item.Id;
+                                    <tr class="@(isSelected ? "selected" : "")" @onclick="() => SelectItem(item)">
+                                        @* For the pointer only: from the keyboard, the chosen work item's id in the form opens TFS. *@
+                                        <td><a class="id-link" href="@TfsApi.WorkItemUrl(item.Project, item.Id)" target="_blank" rel="noopener"
+                                               tabindex="-1" @onclick:stopPropagation>#@item.Id</a></td>
+                                        <td title="@item.Title">
+                                            <button type="button" class="bc-title-cell bc-pick" id="@RowButtonId(item)" data-roving-item
+                                                    tabindex="@(item.Id == tabRowId ? "0" : "-1")" aria-pressed="@(isSelected ? "true" : "false")"
+                                                    @onfocus="() => focusRowId = item.Id" @onclick="() => SelectItem(item)" @onclick:stopPropagation>
+                                                <span class="bc-title">@item.Title</span>
+                                                @if (fromSubArea)
+                                                {
+                                                    <span class="bc-sub">@area</span>
+                                                }
+                                            </button>
                                         </td>
-                                        <td><span class="state-pill @WorkItemBadges.StateClass(item.State)">@item.State</span></td>
-                                        <td style="font-size:.7rem;">@item.Assigned</td>
+                                        <td class="bc-c-type"><span class="type-pill @WorkItemBadges.TypeClass(item.Type)">@item.Type</span></td>
+                                        <td class="bc-c-state"><span class="state-pill @WorkItemBadges.StateClass(item.State)">@item.State</span></td>
+                                        <td class="bc-c-user" title="@item.Assigned">@item.Assigned</td>
                                     </tr>
                                 }
                             </tbody>
@@ -124,10 +163,10 @@
         <div class="content-right">
             <div class="gpanel">
                 <div class="phead">
-                    <span class="ptitle">🔀 New Branch</span>
+                    <span class="ptitle"><span aria-hidden="true">🔀</span> New Branch</span>
                     @if (selectedRepo != null)
                     {
-                        <span style="font-size:.58rem;color:var(--muted);margin-left:auto;">@selectedRepo.Project</span>
+                        <span class="bc-head-note">@selectedRepo.Project</span>
                     }
                 </div>
                 <div class="pbody">
@@ -137,14 +176,14 @@
                             Repository
                             @if (loadingBranches)
                             {
-                                <span style="font-weight:400;margin-left:6px;"><span class="spin spin-sm" style="color:var(--accent);"></span></span>
+                                <span class="spin spin-sm bc-spin"></span>
                             }
                             else if (selectedRepo != null)
                             {
-                                <span style="font-size:.52rem;color:var(--muted);font-weight:400;">@branches.Count branches</span>
+                                <span class="bc-hint">@branches.Count branches</span>
                             }
                         </div>
-                        <GlassDropdown CssClass="fi-size"
+                        <GlassDropdown CssClass="fi-size" Label="Repository"
                                        Value="@(selectedRepo?.Id ?? "")"
                                        Placeholder="Select repository"
                                        ShowEmptyOption="false"
@@ -153,61 +192,66 @@
                                        OnChange="OnRepoChange" />
                         @if (!string.IsNullOrEmpty(branchLoadErr))
                         {
-                            <div style="font-size:.56rem;color:var(--amber);margin-top:3px;">⚠ @branchLoadErr</div>
+                            <div class="bc-field-err">⚠ @branchLoadErr</div>
                         }
                     </div>
 
                     @if (selectedItem == null)
                     {
                         <div class="pr-placeholder">
-                            <div style="font-size:2rem;opacity:.2;">🔀</div>
+                            <Icon Inner="@Icons.ToolBranchCreator" CssClass="ic-xl bc-empty-ic" />
                             <div class="bp-title">Select a Requirement</div>
                             <div class="bp-sub">Click a row in the table to set up and create its branch.</div>
                         </div>
                     }
                     else
                     {
-                        <!-- Selected item info -->
-                        <div style="background:rgba(0,0,0,.15);border:1px solid rgba(255,255,255,.08);border-radius:var(--r2);padding:10px 14px;margin-bottom:14px;">
-                            <div style="font-size:.82rem;font-weight:700;">@selectedItem.Title</div>
-                            <div style="font-family:var(--mono);font-size:.67rem;color:var(--emerald-light);margin-top:3px;">
-                                #@selectedItem.Id · @selectedItem.Type · @selectedItem.State · @selectedItem.Assigned
+                        <!-- Selected item info: sunk into the form like a field, since it is context rather than a control -->
+                        <div class="bc-item">
+                            <div class="bc-item-title">@selectedItem.Title</div>
+                            <div class="bc-item-meta">
+                                @* The keyboard's way to TFS: the table's id links are for the pointer only. *@
+                                <a class="bc-item-link" href="@TfsApi.WorkItemUrl(selectedItem.Project, selectedItem.Id)" target="_blank"
+                                   rel="noopener">#@selectedItem.Id<span class="sr-only"> (opens TFS in a new tab)</span></a>
+                                · @selectedItem.Type · @selectedItem.State · @selectedItem.Assigned
                             </div>
                         </div>
 
                         <!-- Branches already linked to this work item, in any repository -->
                         @if (loadingExisting)
                         {
-                            <div style="display:flex;align-items:center;gap:6px;padding:8px 12px;margin-bottom:12px;font-size:.68rem;color:var(--muted2);background:rgba(100,100,120,.06);border:1px solid rgba(255,255,255,.05);border-radius:var(--r2);">
-                                <span class="spin spin-sm" style="color:var(--accent);"></span>
+                            <div class="bc-note" role="status">
+                                <span class="spin spin-sm bc-spin"></span>
                                 Reading linked branches…
                             </div>
                         }
                         else if (existingBranches.Count > 0)
                         {
-                            <div style="margin-bottom:14px;padding:10px 12px;background:rgba(251,191,36,.04);border:1px solid rgba(251,191,36,.15);border-radius:var(--r2);">
-                                <div style="font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--amber);margin-bottom:6px;display:flex;align-items:center;gap:5px;">
+                            <div class="bc-existing">
+                                <div class="bc-existing-h">
                                     ⚠ Existing Branches (@existingBranches.Count)
                                 </div>
-                                <p style="font-size:.58rem;color:var(--muted);margin-bottom:6px;">Linked to this work item. Click one to use it.</p>
+                                <p class="bc-existing-note">Linked to this work item. Click one to use it.</p>
                                 @foreach (var link in existingBranches)
                                 {
                                     var gone = link.BranchMissing;
-                                    <div style="font-family:var(--mono);font-size:.66rem;color:@(gone ? "var(--muted2)" : "var(--cyan)");padding:3px 0;word-break:break-all;cursor:pointer;display:flex;align-items:center;gap:6px;"
-                                         title="@ExistingBranchTitle(link)" @onclick="() => UseExistingBranch(link)">
-                                        <span style="flex:1;">
-                                            @(gone ? "🥀" : "🌿") @ExistingBranchLabel(link)
+                                    @* The branch is a button of its own, so the keyboard reaches it; its remove controls sit beside
+                                       it rather than inside it, since a button cannot hold another. *@
+                                    <div class="bc-link @(gone ? "gone" : "")">
+                                        <button type="button" class="bc-link-name" title="@ExistingBranchTitle(link)"
+                                                @onclick="() => UseExistingBranch(link)">
+                                            <span aria-hidden="true">@(gone ? "🥀" : "🌿")</span> @ExistingBranchLabel(link)
                                             @if (gone)
                                             {
-                                                <span style="color:var(--amber);"> · deleted</span>
+                                                <span class="bc-gone"> · deleted</span>
                                             }
-                                        </span>
+                                        </button>
                                         @if (gone)
                                         {
                                             @if (ReferenceEquals(unlinkCandidate, link))
                                             {
-                                                <span style="display:flex;align-items:center;gap:4px;white-space:nowrap;">
-                                                    <button class="btn-sm" style="color:var(--red);" disabled="@unlinking"
+                                                <span class="bc-link-acts">
+                                                    <button class="btn-sm bc-remove" disabled="@unlinking"
                                                             title="Permanently remove this link from the work item"
                                                             @onclick="() => RemoveStaleLink(link)" @onclick:stopPropagation>
                                                         @if (unlinking) { <span class="spin spin-sm"></span> }
@@ -222,6 +266,7 @@
                                             else
                                             {
                                                 <button class="bpk-clear" title="Remove this stale link from the work item"
+                                                        aria-label="Remove the stale link to @link.BranchName"
                                                         @onclick="() => unlinkCandidate = link" @onclick:stopPropagation>✕</button>
                                             }
                                         }
@@ -231,49 +276,52 @@
                         }
                         else if (!string.IsNullOrEmpty(existingErr))
                         {
-                            <div style="margin-bottom:14px;padding:8px 12px;font-size:.62rem;color:var(--red);background:rgba(248,113,113,.04);border:1px solid rgba(248,113,113,.2);border-radius:var(--r2);">
+                            <div class="bc-err">
                                 ⚠ Could not load linked branches: @existingErr
                             </div>
                         }
 
                         <!-- Branch Name -->
+                        @* The check line, the length hint and the pattern describe the box, so a screen reader hears them
+                           with it, and an invalid name is marked as such. *@
+                        var nameInvalid = !string.IsNullOrWhiteSpace(branchName) && BranchNameError != null;
                         <div class="f-row">
-                            <div class="f-label">Branch Name <span style="font-size:.52rem;color:var(--muted);font-weight:400;">max @BranchNaming.MaxLength chars</span></div>
-                            <div style="display:flex;align-items:center;gap:6px;">
-                                <span style="font-size:.7rem;color:var(--muted);white-space:nowrap;">refs/heads/</span>
-                                <input class="fi" @bind="branchName" @bind:event="oninput" placeholder="auto-generated" />
+                            <div class="f-label"><label for="bcBranchName">Branch Name</label> <span class="bc-hint" id="bcBranchHint">max @BranchNaming.MaxLength chars</span></div>
+                            <div class="bc-ref-row">
+                                <span class="bc-ref-prefix" aria-hidden="true">refs/heads/</span>
+                                <input class="fi bc-ref-input" id="bcBranchName" @bind="branchName" @bind:event="oninput" placeholder="auto-generated"
+                                       aria-invalid="@(nameInvalid ? "true" : null)" aria-describedby="bcBranchCheck bcBranchHint bcBranchPattern" />
                             </div>
                             @if (!string.IsNullOrWhiteSpace(branchName))
                             {
                                 @if (BranchNameError == null)
                                 {
-                                    <div style="font-size:.56rem;color:var(--green);margin-top:3px;">✓ Valid branch name</div>
+                                    <div class="bc-valid ok" id="bcBranchCheck">✓ Valid branch name</div>
                                 }
                                 else
                                 {
-                                    <div style="font-size:.56rem;color:var(--red);margin-top:3px;">✕ @BranchNameError</div>
+                                    <div class="bc-valid bad" id="bcBranchCheck">✕ @BranchNameError</div>
                                 }
                             }
+                            @* The pattern explains the field above it, so it sits with it. *@
+                            <div class="bc-pattern" id="bcBranchPattern">
+                                Branch: <code>{TEAM}/{Sprint}/{id}_{title}</code>
+                            </div>
                         </div>
 
                         <!-- PR Name -->
                         <div class="f-row">
-                            <div class="f-label">PR Name Suggestion</div>
-                            <input class="fi" @bind="prName" />
-                        </div>
-
-                        <!-- Branch pattern hint -->
-                        <div style="font-size:.56rem;color:var(--muted);margin-bottom:10px;">
-                            Branch: <code style="font-size:.56rem;color:var(--cyan);">{TEAM}/{Sprint}/{id}_{title}</code>
+                            <div class="f-label"><label for="bcPrName">PR Name Suggestion</label></div>
+                            <input class="fi" id="bcPrName" @bind="prName" />
                         </div>
 
                         <!-- Base Branch -->
                         <div class="f-row">
                             <div class="f-label">
                                 Base Branch
-                                <span style="font-size:.52rem;color:var(--muted);font-weight:400;">@BaseBranchHint</span>
+                                <span class="bc-hint">@BaseBranchHint</span>
                             </div>
-                            <BranchPicker CssClass="fi-size"
+                            <BranchPicker CssClass="fi-size" Label="Base branch"
                                           Branches="@branches"
                                           Value="@baseBranch"
                                           ValueChanged="OnBaseBranchChange"
@@ -283,27 +331,34 @@
                         </div>
 
                         <!-- Action Buttons -->
-                        <div style="display:flex;gap:8px;margin-top:14px;">
-                            <button class="btn-primary" style="flex:1;" @onclick="CreateBranch" disabled="@(!CanSubmit || creating)">
+                        @* Create is the one filled button; Check is its quieter sibling, and Clear only empties the form.
+                           The row stays pinned to the bottom of the form column, so Create is in reach however many
+                           linked branches push the fields down. *@
+                        <div class="bc-actions">
+                            <button class="btn-primary" @onclick="CreateBranch" disabled="@(!CanSubmit || creating)"
+                                    title="@(creating ? null : CreateBlockedReason)">
                                 @if (creating) { <span class="spin spin-sm"></span> <span>Creating…</span> }
-                                else { <span>🔀 Create Branch</span> }
+                                else { <span aria-hidden="true">🔀</span> <span>Create Branch</span> }
                             </button>
-                            <button class="btn-ghost" @onclick="CheckBranch" disabled="@(!CanCheck || checking)">
-                                @if (checking) { <span class="spin spin-sm"></span> } else { <span>🔍</span> }
+                            <button class="btn-ghost bc-check-btn" @onclick="CheckBranch" disabled="@(!CanCheck || checking)"
+                                    title="@(checking ? null : CheckBlockedReason)">
+                                @if (checking) { <span class="spin spin-sm"></span> } else { <span aria-hidden="true">🔍</span> }
                                 Check
                             </button>
-                            <button class="btn-ghost btn-danger" @onclick="ClearForm">
-                                ✕ Clear
+                            <button class="btn-ghost bc-clear" @onclick="ClearForm">
+                                <span aria-hidden="true">✕</span> Clear
                             </button>
                         </div>
 
-                        <!-- Result -->
-                        @if (!string.IsNullOrEmpty(resultMsg))
-                        {
-                            <div style="margin-top:12px;padding:12px 14px;border-radius:var(--r2);font-size:.72rem;border:1px solid @(resultOk ? "rgba(52,211,153,.2)" : "rgba(248,113,113,.2)");background:@(resultOk ? "rgba(52,211,153,.04)" : "rgba(248,113,113,.04)");">
-                                @((MarkupString)resultMsg)
-                            </div>
-                        }
+                        <!-- Result: a live region that is always there, so the outcome of Check or Create is read out -->
+                        <div role="status">
+                            @if (!string.IsNullOrEmpty(resultMsg))
+                            {
+                                <div class="bc-result @(resultOk ? "ok" : "bad")">
+                                    @((MarkupString)resultMsg)
+                                </div>
+                            }
+                        </div>
                     }
                 </div>
             </div>

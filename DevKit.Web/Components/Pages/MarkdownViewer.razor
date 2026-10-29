@@ -1,25 +1,28 @@
 @page "/markdown"
 @inject IJSRuntime JS
 
+@* The editor, the preview, or both side by side. markdown-viewer.js drives the page: the modes, the divider, import,
+   export and copy. *@
 <div class="mdv">
     <div class="mdv-header">
-        <div class="mdv-title">
+        <h1 class="mdv-title">
             <Icon Inner="@Icons.FileText" />
             <span>Markdown Viewer</span>
-        </div>
-        <div class="mdv-modes">
-            <button class="mdv-mode" id="mdModeEditor" data-mode="editor">Editor</button>
-            <button class="mdv-mode active" id="mdModeSplit" data-mode="split">Split</button>
-            <button class="mdv-mode" id="mdModePreview" data-mode="preview">Preview</button>
+        </h1>
+        <div class="mdv-modes" role="group" aria-label="View">
+            <button type="button" class="mdv-mode" id="mdModeEditor" data-mode="editor" aria-pressed="false">Editor</button>
+            <button type="button" class="mdv-mode active" id="mdModeSplit" data-mode="split" aria-pressed="true">Split</button>
+            <button type="button" class="mdv-mode" id="mdModePreview" data-mode="preview" aria-pressed="false">Preview</button>
         </div>
         <div class="mdv-actions">
-            <button class="btn-ghost btn-sm" id="mdImportBtn">Import</button>
+            <button type="button" class="btn-ghost btn-sm" id="mdImportBtn" title="Open a Markdown file from your PC">Import</button>
             <div class="mdv-dropdown" id="mdExportDropdown">
-                <button class="btn-ghost btn-sm" id="mdExportBtn">Export ▾</button>
-                <div class="mdv-menu" id="mdExportMenu">
-                    <button class="mdv-menu-item" id="mdExportMd">Export as .md</button>
-                    <button class="mdv-menu-item" id="mdExportHtml">Export as .html</button>
-                    <button class="mdv-menu-item" id="mdExportPdf">Export as PDF (print)</button>
+                <button type="button" class="btn-ghost btn-sm" id="mdExportBtn" aria-haspopup="true" aria-expanded="false" aria-controls="mdExportMenu">Export <span aria-hidden="true">▾</span></button>
+                @* Up and Down move between the choices (app.js); Escape closes the list and returns to Export. *@
+                <div class="mdv-menu" id="mdExportMenu" data-roving>
+                    <button type="button" class="mdv-menu-item" id="mdExportMd" data-roving-item>Export as .md</button>
+                    <button type="button" class="mdv-menu-item" id="mdExportHtml" data-roving-item>Export as .html</button>
+                    <button type="button" class="mdv-menu-item" id="mdExportPdf" data-roving-item>Export as PDF (print)</button>
                 </div>
             </div>
         </div>
@@ -28,13 +31,15 @@
     <div class="mdv-content mode-split" id="mdContent">
         <div class="mdv-pane" id="mdEditorPane">
             <div class="mdv-pane-label">Editor</div>
-            <textarea id="mdEditor" class="md-editor" spellcheck="false" placeholder="Type or paste Markdown here..."></textarea>
+            <textarea id="mdEditor" class="md-editor" spellcheck="false" aria-label="Markdown" placeholder="Type or paste Markdown here..."></textarea>
         </div>
-        <div class="mdv-resizer" id="mdResizer"></div>
+        @* A divider the arrow keys move as well as the mouse, so the split can be changed without a pointer. *@
+        <div class="mdv-resizer" id="mdResizer" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="mdEditorPane"
+             aria-label="Width of the editor" aria-valuemin="15" aria-valuemax="85" aria-valuenow="50"></div>
         <div class="mdv-pane" id="mdPreviewPane">
             <div class="mdv-pane-label">
                 <span>Preview</span>
-                <button class="mdv-copy" id="mdCopyBtn" title="Copy formatted preview to clipboard">
+                <button type="button" class="mdv-copy" id="mdCopyBtn" title="Copy formatted preview to clipboard">
                     <Icon Inner="@Icons.Copy" /><span>Copy as Text</span>
                 </button>
             </div>
@@ -44,6 +49,7 @@
         </div>
     </div>
 
+    <div class="sr-only" role="status" id="mdAnnounce"></div>
     <div class="mdv-status">
         <span id="mdStatLines">Ln 0</span>
         <span id="mdStatWords">Words 0</span>

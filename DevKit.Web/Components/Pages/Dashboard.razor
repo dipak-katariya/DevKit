@@ -4,28 +4,44 @@
 <div class="dash">
     <div class="dash-head">
         <div>
-            <div class="dash-title">Dashboard</div>
-            <div class="dash-sub">Tools for working with TFS: branches, sprints and code merging.</div>
+            <h1 class="dash-title">Dashboard</h1>
+            <p class="dash-sub">Tools for working with TFS: branches, sprints and code merging.</p>
         </div>
-        <div class="dash-view">
-            <button class="tb-btn @(grid ? "on" : "")" title="Grid view" @onclick="() => grid = true">
+        <div class="dash-view" role="group" aria-label="View">
+            <button class="tb-btn @(grid ? "on" : "")" title="Grid view" aria-label="Grid view"
+                    aria-pressed="@(grid ? "true" : "false")" @onclick="() => grid = true">
                 <Icon Inner="@Icons.Dashboard" />
             </button>
-            <button class="tb-btn @(grid ? "" : "on")" title="List view" @onclick="() => grid = false">
+            <button class="tb-btn @(grid ? "" : "on")" title="List view" aria-label="List view"
+                    aria-pressed="@(grid ? "false" : "true")" @onclick="() => grid = false">
                 <Icon Inner="@Icons.List" />
             </button>
         </div>
     </div>
 
-    <div class="@(grid ? "dash-grid" : "dash-list")">
-        @foreach (var tool in ToolCatalog.Tools)
+    <div class="dash-groups @(grid ? "as-grid" : "")">
+        @* Each tile's place across both groups: the opening stagger brings them in in this order. *@
+        @{ var order = 0; }
+        @foreach (var group in ToolCatalog.Groups)
         {
-            <a class="tool-card" href="@tool.Path" @onclick="() => Nav.NavigateTo(tool.Path)" @onclick:preventDefault>
-                <div class="tool-icon"><Icon Inner="@tool.Icon" /></div>
-                <div class="tool-name">@tool.Name</div>
-                <div class="tool-desc">@tool.Description</div>
-                <div class="tool-foot"><span>Open</span><Icon Inner="@Icons.ArrowRight" /></div>
-            </a>
+            var headingId = "dash-" + group.Name.Replace(' ', '-').ToLowerInvariant();
+            <section class="dash-group @(group.IsSequence ? "dash-seq" : "dash-set")" aria-labelledby="@headingId">
+                <h2 class="dash-group-name" id="@headingId">@group.Name</h2>
+                <div class="dash-tiles">
+                    @foreach (var tool in group.Tools)
+                    {
+                        <a class="tool-card" style="--i:@(order++)" href="@tool.Path"
+                           @onclick="() => Nav.NavigateTo(tool.Path)" @onclick:preventDefault>
+                            <div class="tool-icon"><Icon Inner="@tool.Icon" /></div>
+                            <div class="tool-text">
+                                <div class="tool-name">@tool.Name</div>
+                                <div class="tool-desc">@tool.Description</div>
+                            </div>
+                            <div class="tool-go"><Icon Inner="@Icons.ArrowRight" /></div>
+                        </a>
+                    }
+                </div>
+            </section>
         }
     </div>
 </div>

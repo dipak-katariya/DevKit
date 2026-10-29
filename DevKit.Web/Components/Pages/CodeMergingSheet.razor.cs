@@ -34,6 +34,9 @@ public sealed partial class CodeMergingSheet
 
     private bool loading, verifying;
 
+    // What the last load, check or search came to, for screen readers; the page shows it in the grid and the strip.
+    private string? announcement;
+
     // ─── Unlinked pull requests ───
     // Its own state and its own fetch, run only when that tab is opened, so the sheet's load
     // never pays for it.
@@ -58,6 +61,9 @@ public sealed partial class CodeMergingSheet
     private List<RepoBranchSetup.RepoBranchRow> branchRows = new();
     private bool branchesLoading;
     private bool branchSetupOpen;
+
+    // Narrow screens only: whether the folded filters are open above the grid.
+    private bool filtersOpen;
     private string? expandedPrKey;
     private CancellationTokenSource? searchDebounce;
 
@@ -77,6 +83,21 @@ public sealed partial class CodeMergingSheet
 
     private bool CanVerify =>
         bundle.Requirements.Count > 0 && MergingBranchByRepoId.Count > 0 && !Activity.IsChecking;
+
+    /// <summary>The folded filters' one line on narrow screens: the area, sprint and repositories chosen.</summary>
+    private string FilterSummary => string.Join(" · ",
+        selectedArea?.Name ?? "No area",
+        Summarize(selectedSprints, SprintOptions, "sprint", "sprints"),
+        Summarize(selectedRepoIds, RepoOptions, "repository", "repositories"));
+
+    // The one chosen option's label, or how many were chosen.
+    private static string Summarize(HashSet<string> chosen, IEnumerable<MultiSelectDropdown.Option> options, string one, string many) =>
+        chosen.Count switch
+        {
+            0 => $"No {one}",
+            1 => options.FirstOrDefault(o => chosen.Contains(o.Value))?.Label ?? $"1 {one}",
+            _ => $"{chosen.Count} {many}"
+        };
 
     private const string VerifyAllTooltip =
         "Quick check: look for every commit (or a copy of it) on each repository's merging branch. " +

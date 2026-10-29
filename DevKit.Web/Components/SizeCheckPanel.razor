@@ -4,148 +4,123 @@
 @* Size Check: requirement/CHR sizes verified against the estimates on their child tasks.
    Area and sprint are owned by Sprint Insights and arrive as parameters so they stay shared across tabs. *@
 
-<div style="display:flex;flex-direction:column;gap:0;flex:1;overflow:hidden;">
+<div class="sc-tab">
+    <div class="si-toolbar">
     <div class="cfg-bar">
         @Selectors
         <div class="cfg-divider"></div>
-        <div class="cfg-col" style="flex:0 0 auto;">
-            <button class="cfg-load-btn" @onclick="Load" disabled="@(Area == null || string.IsNullOrEmpty(Sprint) || loading)">
-                @if (loading) { <span class="spin spin-sm" style="color:#fff;"></span> }
-                else { <span>⬇</span> }
+        <div class="cfg-col">
+            <button type="button" class="cfg-load-btn" @onclick="Load" disabled="@(loading || LoadBlocked is not null)" title="@LoadBlocked">
+                @if (loading) { <span class="spin spin-sm"></span> }
+                else { <span aria-hidden="true">⬇</span> }
                 Load Sprint
             </button>
-            @if (planningItems.Count > 0)
-            {
-                <span class="chip chip-green" style="font-size:.56rem;">@planningItems.Count items</span>
-            }
         </div>
-        <div class="cfg-divider"></div>
-        <div class="cfg-col" style="flex:0 0 auto;">
-            <button class="cfg-load-btn @(showMismatchOnly ? "btn-sm-active" : "")"
-                    style="@(showMismatchOnly ? "background:rgba(251,191,36,.18);border-color:rgba(251,191,36,.35);color:#fde68a;" : "")"
-                    @onclick="ToggleVerifySize" disabled="@(planningItems.Count == 0)">
-                <span>@(showMismatchOnly ? "✓" : "⚠")</span>
+    </div>
+    @* The grid's own tools are a second row, as on Task Creation: on a laptop the toolbar breaks between choosing a
+       sprint and working on it, not wherever the width runs out. *@
+    <div class="cfg-bar-filters">
+        <div class="cfg-col">
+            @* A filter over what is loaded, so it wears the tint of Verify All and Check, not the filled Load. *@
+            <button type="button" class="si-tint-btn @(showMismatchOnly ? "on" : "")" aria-pressed="@(showMismatchOnly ? "true" : "false")"
+                    @onclick="ToggleVerifySize" disabled="@(planningItems.Count == 0)" title="@(planningItems.Count == 0 ? NothingLoaded : null)">
+                <span aria-hidden="true">@(showMismatchOnly ? "✓" : "⚠")</span>
                 @(showMismatchOnly ? "Showing Mismatches" : "Verify Size")
+                @if (planningItems.Count > 0) { <span class="si-btn-count">· @MismatchedCount</span> }
             </button>
-            @if (planningItems.Count > 0)
-            {
-                <span class="chip" style="font-size:.56rem;background:rgba(251,191,36,.1);color:var(--amber);">
-                    @MismatchedCount mismatch
-                </span>
-            }
         </div>
         <div class="cfg-divider"></div>
-        <div class="cfg-col" style="flex:0 0 auto;">
-            <button class="cfg-load-btn"
-                    style="background:rgba(167,139,250,.16);border-color:rgba(167,139,250,.35);color:#c4b5fd;"
+        <div class="cfg-col">
+            @* It writes every size to TFS, so it stays a quiet button beside the one filled action. *@
+            <button type="button" class="si-quiet-btn"
                     @onclick="ApplyAllCalculated"
                     disabled="@(CalcDiffersCount == 0 || bulkApplying || loading)"
-                    title="Set every requirement's size to its calculated value (past completed + current estimate)">
-                @if (bulkApplying) { <span class="spin spin-sm" style="color:var(--text);"></span> }
-                else { <span>∑</span> }
+                    title="@ApplyAllTitle">
+                @if (bulkApplying) { <span class="spin spin-sm"></span> }
+                else { <span aria-hidden="true">∑</span> }
                 Apply All Sizes
+                @if (CalcDiffersCount > 0) { <span class="si-btn-count">· @CalcDiffersCount</span> }
             </button>
-            @if (CalcDiffersCount > 0)
-            {
-                <span class="chip" style="font-size:.56rem;background:rgba(167,139,250,.12);color:var(--purple);">
-                    @CalcDiffersCount to update
-                </span>
-            }
         </div>
         <div class="cfg-divider"></div>
-        <div class="cfg-col" style="flex:1;min-width:140px;">
+        <div class="cfg-col si-f-search">
             <div class="cfg-field">
                 <label class="cfg-label">🔍 Search</label>
-                <input class="cfg-fi" placeholder="ID, title…" @oninput="OnSearch" />
+                <input class="cfg-fi" placeholder="ID, title…" aria-label="Search items" @oninput="OnSearch" />
             </div>
         </div>
         <div class="cfg-divider"></div>
-        <div class="cfg-col" style="flex:0 0 auto;">
+        <div class="cfg-col sc-f-type" role="group" aria-label="Type">
             <div class="cfg-field">
                 <label class="cfg-label">🏷 Type</label>
-                <MultiSelectDropdown Style="min-width:200px;" Options="@TypeOptions()" Selected="@typeFilter"
+                <MultiSelectDropdown Options="@TypeOptions()" Selected="@typeFilter"
                                      SelectedChanged="OnTypeFilterChanged" ItemNoun="type"
                                      Placeholder="None" SearchPlaceholder="Search types…" />
             </div>
         </div>
     </div>
+    </div>
+    @if (loadError is not null) { <div class="notice warn" role="alert">⚠ @loadError</div> }
+    @if (partialNotice is not null) { <div class="notice warn">⚠ @partialNotice</div> }
 
-    @if (planningItems.Count > 0)
-    {
-        <div style="display:flex;align-items:center;gap:14px;padding:8px 18px;background:rgba(100,100,120,.03);border-bottom:1px solid rgba(255,255,255,.04);font-size:.66rem;flex-wrap:wrap;">
-            <span class="chip chip-cyan">📋 @filteredItems.Count items</span>
-            <span style="color:var(--muted);">Σ Size:</span>
-            <span style="font-weight:700;color:var(--accent2);">@TotalEffort.ToString("0.##")</span>
-            <span style="color:var(--muted);">·</span>
-            <span style="color:var(--muted);">Σ Calc Size:</span>
-            <span style="font-weight:700;color:var(--purple);">@TotalCalculated.ToString("0.##")</span>
-            <span style="color:var(--muted);">·</span>
-            <span style="color:var(--muted);">Σ Original:</span>
-            <span style="font-weight:700;color:var(--cyan);">@TotalOriginal.ToString("0.##") h</span>
-            <span style="color:var(--muted);">·</span>
-            <span style="color:var(--muted);">Σ Remaining:</span>
-            <span style="font-weight:700;color:var(--amber);">@TotalRemaining.ToString("0.##") h</span>
-            <span style="color:var(--muted);">·</span>
-            <span style="color:var(--muted);">Σ Completed:</span>
-            <span style="font-weight:700;color:var(--green);">@TotalCompleted.ToString("0.##") h</span>
-            <span style="color:var(--muted);">·</span>
-            <span style="color:var(--muted);">Σ Revised:</span>
-            <span style="font-weight:700;color:var(--purple);">@TotalRevised.ToString("0.##") h</span>
-            @if (showMismatchOnly)
-            {
-                <span style="margin-left:auto;font-weight:700;color:var(--amber);">
-                    ⚠ Showing @filteredItems.Count mismatched item(s)
-                </span>
-            }
-        </div>
-    }
-
-    <div class="content" style="flex:1;overflow:hidden;">
-        <div class="gpanel" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+    <div class="content">
+        <div class="sr-only" role="status">@announcement</div>
+        <div class="gpanel sc-panel">
+            @* The totals sit in the heading of the grid they add up, so the grid starts higher; how to use the grid is the
+               title's tooltip. *@
             <div class="phead">
-                <span class="ptitle">📐 Size Check</span>
-                <div style="display:flex;align-items:center;gap:10px;margin-left:auto;">
-                    @if (planningItems.Count > 0)
-                    {
-                        <button class="btn-sm" style="padding:2px 8px;height:22px;font-size:.6rem;" @onclick="ToggleExpandAll">
-                            @(AllExpanded ? "▾ Collapse all" : "▸ Expand all")
-                        </button>
-                    }
-                    <span style="font-size:.6rem;color:var(--muted);">Click ▸ to expand tasks · click size to edit</span>
-                </div>
-            </div>
-            <div class="pbody" style="padding:0;flex:1;overflow:hidden;">
-                @if (planningItems.Count == 0 && !loading)
+                <span class="ptitle" title="Click ▸ to expand tasks · click size to edit">📐 Size Check</span>
+                @if (planningItems.Count > 0)
                 {
-                    <div class="pr-placeholder">
-                        <div style="font-size:2rem;opacity:.2;">📐</div>
-                        <div class="bp-title">Select Area & Sprint</div>
-                        <div class="bp-sub">Choose an area path and sprint, then click Load Sprint to verify task estimates against requirement sizes.</div>
+                    <div class="sc-sums">
+                        <span class="sc-sum-count">📋 @filteredItems.Count items</span>
+                        <span><span class="sc-sum-k">Σ Size:</span> @TotalEffort.ToString("0.##")</span>
+                        <span><span class="sc-sum-k">Σ Calc Size:</span> @TotalCalculated.ToString("0.##")</span>
+                        <span><span class="sc-sum-k">Σ Original:</span> @TotalOriginal.ToString("0.##") h</span>
+                        <span><span class="sc-sum-k">Σ Remaining:</span> @TotalRemaining.ToString("0.##") h</span>
+                        <span><span class="sc-sum-k">Σ Completed:</span> @TotalCompleted.ToString("0.##") h</span>
+                        <span><span class="sc-sum-k">Σ Revised:</span> @TotalRevised.ToString("0.##") h</span>
+                        @if (showMismatchOnly)
+                        {
+                            <span class="sc-sum-note">⚠ Showing @filteredItems.Count mismatched item(s)</span>
+                        }
                     </div>
+                    <button type="button" class="si-head-btn" @onclick="ExpandAllClicked">
+                        @(AllExpanded ? "▾ Collapse all" : "▸ Expand all")
+                    </button>
                 }
-                else if (loading)
+            </div>
+            <div class="pbody">
+                @if (loading)
                 {
-                    <div style="padding:40px;text-align:center;">
-                        <div class="spin" style="color:var(--accent);width:24px;height:24px;border-width:2.5px;margin:0 auto;"></div>
-                        <div style="font-size:.74rem;color:var(--muted);margin-top:10px;">Loading sprint items and tasks…</div>
-                    </div>
+                    <LoadingState>Reading the sprint's requirements and their tasks for <b>@AreaSprintSelect.Describe(Area, Sprint)</b></LoadingState>
+                }
+                else if (LoadedEmpty)
+                {
+                    <BlankState Glyph="@Icons.TabSize" Title="Nothing to size">This area and sprint have no requirements or change requests.</BlankState>
+                }
+                else if (planningItems.Count == 0)
+                {
+                    <BlankState Glyph="@Icons.TabSize" Title="Nothing loaded yet">
+                        Select an area and sprint, then <b>Load Sprint</b> to compare each requirement's size with the estimates on its tasks.
+                    </BlankState>
                 }
                 else
                 {
-                    <div class="grid-wrap" style="overflow:auto;height:100%;">
-                        <table class="req-table">
+                    <div class="grid-wrap sc-grid @arrival.Class">
+                        <table class="req-table sc-table">
                             <thead><tr>
-                                <th style="width:70px;" @onclick='() => Sort("id")'>ID</th>
-                                <th @onclick='() => Sort("title")'>Title</th>
-                                <th style="width:80px;" @onclick='() => Sort("state")'>State</th>
-                                <th style="width:100px;" @onclick='() => Sort("assigned")'>Assigned</th>
-                                <th style="width:75px;text-align:center;" @onclick='() => Sort("size")'>Size</th>
-                                <th style="width:120px;text-align:center;" @onclick='() => Sort("calc")' title="Past sprints completed work + current sprint original estimate">Calc Size</th>
-                                <th style="width:75px;text-align:center;" @onclick='() => Sort("orig")'>Original</th>
-                                <th style="width:75px;text-align:center;" @onclick='() => Sort("rem")'>Remaining</th>
-                                <th style="width:75px;text-align:center;" @onclick='() => Sort("done")'>Completed</th>
-                                <th style="width:75px;text-align:center;" @onclick='() => Sort("rev")'>Revised</th>
-                                <th style="width:60px;text-align:center;">Δ</th>
+                                <th class="sc-c-id" aria-sort="@AriaSort("id")"><button type="button" class="sc-sort" @onclick='() => Sort("id")'>ID</button></th>
+                                <th aria-sort="@AriaSort("title")"><button type="button" class="sc-sort" @onclick='() => Sort("title")'>Title</button></th>
+                                <th class="sc-c-state" aria-sort="@AriaSort("state")"><button type="button" class="sc-sort" @onclick='() => Sort("state")'>State</button></th>
+                                <th class="sc-c-user" aria-sort="@AriaSort("assigned")"><button type="button" class="sc-sort" @onclick='() => Sort("assigned")'>Assigned</button></th>
+                                <th class="sc-c-size" aria-sort="@AriaSort("size")"><button type="button" class="sc-sort" @onclick='() => Sort("size")'>Size</button></th>
+                                <th class="sc-c-calc" aria-sort="@AriaSort("calc")" title="Past sprints completed work + current sprint original estimate"><button type="button" class="sc-sort" @onclick='() => Sort("calc")'>Calc Size</button></th>
+                                <th class="sc-c-orig" aria-sort="@AriaSort("orig")"><button type="button" class="sc-sort" @onclick='() => Sort("orig")'>Original</button></th>
+                                <th class="sc-c-rem" aria-sort="@AriaSort("rem")"><button type="button" class="sc-sort" @onclick='() => Sort("rem")'>Remaining</button></th>
+                                <th class="sc-c-done" aria-sort="@AriaSort("done")"><button type="button" class="sc-sort" @onclick='() => Sort("done")'>Completed</button></th>
+                                <th class="sc-c-rev" aria-sort="@AriaSort("rev")"><button type="button" class="sc-sort" @onclick='() => Sort("rev")'>Revised</button></th>
+                                <th class="sc-c-delta">Δ</th>
                             </tr></thead>
                             <tbody>
                                 @if (filteredItems.Count == 0)
@@ -156,73 +131,72 @@
                                 {
                                     var hasSize = pi.WorkItem.Effort.HasValue && pi.WorkItem.Effort.Value > 0;
                                     var mismatch = hasSize && pi.TaskTotalEstimate > 0 && Math.Abs(pi.SizeMismatch) > 0.01;
-                                    <tr style="background:@RowBackground(hasSize, mismatch);border-top:2px solid rgba(255,255,255,.08);">
+                                    <tr class="sc-req @SizeTone(hasSize, mismatch)">
                                         <td>
-                                            <span @onclick="() => ToggleExpand(pi)"
-                                                  style="cursor:pointer;display:inline-block;width:13px;color:var(--muted);user-select:none;transition:transform .12s;transform:@(pi.IsExpanded ? "rotate(90deg)" : "none");"
-                                                  title="@(pi.IsExpanded ? "Collapse tasks" : "Expand tasks")">▸</span>
-                                            <a class="id-link" href="@TfsApi.WorkItemUrl(pi.WorkItem.Project, pi.WorkItem.Id)" target="_blank" rel="noopener" style="font-weight:700;">#@pi.WorkItem.Id</a>
+                                            <button type="button" @key="pi" class="sc-exp @(pi.IsExpanded ? "open" : "")" @onclick="() => ExpanderClicked(pi)"
+                                                    aria-expanded="@(pi.IsExpanded ? "true" : "false")" aria-label="Tasks of #@pi.WorkItem.Id"
+                                                    title="@(pi.IsExpanded ? "Collapse tasks" : "Expand tasks")">▸</button>
+                                            <a class="id-link sc-req-id" href="@TfsApi.WorkItemUrl(pi.WorkItem.Project, pi.WorkItem.Id)" target="_blank" rel="noopener">#@pi.WorkItem.Id</a>
                                         </td>
                                         <td>
-                                            <span class="type-pill @WorkItemBadges.TypeClass(pi.WorkItem.Type)">@pi.WorkItem.Type</span>
-                                            <div class="cell-title" style="font-weight:700;">@pi.WorkItem.Title</div>
-                                            <div class="cell-meta">@pi.Tasks.Count task(s)</div>
+                                            <div class="cell-title sc-req-title" title="@pi.WorkItem.Title">@pi.WorkItem.Title</div>
+                                            <div class="cell-meta"><span class="type-pill @WorkItemBadges.TypeClass(pi.WorkItem.Type)">@pi.WorkItem.Type</span> · @pi.Tasks.Count task(s)</div>
                                         </td>
                                         <td><span class="state-pill @WorkItemBadges.StateClass(pi.WorkItem.State)">@pi.WorkItem.State</span></td>
-                                        <td style="font-size:.66rem;">@pi.WorkItem.Assigned</td>
-                                        <td style="text-align:center;">
+                                        <td class="sc-user" title="@pi.WorkItem.Assigned">@pi.WorkItem.Assigned</td>
+                                        <td class="sc-mid">
                                             @if (pi.EditingSize != null)
                                             {
-                                                <div style="display:flex;align-items:center;gap:3px;justify-content:center;">
+                                                <div class="sc-size-edit">
                                                     @* Bound on every keystroke: the browser raises keydown before change, so Enter would save the old size. *@
-                                                    <input type="number" step="0.5" min="0"
+                                                    <input type="number" step="0.5" min="0" class="sc-size-input" id="@SizeInputId(pi)" aria-label="New size for #@pi.WorkItem.Id"
                                                            @bind="pi.EditingSize" @bind:event="oninput"
-                                                           @onkeydown="e => OnSizeKeyDown(e, pi)"
-                                                           style="width:55px;background:rgba(0,0,0,.3);border:1px solid var(--accent);border-radius:5px;color:var(--text);font-size:.72rem;padding:2px 4px;font-family:var(--mono);text-align:center;"
-                                                           autofocus />
-                                                    <button class="btn-sm" style="padding:2px 6px;height:22px;" @onclick="() => SaveSize(pi)" disabled="@pi.Saving">
-                                                        @if (pi.Saving) { <span class="spin spin-sm" style="width:8px;height:8px;"></span> } else { <span>✓</span> }
+                                                           @onkeydown="e => OnSizeKeyDown(e, pi)" />
+                                                    <button type="button" class="sc-mini" aria-label="Save the size of #@pi.WorkItem.Id" @onclick="() => SaveSize(pi)" disabled="@pi.Saving">
+                                                        @if (pi.Saving) { <span class="spin spin-sm"></span> } else { <span aria-hidden="true">✓</span> }
                                                     </button>
-                                                    <button class="btn-sm" style="padding:2px 6px;height:22px;" @onclick="() => pi.EditingSize = null">✕</button>
+                                                    <button type="button" class="sc-mini" aria-label="Keep the size of #@pi.WorkItem.Id" @onclick="() => CancelSizeEdit(pi)"><span aria-hidden="true">✕</span></button>
                                                 </div>
                                             }
                                             else
                                             {
-                                                <span style="font-family:var(--mono);font-size:.76rem;font-weight:700;cursor:pointer;color:@(hasSize ? "var(--accent2)" : "var(--red)");padding:3px 8px;border-radius:5px;background:rgba(255,255,255,.06);"
-                                                      @onclick="() => pi.BeginSizeEdit()" title="Click to edit">
+                                                @* A quiet well marks the size as the one value here that can be edited. *@
+                                                <button type="button" class="sc-size @(hasSize ? "" : "unset")" id="@SizeButtonId(pi)" @onclick="() => BeginSizeEdit(pi)" title="Click to edit"
+                                                        aria-label="Size of #@pi.WorkItem.Id: @(hasSize ? pi.WorkItem.Effort!.Value.ToString("0.##") : "not set"). Edit">
                                                     @(hasSize ? pi.WorkItem.Effort!.Value.ToString("0.##") : "Not set")
-                                                </span>
+                                                </button>
                                             }
                                         </td>
-                                        <td style="text-align:center;">
+                                        <td class="sc-mid">
                                             @if (pi.CalculatedSize > 0)
                                             {
-                                                <div style="display:flex;align-items:center;gap:4px;justify-content:center;">
-                                                    <span style="font-family:var(--mono);font-size:.74rem;font-weight:700;color:var(--purple);"
+                                                <div class="sc-calc">
+                                                    <span class="sc-calc-n"
                                                           title="@($"{pi.PastSprintCompleted:0.##}h completed (past sprints) + {pi.CurrentSprintOriginal:0.##}h original estimate (this sprint)")">
                                                         @pi.CalculatedSize.ToString("0.##")
                                                     </span>
-                                                    <button class="btn-sm" style="padding:2px 6px;height:22px;@(pi.CalcDiffersFromCurrent ? "border-color:rgba(167,139,250,.5);color:#c4b5fd;" : "opacity:.4;")"
+                                                    <button type="button" class="sc-mini sc-apply-one @(pi.CalcDiffersFromCurrent ? "differs" : "")"
                                                             @onclick="() => ApplyCalculatedSize(pi)" disabled="@(pi.Saving || !pi.CalcDiffersFromCurrent)"
-                                                            title="@(pi.CalcDiffersFromCurrent ? $"Apply calculated size {pi.CalculatedSize:0.##} to #{pi.WorkItem.Id}" : "Size already matches the calculated value")">
-                                                        @if (pi.Saving) { <span class="spin spin-sm" style="width:8px;height:8px;"></span> } else { <span>→</span> }
+                                                            title="@(pi.CalcDiffersFromCurrent ? $"Apply calculated size {pi.CalculatedSize:0.##} to #{pi.WorkItem.Id}" : "Size already matches the calculated value")"
+                                                            aria-label="Apply calculated size @pi.CalculatedSize.ToString("0.##") to #@pi.WorkItem.Id">
+                                                        @if (pi.Saving) { <span class="spin spin-sm"></span> } else { <span aria-hidden="true">→</span> }
                                                     </button>
                                                 </div>
                                             }
                                         </td>
-                                        <td style="text-align:center;font-family:var(--mono);font-size:.7rem;color:var(--cyan);font-weight:700;">
+                                        <td class="sc-n">
                                             @(pi.TaskTotalEstimate > 0 ? pi.TaskTotalEstimate.ToString("0.##") : "")
                                         </td>
-                                        <td style="text-align:center;font-family:var(--mono);font-size:.7rem;color:var(--amber);font-weight:700;">
+                                        <td class="sc-n">
                                             @(pi.TaskTotalRemaining > 0 ? pi.TaskTotalRemaining.ToString("0.##") : "")
                                         </td>
-                                        <td style="text-align:center;font-family:var(--mono);font-size:.7rem;color:var(--green);font-weight:700;">
+                                        <td class="sc-n">
                                             @(pi.TaskTotalCompleted > 0 ? pi.TaskTotalCompleted.ToString("0.##") : "")
                                         </td>
-                                        <td style="text-align:center;font-family:var(--mono);font-size:.7rem;color:var(--purple);font-weight:700;">
+                                        <td class="sc-n">
                                             @(pi.TaskTotalRevised > 0 ? pi.TaskTotalRevised.ToString("0.##") : "")
                                         </td>
-                                        <td style="text-align:center;font-family:var(--mono);font-size:.66rem;font-weight:700;color:@SizeDifferenceColour(hasSize, mismatch);">
+                                        <td class="sc-delta @SizeTone(hasSize, mismatch)">
                                             @if (hasSize && pi.TaskTotalEstimate > 0)
                                             {
                                                 @(pi.SizeMismatch > 0 ? "+" : "")@pi.SizeMismatch.ToString("0.##")
@@ -236,36 +210,35 @@
                                         {
                                             var rev = (t.CompletedWork ?? 0) + (t.RemainingWork ?? 0);
                                             var isCurrent = pi.IsCurrentSprintTask(t);
-                                            <tr style="background:rgba(0,0,0,.12);">
-                                                <td style="padding-left:24px;">
-                                                    <span style="color:var(--muted);font-size:.6rem;margin-right:4px;">↳</span>
+                                            <tr class="sc-task @RowArrival(pi)">
+                                                <td class="sc-task-id">
+                                                    <span class="sc-arrow">↳</span>
                                                     <a class="id-link" href="@TfsApi.WorkItemUrl(t.Project, t.Id)" target="_blank" rel="noopener">#@t.Id</a>
                                                 </td>
                                                 <td>
-                                                    <span class="type-pill" style="background:rgba(148,152,179,.12);color:var(--muted2);font-size:.52rem;">Task</span>
-                                                    <div style="font-size:.7rem;color:var(--text);">@t.Title</div>
-                                                    <div class="cell-meta" style="font-size:.56rem;">
-                                                        @(string.IsNullOrEmpty(t.Sprint) ? "(no sprint)" : t.Sprint)
-                                                        @if (isCurrent) { <span style="color:var(--purple);">· est → size</span> }
-                                                        else { <span style="color:var(--green);">· completed → size</span> }
+                                                    <div class="sc-task-title" title="@t.Title">@t.Title</div>
+                                                    <div class="cell-meta sc-task-meta">
+                                                        Task · @(string.IsNullOrEmpty(t.Sprint) ? "(no sprint)" : t.Sprint)
+                                                        @* Which of this task's numbers adds to the size; that number is underlined in its column. *@
+                                                        <span class="sc-basis">@(isCurrent ? "· est → size" : "· completed → size")</span>
                                                     </div>
                                                 </td>
                                                 <td><span class="state-pill @WorkItemBadges.StateClass(t.State)">@t.State</span></td>
-                                                <td style="font-size:.64rem;color:var(--muted2);">@t.Assigned</td>
+                                                <td class="sc-user sc-dim" title="@t.Assigned">@t.Assigned</td>
                                                 <td></td>
                                                 <td></td>
-                                                <td style="text-align:center;font-family:var(--mono);font-size:.66rem;color:var(--cyan);@(isCurrent ? "font-weight:700;text-decoration:underline;" : "")">@(t.OriginalEstimate?.ToString("0.##") ?? "")</td>
-                                                <td style="text-align:center;font-family:var(--mono);font-size:.66rem;color:var(--amber);">@(t.RemainingWork?.ToString("0.##") ?? "")</td>
-                                                <td style="text-align:center;font-family:var(--mono);font-size:.66rem;color:var(--green);@(isCurrent ? "" : "font-weight:700;text-decoration:underline;")">@(t.CompletedWork?.ToString("0.##") ?? "")</td>
-                                                <td style="text-align:center;font-family:var(--mono);font-size:.66rem;color:var(--purple);">@(rev > 0 ? rev.ToString("0.##") : "")</td>
+                                                <td class="sc-n @(isCurrent ? "sc-counted" : "")">@(t.OriginalEstimate?.ToString("0.##") ?? "")</td>
+                                                <td class="sc-n">@(t.RemainingWork?.ToString("0.##") ?? "")</td>
+                                                <td class="sc-n @(isCurrent ? "" : "sc-counted")">@(t.CompletedWork?.ToString("0.##") ?? "")</td>
+                                                <td class="sc-n">@(rev > 0 ? rev.ToString("0.##") : "")</td>
                                                 <td></td>
                                             </tr>
                                         }
 
                                         @if (pi.Tasks.Count == 0)
                                         {
-                                            <tr style="background:rgba(0,0,0,.12);">
-                                                <td colspan="11" style="padding:8px 24px;font-size:.66rem;color:var(--muted);font-style:italic;">
+                                            <tr class="sc-task @RowArrival(pi)">
+                                                <td colspan="11" class="sc-no-tasks">
                                                     ↳ No tasks linked to this work item.
                                                 </td>
                                             </tr>
@@ -282,7 +255,7 @@
 
     @if (!string.IsNullOrEmpty(statusMsg))
     {
-        <div style="position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:1000;padding:10px 18px;border-radius:var(--r2);font-size:.74rem;border:1px solid @(statusOk ? "rgba(52,211,153,.3)" : "rgba(248,113,113,.3)");background:@(statusOk ? "rgba(52,211,153,.1)" : "rgba(248,113,113,.1)");color:@(statusOk ? "var(--green)" : "var(--red)");backdrop-filter:blur(10px);">
+        <div class="sc-toast @(statusOk ? "ok" : "bad")" role="status">
             @statusMsg
         </div>
     }

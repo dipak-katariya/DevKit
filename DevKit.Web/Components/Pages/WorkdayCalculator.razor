@@ -1,98 +1,71 @@
 @page "/workday"
 @implements IDisposable
 @inject IJSRuntime JS
+@inject ILogger<WorkdayCalculator> Logger
+@inject TimeProvider Clock
 
-<div style="display:flex;flex-direction:column;flex:1;overflow:auto;gap:14px;">
-    <!-- Header row -->
-    <div class="gpanel">
+@* One panel: the entries on the left, and on the right how far through the day they put you. The figures update
+   every second while the last line is an open IN. *@
+<div class="wc-page">
+    <h1 class="sr-only">Workday Calculator</h1>
+    <section class="gpanel wc-panel" aria-labelledby="wcTitle">
         <div class="phead">
-            <span class="ptitle">⏱ Workday Calculator</span>
-            <span style="font-size:.64rem;color:var(--muted);">Calculate your workday and see live progress</span>
+            <h2 class="ptitle" id="wcTitle"><span aria-hidden="true">⏱</span> Workday Calculator</h2>
+            <span class="wc-lead">Calculate your workday and see live progress</span>
         </div>
-        <div class="pbody">
-            <div style="display:flex;gap:14px;flex-wrap:wrap;">
-                <!-- Day Type & Entry -->
-                <div style="flex:1.3;min-width:320px;">
-                    <div style="margin-bottom:12px;">
-                        <div class="f-label">Workday Type</div>
-                        <div style="display:flex;gap:4px;">
-                            <button class="btn-sm @(dayType == "full" ? "btn-sm-active" : "")" @onclick='() => SetDayType("full")'>Full Day (8h 30m)</button>
-                            <button class="btn-sm @(dayType == "half" ? "btn-sm-active" : "")" @onclick='() => SetDayType("half")'>Half Day (4h 30m)</button>
-                            <button class="btn-sm @(dayType == "move" ? "btn-sm-active" : "")" @onclick='() => SetDayType("move")'>Movement (7h 30m)</button>
-                        </div>
-                    </div>
-
-                    <div class="f-label">Time Entries (e.g., 09:30:00 or 9:30 AM)</div>
-                    <p style="font-size:.6rem;color:var(--muted);margin-bottom:6px;">
-                        Enter your clock-in/out times, one per line. Last line may be an open IN if you're clocked in.
-                    </p>
-                    <textarea class="fi" id="wcEntries" style="height:160px;resize:vertical;font-family:var(--mono);font-size:.72rem;line-height:1.5;"
-                              spellcheck="false"
-                              placeholder="09:30:00 AM&#10;12:45:00 PM&#10;01:30:00 PM"
-                              @oninput="OnEntriesInput" @bind="entriesText"></textarea>
-                    <p style="font-size:.56rem;color:var(--muted);margin-top:4px;">
-                        Order: IN, OUT, IN, OUT… Formats: <code style="font-size:.56rem;color:var(--cyan);">9:22</code>,
-                        <code style="font-size:.56rem;color:var(--cyan);">9:22:22</code>,
-                        <code style="font-size:.56rem;color:var(--cyan);">9:22 AM</code>,
-                        <code style="font-size:.56rem;color:var(--cyan);">13:05</code>
-                    </p>
-                </div>
-
-                <!-- Donut -->
-                <div style="flex:1;min-width:240px;display:flex;flex-direction:column;align-items:center;justify-content:center;">
-                    <div class="f-label" style="margin-bottom:8px;">Completion %</div>
-                    <div style="position:relative;width:180px;height:180px;">
-                        <svg viewBox="0 0 36 36" style="width:100%;height:100%;transform:rotate(-90deg);">
-                            <circle cx="18" cy="18" r="15.9" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="2.5"/>
-                            <circle cx="18" cy="18" r="15.9" fill="none" stroke="var(--accent)"
-                                    stroke-width="2.5" stroke-linecap="round"
-                                    stroke-dasharray="@DashArray" stroke-dashoffset="0"
-                                    style="transition:stroke-dasharray .5s ease;"/>
-                        </svg>
-                        <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;">
-                            <span style="font-size:1.6rem;font-weight:800;color:var(--text);">@Math.Round(percent)%</span>
-                            <span style="font-size:.6rem;color:var(--muted);">Live progress</span>
-                        </div>
+        <div class="pbody wc-body">
+            <div class="wc-entry">
+                <div class="f-row" role="group" aria-labelledby="wcTypeLabel">
+                    <div class="f-label" id="wcTypeLabel">Workday Type</div>
+                    <div class="cm-seg wc-seg">
+                        <button type="button" class="cm-seg-btn @(dayType == "full" ? "on" : "")" aria-pressed="@(dayType == "full" ? "true" : "false")" @onclick='() => SetDayType("full")'>Full Day (8h 30m)</button>
+                        <button type="button" class="cm-seg-btn @(dayType == "half" ? "on" : "")" aria-pressed="@(dayType == "half" ? "true" : "false")" @onclick='() => SetDayType("half")'>Half Day (4h 30m)</button>
+                        <button type="button" class="cm-seg-btn @(dayType == "move" ? "on" : "")" aria-pressed="@(dayType == "move" ? "true" : "false")" @onclick='() => SetDayType("move")'>Movement (7h 30m)</button>
                     </div>
                 </div>
+
+                <label class="f-label" for="wcEntries">Time Entries (e.g., 09:30:00 or 9:30 AM)</label>
+                <p class="wc-hint" id="wcEntriesHint">Enter your clock-in/out times, one per line. Last line may be an open IN if you're clocked in.</p>
+                <textarea class="fi wc-entries" id="wcEntries" spellcheck="false" aria-describedby="wcEntriesHint wcFormats"
+                          placeholder="@EntriesExample"
+                          @oninput="OnEntriesInput" @bind="entriesText"></textarea>
+                <p class="wc-hint" id="wcFormats">
+                    Order: IN, OUT, IN, OUT… Formats: <code>9:22</code>, <code>9:22:22</code>, <code>9:22 AM</code>, <code>13:05</code>
+                </p>
+                @if (problem is not null) { <div class="notice warn wc-problem" role="alert">⚠ @problem</div> }
+            </div>
+
+            <div class="wc-result">
+                <div class="wc-ring" role="progressbar" aria-label="Completion %" aria-valuemin="0" aria-valuemax="100" aria-valuenow="@Math.Round(percent)">
+                    <svg viewBox="0 0 36 36" aria-hidden="true">
+                        <circle class="wc-ring-track" cx="18" cy="18" r="15.9" />
+                        @* At 0% a round line cap would still draw a dot, so the fill waits for some progress. *@
+                        @if (percent > 0)
+                        {
+                            <circle class="wc-ring-fill" cx="18" cy="18" r="15.9" stroke-dasharray="@DashArray" stroke-dashoffset="0" />
+                        }
+                    </svg>
+                    <div class="wc-ring-text">
+                        <span class="wc-pct">@Math.Round(percent)%</span>
+                        <span class="wc-ring-note">Live progress</span>
+                    </div>
+                </div>
+                <h3 class="wc-sub"><span aria-hidden="true">📊</span> Your Daily Summary</h3>
+                @* Three figures read as one summary, not as three cards: the label quiet, the figure in the lead size. *@
+                <dl class="wc-figures">
+                    <div><dt>Total Time Worked</dt><dd>@workedStr</dd></div>
+                    <div><dt>Remaining Time</dt><dd>@remainStr</dd></div>
+                    <div><dt>Estimated Departure</dt><dd>@departStr</dd></div>
+                </dl>
             </div>
         </div>
-    </div>
-
-    <!-- Summary tiles -->
-    <div class="gpanel">
-        <div class="phead">
-            <span class="ptitle">📊 Your Daily Summary</span>
-        </div>
-        <div class="pbody">
-            <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:12px;">
-                <div class="wc-tile">
-                    <div class="wc-tile-icon" style="background:rgba(16,185,129,.08);border-color:rgba(16,185,129,.2);">⏱</div>
-                    <div>
-                        <div style="font-size:.58rem;color:var(--muted);">Total Time Worked</div>
-                        <div style="font-size:1rem;font-weight:700;">@workedStr</div>
-                    </div>
-                </div>
-                <div class="wc-tile">
-                    <div class="wc-tile-icon" style="background:rgba(251,191,36,.08);border-color:rgba(251,191,36,.2);">⏳</div>
-                    <div>
-                        <div style="font-size:.58rem;color:var(--muted);">Remaining Time</div>
-                        <div style="font-size:1rem;font-weight:700;">@remainStr</div>
-                    </div>
-                </div>
-                <div class="wc-tile">
-                    <div class="wc-tile-icon" style="background:rgba(96,165,250,.08);border-color:rgba(96,165,250,.2);">➡</div>
-                    <div>
-                        <div style="font-size:.58rem;color:var(--muted);">Estimated Departure</div>
-                        <div style="font-size:1rem;font-weight:700;">@departStr</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
+    </section>
 </div>
 
 @code {
+    // Shown in the empty box, one entry per line, as the hint above it asks.
+    private const string EntriesExample = "09:30:00 AM\n12:45:00 PM\n01:30:00 PM";
+
     private string dayType = "full";
     private string entriesText = "";
     private double percent;
@@ -100,6 +73,21 @@
     private string remainStr = "08h 30m 00s";
     private string departStr = "Not Clocked In";
     private System.Threading.Timer? liveTimer;
+
+    // A day has a few clock-ins and outs. Far more lines than this is a paste gone wrong, and it would overflow the sums.
+    private const int MaxEntries = 48;
+
+    // Enough of a bad line to find it in the box, without a pasted paragraph filling the notice.
+    private const int MaxQuoted = 24;
+
+    // A clock-in typed a few minutes ahead of the clock counts as just started, not as a time still to come.
+    private const int ClockInGraceMinutes = 5;
+
+    // Why the figures cannot be worked out, shown under the entries; null while they can.
+    private string? problem;
+
+    // The entries the last failure was logged for: the figures refresh every second, and one failure is logged once.
+    private string? loggedFailureFor;
 
     private string DashArray => $"{(percent / 100.0 * 100.0):F1} {(100.0 - percent / 100.0 * 100.0):F1}";
 
@@ -136,7 +124,7 @@
     {
         try
         {
-            var now = DateTime.Now;
+            var now = Clock.GetLocalNow().DateTime;
             var baseDate = now.Date;
             var lines = (entriesText ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
                 .Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
@@ -144,35 +132,45 @@
             if (lines.Count == 0)
             {
                 percent = 0; workedStr = "00h 00m 00s"; remainStr = FmtHms(TargetSec); departStr = "Not Clocked In";
+                problem = null;
+                return;
+            }
+            if (lines.Count > MaxEntries)
+            {
+                ShowUnknown($"Too many lines. Keep to {MaxEntries}, one clock-in or clock-out time per line.");
                 return;
             }
 
-            var times = lines.Select(l => ParseTime(l, baseDate)).Where(t => t.HasValue).Select(t => t!.Value).ToList();
-            if (times.Count == 0) { percent = 0; workedStr = "Unknown"; remainStr = "Unknown"; departStr = "No valid times"; return; }
-
-            var intervals = new List<(DateTime In, DateTime Out)>();
-            DateTime? openIn = null;
-
-            for (int i = 0; i < times.Count; i += 2)
+            // Skipping a line that is not a time would swap IN and OUT on every line after it, so one bad line stops the sums.
+            var badLine = lines.FindIndex(l => ParseTime(l, baseDate) is null);
+            if (badLine >= 0)
             {
-                var inTime = times[i];
-                if (i + 1 < times.Count)
-                {
-                    var outTime = times[i + 1];
-                    if (outTime < inTime) outTime = outTime.AddDays(1);
-                    intervals.Add((inTime, outTime));
-                }
-                else
-                {
-                    openIn = inTime;
-                }
+                ShowUnknown($"\"{Shorten(lines[badLine])}\" is not a time. Write each time on its own line, such as 9:30 or 9:30 AM.");
+                return;
+            }
+            var times = lines.Select(l => ParseTime(l, baseDate)!.Value).ToList();
+
+            // Each time follows the one above it. A step back used to be read as crossing midnight, so a slip such as
+            // 9:00 AM under 9:30 AM counted 23h 30m worked.
+            var stepBack = FirstStepBack(times);
+            if (stepBack > 0)
+            {
+                ShowUnknown($"\"{Shorten(lines[stepBack])}\" is earlier than \"{Shorten(lines[stepBack - 1])}\" above it. Write the times in the order they happened.");
+                return;
             }
 
-            double totalWork = intervals.Sum(iv => (iv.Out - iv.In).TotalSeconds);
+            var (totalWork, openIn) = SumPairs(times);
+            // An open IN still to come used to be read as yesterday's, which added most of a day.
+            if (openIn > now.AddMinutes(ClockInGraceMinutes))
+            {
+                ShowUnknown($"\"{Shorten(lines[^1])}\" has not come yet. The last line is when you clocked in, so it must be earlier than now.");
+                return;
+            }
+            problem = null;
+
             if (openIn.HasValue)
             {
-                var n = now < openIn.Value ? now.AddDays(1) : now;
-                totalWork += (n - openIn.Value).TotalSeconds;
+                totalWork += Math.Max(0, (now - openIn.Value).TotalSeconds);
             }
 
             var remaining = TargetSec - totalWork;
@@ -193,8 +191,46 @@
         }
         catch (Exception ex)
         {
-            workedStr = "Unknown"; remainStr = "Unknown"; departStr = ex.Message;
+            // The checks above leave nothing known to throw; this is the last resort, and it says nothing technical.
+            if (loggedFailureFor != entriesText)
+            {
+                loggedFailureFor = entriesText;
+                Logger.LogError(ex, "The workday figures could not be worked out from the entries typed");
+            }
+            ShowUnknown("These times could not be worked out. Check that each line holds one time, such as 9:30 or 9:30 AM.");
         }
+    }
+
+    private static string Shorten(string line) => line.Length > MaxQuoted ? line[..MaxQuoted] + "…" : line;
+
+    // The first line whose time comes before the line above it, or -1 when each time follows the one before.
+    private static int FirstStepBack(List<DateTime> times)
+    {
+        for (var i = 1; i < times.Count; i++)
+        {
+            if (times[i] < times[i - 1])
+            {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    // The seconds inside each IN and OUT pair, and the last IN when no OUT follows it yet.
+    private static (double Seconds, DateTime? OpenIn) SumPairs(List<DateTime> times)
+    {
+        double seconds = 0;
+        for (var i = 0; i + 1 < times.Count; i += 2)
+        {
+            seconds += (times[i + 1] - times[i]).TotalSeconds;
+        }
+        return (seconds, times.Count % 2 == 1 ? times[^1] : null);
+    }
+
+    private void ShowUnknown(string why)
+    {
+        percent = 0; workedStr = "Unknown"; remainStr = "Unknown"; departStr = "Unknown";
+        problem = why;
     }
 
     private static DateTime? ParseTime(string raw, DateTime baseDate)

@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Components.Web;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.JSInterop;
 using Xunit;
 
 namespace DevKit.Tests;
@@ -36,7 +37,11 @@ public sealed partial class SizeCheckPanelTests : IDisposable
     private static readonly TfsArea Area = new() { Name = "Web", Path = @"\Contoso\Area\Web", Project = Project };
 
     private readonly RecordingTfsHandler _tfs = new() { Respond = AnswerSprint };
+    private const string FocusCall = "devKit.focusById";
+
     private readonly RecordingLogger<SizeCheckPanel> _log = new();
+    private readonly RecordingJsRuntime _js = new();
+    private readonly ManualTimers _timers = new();
     private readonly HttpClient _http;
     private readonly ComponentHarness _harness;
 
@@ -50,6 +55,8 @@ public sealed partial class SizeCheckPanelTests : IDisposable
         {
             services.AddSingleton(api);
             services.AddSingleton<ILogger<SizeCheckPanel>>(_log);
+            services.AddSingleton<IJSRuntime>(_js);
+            services.AddSingleton<TimeProvider>(_timers);
         });
     }
 
@@ -98,6 +105,32 @@ public sealed partial class SizeCheckPanelTests : IDisposable
         Assert.DoesNotContain(await _harness.ElementsAsync(panel), IsSizeInput);
     }
 
+    // The control that had focus leaves the page as the editor opens or closes, so the panel moves focus itself.
+    [Theory]
+    [InlineData("Enter")]
+    [InlineData("Escape")]
+    public async Task Focus_goes_into_the_editor_and_back_to_the_size_once_it_closes(string key)
+    {
+        var panel = await OpenSizeEditorAsync();
+        Assert.Equal("scSizeIn" + RequirementId, LastFocusedId());
+
+        await TypeAsync(panel, "8");
+        await PressAsync(panel, key);
+
+        Assert.Equal("scSize" + RequirementId, LastFocusedId());
+    }
+
+    [Fact]
+    public async Task A_focus_move_the_browser_refuses_is_logged_and_the_editor_still_opens()
+    {
+        _js.FailOn = FocusCall;
+
+        await OpenSizeEditorAsync();
+
+        var entry = Assert.Single(_log.Entries, e => e.Level == LogLevel.Error);
+        Assert.IsType<JSException>(entry.Exception);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("-1")]
@@ -112,6 +145,27 @@ public sealed partial class SizeCheckPanelTests : IDisposable
         Assert.DoesNotContain(_tfs.Sent, s => s.Method == "PATCH");
         Assert.Contains(await _harness.ElementsAsync(panel), e => e.Text.Contains("Invalid size value", StringComparison.Ordinal));
         Assert.Contains(await _harness.ElementsAsync(panel), IsSizeInput);
+    }
+
+    // Each note used to start its own timer and none was stopped, so the first save's timer cleared the second save's
+    // note before its own two seconds were up.
+    [Fact]
+    public async Task A_newer_note_stays_its_full_time_when_an_older_one_runs_out()
+    {
+        var panel = await OpenSizeEditorAsync();
+        await TypeAsync(panel, "8");
+        await PressAsync(panel, "Enter");
+        _timers.Advance(TimeSpan.FromMilliseconds(1500));
+
+        Assert.True(await _harness.RaiseAsync(panel, e => e.Attribute("title") == "Click to edit", "onclick", new MouseEventArgs()));
+        await TypeAsync(panel, "9");
+        await PressAsync(panel, "Enter");
+
+        _timers.Advance(TimeSpan.FromMilliseconds(1000));
+        Assert.Contains(await _harness.ElementsAsync(panel), e => IsSaveNote(e) && e.Text.Contains("size to 9", StringComparison.Ordinal));
+
+        _timers.Advance(TimeSpan.FromMilliseconds(1000));
+        Assert.DoesNotContain(await _harness.ElementsAsync(panel), IsSaveNote);
     }
 
     private static bool IsSizeInput(ComponentHarness.Element e) => e.Name == "input" && e.Attribute("type") == "number";
@@ -151,6 +205,9 @@ public sealed partial class SizeCheckPanelTests : IDisposable
             await _harness.RaiseAsync(panel, IsSizeInput, "oninput", new ChangeEventArgs { Value = typed[..length] });
         }
     }
+
+    private string? LastFocusedId() =>
+        _js.Calls.Where(c => c.Identifier == FocusCall).Select(c => c.Args[0] as string).LastOrDefault();
 
     private async Task PressAsync(int panel, string key) =>
         Assert.True(await _harness.RaiseAsync(panel, IsSizeInput, "onkeydown", new KeyboardEventArgs { Key = key }));

@@ -1,5 +1,5 @@
 @inherits LayoutComponentBase
-@implements IDisposable
+@implements IAsyncDisposable
 @inject SettingsService Settings
 @inject UserSession Session
 @inject AuthenticationStateProvider Authentication
@@ -10,21 +10,33 @@
 <PageTitle>@ToolCatalog.PageTitle(new Uri(Nav.Uri).AbsolutePath)</PageTitle>
 
 <div class="devkit-app">
-    <aside class="sidebar">
+    @* The first Tab stop, past the sidebar to the page. It shows only while it has keyboard focus. *@
+    <a class="skip-link" href="#main" @onclick="SkipToContentAsync" @onclick:preventDefault>Skip to content</a>
+
+    @* At 900px and narrower the sidebar is a drawer the menu button opens (tools.css). While it is open the page
+       behind it is inert, so Tab stays in the drawer, and Escape, a tap outside or a followed link closes it. *@
+    <aside class="sidebar @(navOpen ? "open" : "")" id="sidebar" tabindex="-1" aria-label="DevKit"
+           @ref="sidebar" @onkeydown="OnSidebarKeyDown">
         <div class="sidebar-profile">
             <div class="profile-avatar">DK</div>
             <div class="profile-meta">
                 <span class="profile-name">DevKit</span>
                 <span class="profile-sub">@ServerLabel</span>
             </div>
-            <span class="profile-bell"><Icon Inner="@Icons.Bell" /></span>
         </div>
-        <div class="sidebar-sep"></div>
         <NavMenu />
     </aside>
+    @if (navOpen)
+    {
+        <div class="nav-scrim" @onclick="CloseNav"></div>
+    }
 
-    <div class="main">
+    <div class="main" inert="@navOpen">
         <header class="topbar">
+            <button class="tb-btn tb-menu" aria-label="Menu" aria-controls="sidebar"
+                    aria-expanded="@(navOpen ? "true" : "false")" @ref="menuButton" @onclick="OpenNav">
+                <Icon Inner="@Icons.Menu" />
+            </button>
             <div class="tb-nav">
                 <button class="tb-btn" title="Back" @onclick="GoBack"><Icon Inner="@Icons.ChevronLeft" /></button>
                 <button class="tb-btn" title="Forward" @onclick="GoForward"><Icon Inner="@Icons.ChevronRight" /></button>
@@ -34,16 +46,16 @@
             <div class="tb-actions">
                 @if (Session.IsReady && (Settings.LastSaveError ?? Settings.LoadProblem) is { } settingsProblem)
                 {
-                    <a class="conn-pill err" href="settings" title="@settingsProblem" style="text-decoration:none;">
+                    <a class="conn-pill err" href="settings" title="@settingsProblem">
                         <span class="dot"></span>
-                        <span>Settings problem</span>
+                        <span class="conn-label">Settings problem</span>
                     </a>
                 }
                 @if (Session.IsReady)
                 {
                     <div class="conn-pill @(Settings.IsConfigured ? "ok" : "err")">
                         <span class="dot"></span>
-                        <span>@(Settings.IsConfigured ? "Connected" : "Not configured")</span>
+                        <span class="conn-label">@(Settings.IsConfigured ? "Connected" : "Not configured")</span>
                     </div>
                 }
                 @if (Session.User is { } user)
@@ -58,11 +70,15 @@
             </div>
         </header>
 
-        <div class="shell">
+        <main class="shell" id="main" tabindex="-1" @ref="content">
             @if (!Session.IsReady)
             {
                 <div class="setup-guard">
                     <div class="setup-card">
+                        @if (startProblem is null)
+                        {
+                            <span class="spin setup-spin" aria-hidden="true"></span>
+                        }
                         <h2>@(startProblem is null ? "Opening DevKit…" : "DevKit could not open")</h2>
                         <p>@(startProblem ?? "Loading your settings.")</p>
                     </div>
@@ -72,13 +88,10 @@
             {
                 <div class="setup-guard">
                     <div class="setup-card">
-                        <div style="display:flex;justify-content:center;margin-bottom:14px;color:var(--accent2);">
-                            <Icon Inner="@Icons.Settings" CssClass="ic-xl" />
-                        </div>
+                        <div class="setup-icon"><Icon Inner="@Icons.ToolSettings" CssClass="ic-xl" /></div>
                         <h2>Setup Required</h2>
                         <p>@SetupHint</p>
-                        <button class="btn-primary" style="margin-top:18px;width:auto;padding:10px 24px;"
-                                @onclick='() => Nav.NavigateTo("/settings")'>
+                        <button class="btn-primary setup-action" @onclick='() => Nav.NavigateTo("/settings")'>
                             Open Settings
                         </button>
                     </div>
@@ -88,15 +101,34 @@
             {
                 @Body
             }
-        </div>
+        </main>
     </div>
 </div>
 
 @code {
     private static readonly string[] NoSetupPaths = { "", "/markdown", "/workday", "/settings" };
 
+    // tools.css makes the sidebar a drawer at 900px and narrower. Wider than this it is back in the page, so a
+    // drawer still open then (a tablet turned, a window widened) is closed, or the inert page would stay locked.
+    private const string WideScreen = "(min-width: 901px)";
+
+    /// <summary>Where focus goes after the next render, once the drawer has opened or closed.</summary>
+    private enum PendingFocus
+    {
+        None,
+        Drawer,
+        MenuButton
+    }
+
     // Why the settings could not be made ready; null while they load or once they have.
     private string? startProblem;
+
+    private bool navOpen;
+    private PendingFocus pendingFocus;
+    private ElementReference sidebar;
+    private ElementReference menuButton;
+    private ElementReference content;
+    private DotNetObjectReference<MainLayout>? selfRef;
 
     private bool RequiresSetup
     {
@@ -121,6 +153,7 @@
     {
         // The top bar shows the connection and any save problem, so it redraws when Settings saves on another page.
         Settings.Changed += OnSettingsChanged;
+        Nav.LocationChanged += OnLocationChanged;
         if (Session.IsShared)
         {
             Authentication.AuthenticationStateChanged += OnAuthenticationChanged;
@@ -131,14 +164,39 @@
     // page's own dispatcher.
     private void OnSettingsChanged() => _ = InvokeAsync(StateHasChanged);
 
-    /// <summary>Shared mode: the person's settings live in their browser, which only answers once the page is live.</summary>
+    // A link in the drawer was followed, so the drawer has done its job. Focus goes to the new page's heading
+    // (Routes.razor), not back to the menu button.
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e) => _ = InvokeAsync(() =>
+    {
+        if (navOpen)
+        {
+            navOpen = false;
+            StateHasChanged();
+        }
+    });
+
+    /// <summary>
+    /// After every render, focus moves where the drawer asked. After the first, the window's width is watched for
+    /// the drawer and, when needed, the settings are loaded: they may live in the browser, which only answers once
+    /// the page is live.
+    /// </summary>
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!firstRender || Session.IsReady)
+        await MoveFocusAsync();
+        if (!firstRender)
         {
             return;
         }
 
+        await WatchWideScreenAsync();
+        if (!Session.IsReady)
+        {
+            await StartSessionAsync();
+        }
+    }
+
+    private async Task StartSessionAsync()
+    {
         try
         {
             if (!await Session.StartAsync())
@@ -173,9 +231,107 @@
     private async Task GoBack() => await JS.InvokeVoidAsync("devKit.historyBack");
     private async Task GoForward() => await JS.InvokeVoidAsync("devKit.historyForward");
 
-    public void Dispose()
+    private void OpenNav()
+    {
+        navOpen = true;
+        pendingFocus = PendingFocus.Drawer;
+    }
+
+    private void CloseNav()
+    {
+        navOpen = false;
+        pendingFocus = PendingFocus.MenuButton;
+    }
+
+    private void OnSidebarKeyDown(KeyboardEventArgs e)
+    {
+        if (navOpen && e.Key == "Escape")
+        {
+            CloseNav();
+        }
+    }
+
+    /// <summary>Called by app.js when the window grows past the drawer's width while the drawer is open.</summary>
+    [JSInvokable]
+    public Task CloseNavForWideScreen() => InvokeAsync(() =>
+    {
+        if (navOpen)
+        {
+            navOpen = false;
+            StateHasChanged();
+        }
+    });
+
+    private Task SkipToContentAsync() => FocusAsync(content, "page");
+
+    private Task MoveFocusAsync()
+    {
+        var target = pendingFocus;
+        pendingFocus = PendingFocus.None;
+        return target switch
+        {
+            PendingFocus.Drawer => FocusAsync(sidebar, "menu"),
+            PendingFocus.MenuButton => FocusAsync(menuButton, "menu button"),
+            _ => Task.CompletedTask
+        };
+    }
+
+    // Moving focus is a help, not a step the page depends on: if the browser refuses, the person clicks instead,
+    // so the failure is logged and the page carries on. A page that has closed has nothing left to focus.
+    private async Task FocusAsync(ElementReference element, string target)
+    {
+        try
+        {
+            await element.FocusAsync();
+        }
+        catch (JSDisconnectedException ex)
+        {
+            Logger.LogDebug(ex, "The page closed before focus could move to the {Target}", target);
+        }
+        catch (Exception ex) when (ex is JSException or TaskCanceledException)
+        {
+            Logger.LogError(ex, "Focus could not move to the {Target}", target);
+        }
+    }
+
+    private async Task WatchWideScreenAsync()
+    {
+        selfRef = DotNetObjectReference.Create(this);
+        try
+        {
+            await JS.InvokeVoidAsync("devKit.watchWideScreen", WideScreen, selfRef);
+        }
+        catch (JSDisconnectedException ex)
+        {
+            Logger.LogDebug(ex, "The page closed before the menu could watch the window's width");
+        }
+        catch (Exception ex) when (ex is JSException or TaskCanceledException)
+        {
+            Logger.LogError(ex, "The menu could not watch the window's width; a drawer left open while the window grows stays open");
+        }
+    }
+
+    public async ValueTask DisposeAsync()
     {
         Settings.Changed -= OnSettingsChanged;
+        Nav.LocationChanged -= OnLocationChanged;
         Authentication.AuthenticationStateChanged -= OnAuthenticationChanged;
+        if (selfRef is not null)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("devKit.unwatchWideScreen");
+            }
+            catch (JSDisconnectedException ex)
+            {
+                Logger.LogDebug(ex, "The page closed before the width watch was removed");
+            }
+            catch (Exception ex) when (ex is JSException or TaskCanceledException)
+            {
+                Logger.LogError(ex, "The width watch could not be removed");
+            }
+            selfRef.Dispose();
+        }
+        GC.SuppressFinalize(this);
     }
 }

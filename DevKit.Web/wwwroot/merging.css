@@ -2,12 +2,23 @@
    CODE MERGING SHEET
    ═══════════════════════════════════════════════════════ */
 
-.cm-page{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0;overflow:hidden;}
+/* Type roles on this page: --fs-body for titles, names and field values, --fs-meta for labels, headers,
+   chips, counts and ids, monospace only for branch names, commit ids, paths and code. Every digit is
+   tabular, so ids, counts and dates line up in their columns without monospace. */
+.cm-page{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0;overflow:hidden;font-variant-numeric:tabular-nums;}
 
 /* ─── Toolbar ─── */
-.cm-toolbar{flex:0 0 auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);padding:10px 14px;display:flex;flex-direction:column;gap:10px;}
+/* Spatial: the filters are one raised panel above the grid; its fields and tracks sit sunk into it. */
+.cm-toolbar{flex:0 0 auto;background:var(--surface);border-radius:var(--r);box-shadow:var(--rim),var(--elev-1);padding:10px 14px;display:flex;flex-direction:column;gap:8px;}
+.cm-tb-filters{display:flex;flex-direction:column;gap:8px;}
 .cm-tb-row{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px;}
-.cm-fld{display:flex;flex-direction:column;gap:4px;min-width:0;}
+.cm-fld{display:flex;flex-direction:column;gap:2px;min-width:0;}
+/* The labels read as words rather than tiny capitals; the emojis stay. Scoped: .cfg-label is shared. */
+.cm-toolbar .cfg-label{font-size:var(--fs-meta);font-weight:600;text-transform:none;letter-spacing:0;color:var(--muted2);}
+.cm-toolbar .gdd-trigger{font-size:var(--fs-body);}
+.cm-toolbar .cfg-load-btn{font-size:var(--fs-meta);font-weight:600;}
+/* The folded filters' line, shown only on narrow screens (bottom of this file). */
+.cm-tb-mini{display:none;}
 .cm-fld-btn{flex:0 0 auto;margin-left:auto;}
 .cm-hint{font-weight:500;text-transform:none;letter-spacing:0;color:var(--muted);opacity:.75;}
 
@@ -20,66 +31,70 @@
 .cm-bsetup{width:100%;}
 .cm-bsetup-head{
   width:100%;height:30px;display:flex;align-items:center;gap:8px;padding:0 10px;
-  background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);
-  font-family:inherit;font-size:.72rem;cursor:pointer;text-align:left;transition:var(--t);
+  background:var(--bg);border:1px solid transparent;border-radius:10px;box-shadow:var(--well);color:var(--text);
+  font-family:inherit;font-size:var(--fs-meta);cursor:pointer;text-align:left;transition:var(--tr-ui);
 }
-.cm-bsetup-head:hover:not(:disabled){border-color:var(--border2);}
-.cm-bsetup-head.open{border-color:var(--accent-line);box-shadow:0 0 0 3px var(--accent-soft);}
+.cm-bsetup-head:hover:not(:disabled){background:var(--bg-elev);}
+.cm-bsetup-head.open{box-shadow:var(--well),0 0 0 1px var(--accent-line),0 0 0 4px var(--accent-soft);}
 .cm-bsetup-head.open .gdd-arrow{transform:rotate(180deg);}
 .cm-bsetup-head:disabled{opacity:.4;cursor:default;}
 .cm-bsetup-head .ic{width:14px;height:14px;color:var(--accent2);flex-shrink:0;}
 .cm-bsetup-sum{
-  flex:1;min-width:0;font-family:var(--mono);font-size:.64rem;color:var(--purple);
+  flex:1;min-width:0;font-family:var(--mono);font-size:var(--fs-meta);color:var(--text);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
+/* Branch names are code; the note that there are none is not. */
+.cm-bsetup-none{font-family:var(--sans);font-weight:400;color:var(--muted);}
 .cm-bsetup-warn{
-  flex:0 0 auto;font-size:.56rem;font-weight:700;padding:1px 7px;border-radius:999px;
-  background:rgba(251,191,36,.12);color:var(--amber);
+  flex:0 0 auto;font-size:var(--fs-meta);font-weight:600;padding:1px 7px;border-radius:999px;
+  background:color-mix(in srgb,var(--amber) 12%,transparent);color:var(--amber);
 }
-.cm-bsetup-pair em{font-style:normal;font-family:var(--sans);font-size:.68rem;color:var(--muted2);}
+.cm-bsetup-pair em{font-style:normal;font-family:var(--sans);font-size:var(--fs-meta);color:var(--muted2);}
 .cm-bsetup-pair + .cm-bsetup-pair::before{content:'·';margin:0 8px;color:var(--muted);}
 .cm-bsetup-dot{width:7px;height:7px;border-radius:50%;background:var(--amber);flex-shrink:0;}
 /* Lined up with the trigger's right edge: the trigger always ends inside the toolbar, its left edge may not. */
-.cm-bsetup-body{right:0;width:min(780px,calc(100vw - 48px));padding:4px 14px 12px;}
+.cm-bsetup-body{right:0;width:min(780px,calc(100vw - 48px));padding:4px 14px 12px;transform-origin:top right;}
 .cm-bsetup-grid{
   display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr) minmax(0,1.2fr) 66px;
   gap:10px;align-items:center;
 }
 .cm-bsetup-hdr{
-  padding:8px 0 6px;font-size:.54rem;font-weight:700;text-transform:uppercase;
-  letter-spacing:.07em;color:var(--muted);border-bottom:1px solid var(--border2);
+  padding:8px 0 6px;font-size:var(--fs-meta);font-weight:600;color:var(--muted2);border-bottom:1px solid var(--border2);
 }
 .cm-bsetup-hdr em{font-style:normal;font-weight:500;text-transform:none;letter-spacing:0;opacity:.7;}
 .cm-bsetup-row{padding:7px 0;border-bottom:1px solid var(--border2);}
-.cm-bsetup-row:last-of-type{border-bottom:none;}
+.cm-bsetup-row:has(+ .cm-bsetup-foot){border-bottom:none;}
 .cm-bsetup-repo{
-  display:flex;flex-direction:column;gap:1px;min-width:0;font-size:.72rem;font-weight:700;
+  display:flex;flex-direction:column;gap:1px;min-width:0;font-size:var(--fs-body);font-weight:600;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
-.cm-bsetup-repo em{font-style:normal;font-weight:500;font-size:.56rem;color:var(--muted);}
-.cm-bsetup-tag{font-size:.54rem;font-weight:700;color:var(--muted);text-align:right;}
+.cm-bsetup-repo em{font-style:normal;font-weight:400;font-size:var(--fs-meta);color:var(--muted);}
+.cm-bsetup-tag{font-size:var(--fs-meta);font-weight:600;color:var(--muted);text-align:right;}
 .cm-bsetup-tag.changed{color:var(--amber);}
 .cm-bsetup-foot{
   display:flex;align-items:center;justify-content:space-between;gap:10px;
-  padding-top:9px;margin-top:8px;border-top:1px solid var(--border2);font-size:.6rem;color:var(--muted);
+  padding-top:9px;margin-top:8px;border-top:1px solid var(--border2);font-size:var(--fs-meta);color:var(--muted);
 }
 
-.cm-seg{display:inline-flex;gap:0;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:2px;height:32px;}
+/* A sunken track with the chosen option raised out of it, like the dashboard's view switch. The lone
+   Discovery toggle is a track of one: raised when on. */
+.cm-seg{display:inline-flex;gap:0;background:var(--bg);border-radius:10px;box-shadow:var(--well);padding:2px;height:32px;}
 .cm-seg-btn{
-  padding:0 12px;border:1px solid transparent;border-radius:8px;background:transparent;
-  color:var(--muted2);font-size:.7rem;font-weight:700;cursor:pointer;font-family:inherit;
-  display:inline-flex;align-items:center;gap:5px;transition:var(--t);white-space:nowrap;height:100%;
+  padding:0 12px;border:0;border-radius:8px;background:transparent;
+  color:var(--muted2);font-size:var(--fs-meta);font-weight:600;cursor:pointer;font-family:inherit;
+  display:inline-flex;align-items:center;gap:5px;transition:var(--tr-ui);white-space:nowrap;height:100%;
 }
 .cm-seg-btn:hover{color:var(--text);}
-.cm-seg-btn.on{background:var(--accent-soft);color:#cdd9ff;border-color:var(--accent-line);}
-.cm-fld > .cm-seg-btn{background:var(--bg);border-color:var(--border);}
+.cm-seg-btn.on{background:var(--surface3);color:var(--text);box-shadow:var(--rim),var(--elev-1);}
+.cm-fld > .cm-seg-btn{background:var(--bg);box-shadow:var(--well);}
+.cm-fld > .cm-seg-btn.on{background:var(--surface3);box-shadow:var(--rim),var(--elev-1);}
 
 .cm-verify-btn{
-  padding:0 16px;height:32px;border:1px solid var(--accent-line);border-radius:10px;
-  background:var(--accent-soft);color:#cdd9ff;font-size:.73rem;font-weight:700;cursor:pointer;
-  display:flex;align-items:center;gap:6px;transition:var(--t);white-space:nowrap;font-family:inherit;
+  padding:0 16px;height:32px;border:0;border-radius:10px;box-shadow:var(--rim);
+  background:var(--accent-soft);color:var(--accent-ink);font-size:var(--fs-meta);font-weight:600;cursor:pointer;
+  display:flex;align-items:center;gap:6px;transition:var(--tr-ui);white-space:nowrap;font-family:inherit;
 }
-.cm-verify-btn:hover:not(:disabled){background:rgba(79,124,255,.24);color:#fff;}
+.cm-verify-btn:hover:not(:disabled){background:color-mix(in srgb,var(--accent) 24%,transparent);color:#fff;}
 .cm-verify-btn:disabled{opacity:.35;cursor:not-allowed;}
 .cm-verify-btn .ic{width:14px;height:14px;}
 .cm-toolbar .cfg-load-btn .ic{width:14px;height:14px;}
@@ -87,13 +102,13 @@
 /* ─── Repo multi-select ─── */
 .msd .gdd-trigger{gap:6px;}
 .msd-count{
-  flex-shrink:0;font-size:.58rem;font-weight:700;font-family:var(--mono);
+  flex-shrink:0;font-size:var(--fs-meta);font-weight:600;
   background:var(--accent-soft);color:var(--accent2);border-radius:var(--pill);padding:1px 7px;
 }
 .msd-bulk{display:flex;gap:6px;padding:6px 8px;border-bottom:1px solid var(--border);}
 .msd-bulk-btn{
   flex:1;padding:4px 8px;border:1px solid var(--border2);border-radius:7px;background:var(--surface2);
-  color:var(--muted2);font-size:.63rem;font-weight:700;cursor:pointer;font-family:inherit;transition:var(--t);
+  color:var(--muted2);font-size:var(--fs-meta);font-weight:600;cursor:pointer;font-family:inherit;transition:var(--t);
 }
 .msd-bulk-btn:hover:not(:disabled){background:var(--surface3);color:var(--text);}
 .msd-bulk-btn:disabled{opacity:.35;cursor:not-allowed;}
@@ -105,136 +120,156 @@
 }
 .msd-box.on{background:var(--accent);border-color:var(--accent);color:#fff;}
 .msd-label{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.msd-badge{
-  flex-shrink:0;font-size:.55rem;font-family:var(--mono);color:var(--purple);
-  background:rgba(167,139,250,.12);border-radius:5px;padding:1px 6px;
-}
-
-/* ─── Target-branch typeahead ─── */
-.cm-branch-box{position:relative;}
-.cm-branch-box .cfg-fi{padding-right:28px;}
-.cm-branch-clear{
-  position:absolute;right:6px;top:50%;transform:translateY(-50%);
-  border:none;background:none;color:var(--muted);cursor:pointer;font-size:.7rem;
-  padding:3px 5px;border-radius:5px;line-height:1;
-}
-.cm-branch-clear:hover{color:var(--red);background:rgba(248,113,113,.1);}
-.cm-suggest{
-  position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:60;
-  background:var(--surface);border:1px solid var(--border2);border-radius:var(--r2);
-  box-shadow:var(--shadow-lg);max-height:240px;overflow-y:auto;padding:4px;
-}
-.cm-suggest-item{
-  display:block;width:100%;text-align:left;padding:6px 10px;border:none;background:none;
-  color:var(--muted2);font-size:.7rem;font-family:var(--mono);border-radius:7px;cursor:pointer;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-}
-.cm-suggest-item:hover{background:var(--accent-soft);color:#cdd9ff;}
 
 /* ─── Body ─── */
 .cm-body{flex:1;display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden;padding-top:10px;}
 
-.cm-panel{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden;margin-bottom:0;}
-.cm-phead{gap:12px;flex-wrap:wrap;padding:8px 14px;}
+/* The grid's raised panel. Scoped here: .gpanel is shared and keeps its border on pages not redone yet. */
+.cm-panel{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden;margin-bottom:0;border:0;box-shadow:var(--rim),var(--elev-1);
+  animation:fade-in .18s var(--ease-out);}
+/* The panel's fade (fade-in, components.css) plays once per load and never on filter clicks: the panel is new each
+   time a load finishes (Load clears the sheet first), and filters only change its rows. */
+@keyframes cm-drop{from{opacity:0;transform:translateY(calc(var(--rise) * -1));}}
+.cm-phead{gap:12px;flex-wrap:wrap;padding:5px 14px;border-bottom:0;}
+/* The grid's counts (MergingCounts.razor), between its tabs and its tools. */
+.cm-counts{display:flex;align-items:center;gap:10px;white-space:nowrap;min-width:0;}
 .cm-phead .ptitle{display:inline-flex;align-items:center;gap:7px;}
 .cm-phead .ptitle .ic{width:15px;height:15px;color:var(--accent2);}
 .cm-phead-tools{display:flex;align-items:center;gap:10px;margin-left:auto;}
 
 .cm-search{
-  display:flex;align-items:center;gap:6px;background:var(--bg);border:1px solid var(--border);
-  border-radius:9px;padding:0 10px;height:30px;transition:var(--t);
+  display:flex;align-items:center;gap:6px;background:var(--bg);border-radius:9px;box-shadow:var(--well);
+  padding:0 10px;height:30px;transition:box-shadow var(--t);cursor:text;
 }
-.cm-search:focus-within{border-color:var(--accent-line);box-shadow:0 0 0 3px var(--accent-soft);}
+.cm-search:focus-within{box-shadow:var(--well),0 0 0 1px var(--accent-line),0 0 0 4px var(--accent-soft);}
 .cm-search .ic{width:13px;height:13px;color:var(--muted);flex-shrink:0;}
 .cm-search input{
-  border:none;background:none;outline:none;color:var(--text);font-size:.72rem;
+  border:none;background:none;outline:none;color:var(--text);font-size:var(--fs-body);
   font-family:inherit;width:190px;max-width:32vw;
 }
 .cm-search input::placeholder{color:var(--muted);}
 
-.cm-check{display:inline-flex;align-items:center;gap:6px;font-size:.7rem;font-weight:600;color:var(--muted2);cursor:pointer;white-space:nowrap;user-select:none;}
-.cm-check input{accent-color:var(--accent);width:14px;height:14px;cursor:pointer;}
+.cm-check{display:inline-flex;align-items:center;gap:6px;min-height:24px;font-size:var(--fs-meta);font-weight:600;color:var(--muted2);cursor:pointer;white-space:nowrap;user-select:none;}
+.cm-check input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px;cursor:pointer;}
 .cm-check:hover{color:var(--text);}
 .cm-check-on{color:var(--amber);}
+/* The unlinked search's look-back, a small field sunk like the others. */
+.cm-days{
+  width:56px;height:24px;padding:0 4px 0 8px;border:1px solid transparent;border-radius:7px;
+  background:var(--bg);box-shadow:var(--well);color:var(--text);font:inherit;font-size:var(--fs-meta);
+  font-variant-numeric:tabular-nums;outline:none;transition:box-shadow var(--t);
+}
+.cm-days:focus{box-shadow:var(--well),0 0 0 1px var(--accent-line),0 0 0 4px var(--accent-soft);}
+/* The unlinked search's progress line, inset like the rows it stands in for. */
+.cm-grid-wrap > .loading-line{padding:12px 16px;}
 
 /* A pull request listed only because "All PRs" is on: it missed the QA branch, so it is not
    part of the release check and is tinted to keep that obvious while scanning the table. */
-tr.cm-pr-offqa{background:rgba(251,191,36,.05);}
-tr.cm-pr-offqa:hover{background:rgba(251,191,36,.09);}
+tr.cm-pr-offqa{background:color-mix(in srgb,var(--amber) 5%,transparent);}
+tr.cm-pr-offqa:hover{background:color-mix(in srgb,var(--amber) 9%,transparent);}
 tr.cm-pr-offqa .cm-p-branch .cref-tgt .cref-text{color:var(--amber);}
 
 /* ─── Grid ─── */
-.cm-grid-wrap{flex:1;min-height:0;overflow:auto;scrollbar-width:thin;}
+.cm-grid-wrap{flex:1;min-height:0;overflow:auto;}
 .cm-grid-wrap::-webkit-scrollbar{width:8px;height:8px;}
 .cm-grid-wrap::-webkit-scrollbar-thumb{background:var(--surface3);border-radius:4px;}
 
-table.cm-grid{width:100%;table-layout:fixed;border-collapse:collapse;font-size:.75rem;}
+/* Title is the one flexible column: in a grid narrower than the fixed columns it had no width at all, so the
+   grid keeps a minimum width and scrolls sideways instead. */
+table.cm-grid{width:100%;min-width:1000px;table-layout:fixed;border-collapse:collapse;font-size:var(--fs-body);}
 table.cm-grid thead th{
   position:sticky;top:0;z-index:5;background:var(--surface2);
-  text-align:left;font-size:.56rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;
-  color:var(--muted);padding:8px 10px;border-bottom:1px solid var(--border2);white-space:nowrap;
+  text-align:left;font-size:var(--fs-meta);font-weight:600;
+  color:var(--muted2);padding:6px 10px;border-bottom:1px solid var(--border2);white-space:nowrap;
 }
 /* One line per row, about 35px, roughly twice the rows on screen of the old two-line cells. */
 table.cm-grid tbody td{padding:6px 10px;vertical-align:middle;border-bottom:1px solid var(--border);}
-tr.cm-row{cursor:pointer;transition:background var(--t);}
+tr.cm-row{cursor:pointer;transition:background-color var(--t);}
 tr.cm-row:hover{background:var(--surface2);}
-tr.cm-row.open{background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent);}
+tr.cm-row.open{background:var(--accent-soft);}
+
+/* Only the Merged chip is filled: type, workflow state and PR status read as coloured text, so the column the
+   sheet exists for is the one the eye finds. Scoped to the sheet's lists; the pills keep their fill elsewhere. */
+table.cm-grid .type-pill,table.cm-grid .state-pill,table.cm-grid .pr-badge,
+.upr-wrap .pr-badge{background:none;padding:0;border-radius:0;font-size:var(--fs-meta);font-weight:600;}
+/* Ids are numbers people read and type, not code: the text face, with the page's tabular digits. */
+.cm-page .id-link{font-family:inherit;font-size:var(--fs-meta);font-weight:600;}
 
 /* Fixed column widths keep long titles from pushing the grid off-screen. */
 .cm-c-exp{width:36px;}
 .cm-c-id{width:82px;}
 .cm-c-title{width:auto;}
-.cm-c-type{width:112px;}
+.cm-c-type{width:120px;}
 .cm-c-state{width:88px;}
-.cm-c-user{width:136px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.71rem;}
+.cm-c-user{width:136px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-meta);}
 .cm-c-num{width:68px;text-align:right;}
 .cm-c-merged{width:190px;}
 .cm-c-act{width:46px;text-align:center;}
+/* One line per row, always: a type or state too long for its column ends in an ellipsis (the cell's
+   tooltip has it in full) instead of wrapping and growing the row. */
+table.cm-grid td.cm-c-type,table.cm-grid td.cm-c-state{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 
 .cm-merged-cell{display:flex;align-items:center;gap:6px;min-width:0;}
 .cm-merged-cell .merge-pill{min-width:0;}
 
 .cm-title-text{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);}
-.cm-num{font-family:var(--mono);font-size:.72rem;color:var(--muted);}
-.cm-num.has{color:var(--accent2);font-weight:700;}
+.cm-num{font-size:var(--fs-meta);color:var(--muted);}
+.cm-num.has{color:var(--accent2);font-weight:600;}
 
+/* Row buttons carry no box at rest; hovering the row, or reaching the button by keyboard, raises them. */
 .cm-expander{
   width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;
-  border:1px solid var(--border2);border-radius:6px;background:var(--surface2);
-  color:var(--muted2);cursor:pointer;transition:var(--t);padding:0;flex-shrink:0;
+  border:0;border-radius:6px;background:transparent;
+  color:var(--muted2);cursor:pointer;transition:var(--tr-ui);padding:0;flex-shrink:0;
 }
-.cm-expander:hover:not(:disabled){background:var(--surface3);color:var(--text);}
+tr:hover > td > .cm-expander:not(:disabled),tr:hover > td > .cm-act > .cm-expander:not(:disabled),
+.mr-hdr:hover > .cm-expander:not(:disabled),.cm-expander:focus-visible{background:var(--surface3);box-shadow:var(--rim);}
+.cm-expander:hover:not(:disabled){background:var(--surface3);color:var(--text);box-shadow:var(--rim),var(--elev-1);}
 .cm-expander:disabled{opacity:.22;cursor:default;}
+/* A row with nothing to open keeps the arrow's space, so the columns stay aligned, but shows no arrow. */
+.cm-c-exp .cm-expander:disabled{visibility:hidden;}
+/* The page's own buttons give a little when pressed, like the shared ones (components.css). */
+.cm-verify-btn:active:not(:disabled),.cm-seg-btn:active,.cm-gridtab:active,button.cm-qf:active,
+.cm-expander:active:not(:disabled),.cm-pending-chip:active:not(:disabled),.cm-ins-info:active,
+.cm-bsetup-head:active:not(:disabled),.msd-bulk-btn:active:not(:disabled){transform:scale(var(--press));}
 .cm-expander .ic{width:13px;height:13px;transition:transform var(--t);}
+/* The small row controls keep their look but take a tap from at least 24px around them (WCAG 2.5.8). */
+.cm-expander,.cref-copy,.cm-page .id-link{position:relative;}
+.cm-expander::after,.cref-copy::after,.cm-page .id-link::after{content:"";position:absolute;inset:-3px;}
+.cm-page .id-link::after{inset:-4px -2px;}
 .cm-expander.open .ic{transform:rotate(90deg);}
 
 /* ─── Nested tables ─── */
-.cm-detail-row > .cm-detail-cell{padding:0!important;background:var(--bg);border-bottom:1px solid var(--border2)!important;}
-.cm-detail{padding:10px 14px 12px 40px;border-left:2px solid var(--accent-line);}
+/* An open row's pull requests sit sunk beneath it, which is what ties them to their row. */
+.cm-detail-row > .cm-detail-cell{padding:0!important;background:var(--bg);box-shadow:var(--well);border-bottom:1px solid var(--border2)!important;}
+.cm-detail{padding:10px 14px 12px 40px;}
 
-table.cm-pr-table,table.cm-commit-table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:.7rem;}
+table.cm-pr-table,table.cm-commit-table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:var(--fs-meta);}
 table.cm-pr-table thead th,table.cm-commit-table thead th{
-  text-align:left;font-size:.54rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;
-  color:var(--muted);padding:6px 10px;border-bottom:1px solid var(--border);white-space:nowrap;
+  text-align:left;font-size:var(--fs-meta);font-weight:600;
+  color:var(--muted2);padding:6px 10px;border-bottom:1px solid var(--border);white-space:nowrap;
 }
 table.cm-pr-table tbody td,table.cm-commit-table tbody td{padding:7px 10px;vertical-align:middle;}
 tr.cm-pr-row{border-bottom:1px solid var(--border);cursor:pointer;transition:background var(--t);}
 tr.cm-pr-row:hover{background:var(--surface2);}
 tr.cm-pr-row.open{background:var(--accent-soft);}
+/* Rows are opened many times a day: what opens fades in briefly and does not move, so it never makes the
+   grid feel slow. The same detail row serves a work item's pull requests and a pull request's commits. */
+tr.cm-detail-row,.upr-wrap .mr-row > .cm-commit-wrap{animation:fade-in .12s var(--ease-out);}
 table.cm-commit-table{background:var(--bg-elev);border-radius:9px;}
 table.cm-commit-table tbody tr{border-bottom:1px solid var(--border);}
 table.cm-commit-table tbody tr:last-child{border-bottom:none;}
 .cm-commit-wrap{padding:8px 0 4px 26px;}
-.cm-empty-inline{padding:14px;text-align:center;font-size:.7rem;color:var(--muted);}
+.cm-empty-inline{padding:14px;text-align:center;font-size:var(--fs-meta);color:var(--muted);}
 
 .cm-p-id{width:74px;}
-.cm-p-repo{width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.66rem;color:var(--muted2);}
+.cm-p-repo{width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-meta);color:var(--muted2);}
 .cm-p-branch{width:auto;min-width:0;}
 .cm-p-status{width:96px;}
-.cm-p-user{width:126px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.66rem;color:var(--muted2);}
+.cm-p-user{width:126px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-meta);color:var(--muted2);}
 /* overflow:hidden is the guard: this cell used to let a too-long stamp spill over the column
    beside it, which is how the commit date ended up drawn on top of the Merged badge. */
-.cm-p-date{width:112px;font-family:var(--mono);font-size:.63rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.cm-p-date{width:112px;font-size:var(--fs-meta);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .cm-p-merged{width:132px;}
 .cm-k-sha{width:132px;}
 .cm-k-merged{width:118px;}
@@ -242,7 +277,7 @@ table.cm-commit-table tbody tr:last-child{border-bottom:none;}
 .cm-k-msg span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
 /* Count of a row's pull requests held back for targeting something other than the QA branch. */
-.cm-num-off{margin-left:4px;font-size:.55rem;color:var(--muted);font-family:var(--mono);}
+.cm-num-off{margin-left:4px;font-size:var(--fs-meta);color:var(--muted);}
 .cm-num-gap{display:inline-flex;margin-left:4px;vertical-align:middle;color:var(--cyan);}
 .cm-num-gap .ic{width:12px;height:12px;}
 
@@ -252,19 +287,21 @@ table.cm-commit-table tbody tr:last-child{border-bottom:none;}
 .ts-t{color:var(--muted2);}
 .ts-none{color:var(--muted);}
 
-/* One line of "dd MMM yyyy HH:mm:ss" in mono does not fit the merging tables' date column, so
-   there it stacks instead: the date above, the time with seconds below. */
+/* One line of "dd MMM yyyy HH:mm:ss" does not fit the merging tables' date column, so there it
+   stacks instead: the date above, the time with seconds below. */
 .cm-p-date .ts{flex-direction:column;align-items:flex-start;gap:0;line-height:1.4;}
 
 /* ─── Copyable ref (branch / SHA) ─── */
 .cref{display:inline-flex;align-items:center;gap:4px;max-width:100%;min-width:0;}
 .cref-text{
-  font-family:var(--mono);font-size:.64rem;overflow:hidden;text-overflow:ellipsis;
+  font-family:var(--mono);font-size:var(--fs-meta);overflow:hidden;text-overflow:ellipsis;
   white-space:nowrap;text-decoration:none;min-width:0;
 }
 a.cref-text:hover{text-decoration:underline;}
+/* Clips its overflow for the ellipsis, so it grows its own tap area: padding, given back by the margin. */
+a.cref-text{padding:5px 0;margin:-5px 0;}
 .cref-src .cref-text{color:var(--cyan);}
-.cref-tgt .cref-text{color:var(--purple);}
+.cref-tgt .cref-text{color:var(--text);}
 .cref-sha .cref-text{color:var(--accent2);font-weight:600;}
 .cref-copy{
   flex-shrink:0;width:19px;height:19px;padding:0;border:none;border-radius:5px;
@@ -278,13 +315,13 @@ a.cref-text:hover{text-decoration:underline;}
 
 /* ─── Merge status pills ─── */
 .merge-pill{
-  display:inline-flex;align-items:center;gap:4px;font-size:.57rem;font-weight:700;
-  padding:3px 9px;border-radius:var(--pill);white-space:nowrap;max-width:100%;
+  display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-meta);font-weight:600;
+  padding:2px 9px;border-radius:var(--pill);white-space:nowrap;max-width:100%;
 }
 .merge-pill .ic{width:12px;height:12px;flex-shrink:0;}
 .merge-pill span{overflow:hidden;text-overflow:ellipsis;}
-.merge-ok{background:rgba(52,211,153,.1);color:var(--green);}
-.merge-no{background:rgba(248,113,113,.1);color:#fca5a5;}
+.merge-ok{background:color-mix(in srgb,var(--green) 10%,transparent);color:var(--green);}
+.merge-no{background:color-mix(in srgb,var(--red) 10%,transparent);color:var(--red-ink);}
 .merge-opt{background:var(--surface3);color:var(--muted);}
 .merge-unknown{background:var(--surface2);color:var(--muted);}
 
@@ -292,134 +329,139 @@ a.cref-text:hover{text-decoration:underline;}
 .cm-col-active{color:var(--accent2)!important;}
 .cm-col-active::after{content:'●';margin-left:4px;font-size:.5rem;vertical-align:middle;}
 
-/* ─── Empty state ─── */
-.cm-blank{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:6px;}
-.cm-blank-icon{color:var(--accent2);opacity:.7;margin-bottom:6px;}
-.cm-blank h3{font-size:1rem;}
-.cm-blank p{font-size:.78rem;color:var(--muted2);line-height:1.65;max-width:460px;}
-
 /* Laptop widths: narrower filters and columns keep the toolbar on two rows and give titles room.
    Before the 1100px block, which narrows some of the same columns further. */
 @media(max-width:1600px){
   .cm-fld-filter{flex-basis:150px;}
   .cm-fld-filter.cm-fld-state{flex-basis:176px;}
   .cm-fld-branch{flex-basis:200px;min-width:180px;}
-  .cm-c-type{width:106px;}
+  .cm-c-type{width:116px;}
   .cm-c-state{width:80px;}
-  .cm-c-user{width:120px;}
+  .cm-c-user{width:112px;}
   .cm-c-num{width:58px;}
-  .cm-c-merged{width:178px;}
+  .cm-c-merged{width:170px;}
+  /* Just after a load the grid header also carries the pending-commits chip; the counts step aside
+     until the commits are read, so the header keeps one line and the grid its rows. */
+  .cm-phead:has(.cm-pending-chip) .cm-counts{display:none;}
 }
 
 @media(max-width:1100px){
   .cm-fld-btn{margin-left:0;}
-  .cm-c-type,.cm-c-state{width:88px;}
+  .cm-c-type{width:100px;}
+  .cm-c-state{width:88px;}
   .cm-c-user{width:108px;}
 }
 
 /* ─── Merging sheet: roll-up + pickers ─── */
-.merge-part{background:rgba(251,191,36,.12);color:#fcd34d;}
+.merge-part{background:color-mix(in srgb,var(--amber) 12%,transparent);color:var(--amber-ink);}
 /* Not fully checked: some pull requests could not be read. Cyan, so it never passes for Partial's amber. */
-.merge-gap{background:rgba(56,189,248,.1);color:var(--cyan);}
+.merge-gap{background:color-mix(in srgb,var(--cyan) 10%,transparent);color:var(--cyan);}
 
 /* ─── Merging sheet: grid tabs + unlinked pull requests ─── */
 .cm-gridtabs{display:flex;gap:4px;align-items:center;}
 .cm-gridtab{
   display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:9px;
-  border:1px solid transparent;background:transparent;color:var(--muted2);
-  font-family:inherit;font-size:.72rem;font-weight:700;cursor:pointer;transition:var(--t);
+  border:0;background:transparent;color:var(--muted2);
+  font-family:inherit;font-size:var(--fs-body);font-weight:600;cursor:pointer;transition:var(--tr-ui);
 }
 .cm-gridtab:hover{color:var(--text);background:var(--surface2);}
-.cm-gridtab.active{background:var(--surface3);border-color:var(--border2);color:var(--text);}
+.cm-gridtab.active{background:var(--surface3);color:var(--text);box-shadow:var(--rim),var(--elev-1);}
 .cm-gridtab .ic{width:14px;height:14px;}
 .cm-gridtab-n{
-  font-family:var(--mono);font-size:.58rem;padding:1px 6px;border-radius:999px;
+  font-size:var(--fs-meta);padding:1px 6px;border-radius:999px;
   background:rgba(255,255,255,.07);color:var(--muted);
 }
-.cm-gridtab.active .cm-gridtab-n{background:rgba(99,102,241,.18);color:var(--accent2);}
+.cm-gridtab.active .cm-gridtab-n{background:var(--accent-soft);color:var(--accent2);}
 
 .upr-wrap{padding:6px 2px 10px;}
 
 /* Rows whose commits are not read yet, as a chip beside the grid tabs rather than a bar above the rows. */
 .cm-pending-chip{
   display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 3px 0 10px;border-radius:var(--pill);
-  border:1px solid rgba(251,191,36,.28);background:rgba(251,191,36,.06);color:var(--muted2);
-  font-family:inherit;font-size:.64rem;cursor:pointer;white-space:nowrap;transition:var(--t);
+  border:0;background:color-mix(in srgb,var(--amber) 8%,transparent);color:var(--muted2);
+  font-family:inherit;font-size:var(--fs-meta);cursor:pointer;white-space:nowrap;transition:var(--tr-ui);
 }
-.cm-pending-chip:hover:not(:disabled){border-color:rgba(251,191,36,.55);color:var(--text);}
+.cm-pending-chip:hover:not(:disabled){background:color-mix(in srgb,var(--amber) 14%,transparent);color:var(--text);}
 .cm-pending-chip:disabled{opacity:.6;cursor:default;}
 .cm-pending-chip .ic{width:13px;height:13px;color:var(--amber);}
-.cm-pending-chip b{font-family:var(--mono);color:var(--text);}
-.cm-pending-act{padding:3px 9px;border-radius:var(--pill);background:rgba(251,191,36,.16);color:#fde68a;font-weight:700;}
-.cm-num-pending{color:var(--muted3);letter-spacing:1px;}
+.cm-pending-chip b{font-weight:600;color:var(--text);}
+.cm-pending-act{padding:3px 9px;border-radius:var(--pill);background:color-mix(in srgb,var(--amber) 16%,transparent);color:var(--amber-ink);font-weight:600;}
+.cm-num-pending{color:var(--muted);letter-spacing:1px;}
 /* A commit read that failed: the row stays pending and is read again. */
 .cm-num-err{display:inline-flex;align-items:center;gap:3px;vertical-align:middle;color:var(--amber);}
 .cm-num-err .ic{width:12px;height:12px;}
-.cm-pending-err{display:inline-flex;align-items:center;gap:3px;color:var(--amber);font-weight:700;}
+.cm-pending-err{display:inline-flex;align-items:center;gap:3px;color:var(--amber);font-weight:600;}
 
 .upr-scope{
   display:flex;gap:8px;align-items:flex-start;padding:7px 12px;margin-bottom:10px;
-  border:1px solid var(--border2);border-radius:9px;background:rgba(99,102,241,.05);
-  font-size:.66rem;color:var(--muted2);line-height:1.55;
+  border-radius:9px;background:var(--surface2);
+  font-size:var(--fs-meta);color:var(--muted2);line-height:1.55;
 }
 .upr-scope .ic{width:13px;height:13px;color:var(--accent2);flex-shrink:0;margin-top:2px;}
-.upr-hint{font-size:.66rem;color:var(--amber);margin-top:6px;}
+.upr-hint{font-size:var(--fs-meta);color:var(--amber);margin-top:6px;}
 .upr-fail,.upr-fail .ic{color:var(--amber);cursor:help;}
-.upr-count{font-size:.58rem;font-family:var(--mono);color:var(--muted);white-space:nowrap;}
+.upr-count{font-size:var(--fs-meta);color:var(--muted);white-space:nowrap;}
 .upr-wrap .mr-hdr{display:flex;align-items:center;gap:8px;}
 .upr-wrap .cm-commit-wrap{padding:6px 10px 10px 34px;}
 
 /* Rolled back reads as its own colour: the code was on the branch and came off again, which
    is a regression to chase rather than work still queued. Purple keeps it distinct from both
    the amber "partial" and the red "never merged". */
-.merge-back{background:rgba(167,139,250,.14);color:#c4b5fd;}
+.merge-back{background:color-mix(in srgb,var(--purple) 14%,transparent);color:var(--purple-ink);}
 .merge-back .ic{transform:rotate(-45deg);}
 .cm-rollup-sub{
   display:inline-flex;align-items:center;gap:3px;flex-shrink:0;
-  font-size:.62rem;font-family:var(--mono);color:var(--muted2);white-space:nowrap;
+  font-size:var(--fs-meta);color:var(--muted2);white-space:nowrap;
 }
 .cm-rollup-sub .ic{width:11px;height:11px;color:var(--muted);}
 
-.bpk-disabled{opacity:.4;cursor:not-allowed;}
-.bpk-branch{font-family:var(--mono);font-size:.7rem;color:var(--purple);}
-.bpk-item{font-family:var(--mono);font-size:.68rem;}
+.bpk-branch{font-family:var(--mono);font-size:var(--fs-meta);color:var(--text);}
+.bpk-item{font-family:var(--mono);font-size:var(--fs-meta);}
+/* The small icon button, shared: chip and list editors, pinned repositories and stale links use it in the flow. */
 .bpk-clear{
   flex-shrink:0;border:none;background:none;color:var(--muted);cursor:pointer;font-size:.65rem;
-  padding:2px 5px;border-radius:5px;line-height:1;
+  padding:2px 5px;border-radius:5px;line-height:1;transition:color var(--t),background-color var(--t);
 }
-.bpk-clear:hover{color:var(--red);background:rgba(248,113,113,.1);}
+/* In a branch picker, Clear is the trigger's neighbour, laid over it just left of the arrow; the value makes room
+   for it. Scoped to the picker, since the other users place the button in the flow. */
+.bpk-clearable .gdd-value{margin-right:24px;}
+.bpk > .bpk-clear{position:absolute;top:50%;right:25px;transform:translateY(-50%);}
+/* Its mark is small; the tap area around it is at least 24px. */
+.bpk > .bpk-clear::after{content:"";position:absolute;inset:-5px -3px;}
+.bpk-clear:hover{color:var(--red);background:color-mix(in srgb,var(--red) 10%,transparent);}
 .bpk-more{
-  padding:6px 10px;border-top:1px solid var(--border);font-size:.6rem;
+  padding:6px 10px;border-top:1px solid var(--border);font-size:var(--fs-meta);
   color:var(--muted);text-align:center;
 }
 
 /* ─── Insight strip (MergingInsights.razor): the toolbar's footer band ─── */
+/* A band one step darker than the panel it closes, instead of a rule across it. */
 .cm-ins{
   display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;margin:0 -14px -10px;padding:8px 14px;
-  border-top:1px solid var(--border);border-radius:0 0 var(--r2) var(--r2);
-  background:linear-gradient(90deg,rgba(79,124,255,.05),rgba(255,255,255,.01) 45%,rgba(167,139,250,.04));
+  border-radius:0 0 var(--r) var(--r);background:var(--bg-elev);
 }
 .cm-ins-seg{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;min-width:0;}
 .cm-ins-div{width:1px;height:20px;background:var(--border2);flex-shrink:0;}
-.cm-ins-stat{font-size:.65rem;color:var(--muted2);white-space:nowrap;}
-.cm-ins-stat b{font-family:var(--mono);font-size:.78rem;color:var(--text);}
+.cm-ins-stat{font-size:var(--fs-meta);color:var(--muted2);white-space:nowrap;}
+.cm-ins-stat b{font-size:var(--fs-body);font-weight:600;color:var(--text);}
 .cm-ins-stat b.cm-ins-acc,.cm-ins-acc{color:var(--accent2);}
-.cm-ins-of{font-family:var(--mono);font-size:.62rem;color:var(--muted);}
-.cm-ins-muted{font-size:.63rem;color:var(--muted);white-space:nowrap;}
-.cm-ins-muted b{color:var(--muted2);}
+.cm-ins-of{font-size:var(--fs-meta);color:var(--muted);}
+.cm-ins-muted{font-size:var(--fs-meta);color:var(--muted);white-space:nowrap;}
+.cm-ins-muted b{color:var(--muted2);font-weight:600;}
 .cm-ins-warn{color:var(--amber);}
-.cm-ins-lbl{display:inline-flex;align-items:center;gap:5px;font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);}
+.cm-ins-lbl{display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-meta);font-weight:600;color:var(--muted2);}
 .cm-ins-lbl .ic{width:13px;height:13px;color:var(--accent2);}
-.cm-ins-pct{font-family:var(--mono);font-size:.78rem;color:var(--green);}
+.cm-ins-pct{font-size:var(--fs-body);font-weight:600;color:var(--green);}
 .cm-ins-pct.cm-ins-acc{color:var(--accent2);}
 
 /* Work items by merge state; the segments grow by count, so no width needs working out. */
 .cm-ins-bar{display:flex;gap:2px;width:120px;height:6px;flex-shrink:0;border-radius:var(--pill);overflow:hidden;background:var(--surface3);}
-.cm-ins-bar-seg{min-width:3px;background:var(--st);transition:flex-grow .4s ease;}
+.cm-ins-bar-seg{min-width:3px;background:var(--st);transition:flex-grow .3s var(--ease-in-out);}
 
 .cm-ins-meter{width:110px;height:5px;flex-shrink:0;border-radius:var(--pill);background:var(--surface3);overflow:hidden;}
-.cm-ins-meter > span{display:block;height:100%;border-radius:var(--pill);background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .3s ease;}
-.cm-ins-now{max-width:22vw;font-family:var(--mono);font-size:.6rem;color:var(--muted2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* Progress moves at an even pace between updates, so it never seems to surge or stall. */
+.cm-ins-meter > span{display:block;height:100%;border-radius:var(--pill);background:var(--accent);transition:width .3s linear;}
+.cm-ins-now{max-width:22vw;font-family:var(--mono);font-size:var(--fs-meta);color:var(--muted2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
 /* Quick-filter chips. --st is the state's colour, shared with the bar. */
 .cm-st-ok{--st:var(--green);}
@@ -429,17 +471,18 @@ a.cref-text:hover{text-decoration:underline;}
 .cm-st-none{--st:var(--muted2);}
 .cm-st-nopr{--st:#45455a;}
 .cm-st-gap{--st:var(--cyan);}
+/* Filled chips without a border; the one filtering the grid is tinted in its state's colour and raised. */
 .cm-qf{
   display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:var(--pill);
-  border:1px solid var(--border2);background:var(--surface2);color:var(--muted2);
-  font-family:inherit;font-size:.63rem;font-weight:600;white-space:nowrap;cursor:pointer;transition:var(--t);
+  border:0;background:var(--surface2);color:var(--muted2);
+  font-family:inherit;font-size:var(--fs-meta);font-weight:600;white-space:nowrap;cursor:pointer;transition:var(--tr-ui);
 }
-.cm-qf b{font-family:var(--mono);font-size:.7rem;color:var(--st,var(--text));}
+.cm-qf b{font-weight:600;color:var(--st,var(--text));}
 .cm-st-nopr b{color:var(--muted2);}
 .cm-qf .ic{width:12px;height:12px;color:var(--st);}
 .cm-qf-dot{width:7px;height:7px;border-radius:50%;background:var(--st);flex-shrink:0;}
-button.cm-qf:hover{background:var(--surface3);border-color:color-mix(in srgb,var(--st) 45%,transparent);color:var(--text);}
-.cm-qf.on{background:color-mix(in srgb,var(--st) 16%,transparent);border-color:color-mix(in srgb,var(--st) 60%,transparent);color:var(--text);}
+button.cm-qf:hover{background:var(--surface3);color:var(--text);}
+.cm-qf.on{background:color-mix(in srgb,var(--st) 18%,var(--surface2));color:var(--text);box-shadow:var(--rim),var(--elev-1);}
 .cm-qf-x{font-size:.55rem;color:var(--muted2);margin-left:1px;}
 .cm-qf-static{cursor:default;}
 button.cm-qf:focus-visible,.cm-ins-info:focus-visible{outline:2px solid var(--accent-line);outline-offset:1px;}
@@ -447,28 +490,31 @@ button.cm-qf:focus-visible,.cm-ins-info:focus-visible{outline:2px solid var(--ac
 .cm-ins-help{margin-left:auto;}
 .cm-ins-info{
   display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:8px;
-  border:1px solid var(--border2);background:transparent;color:var(--muted2);
-  font-family:inherit;font-size:.63rem;font-weight:700;cursor:pointer;white-space:nowrap;transition:var(--t);
+  border:0;background:var(--surface2);box-shadow:var(--rim);color:var(--muted2);
+  font-family:inherit;font-size:var(--fs-meta);font-weight:600;cursor:pointer;white-space:nowrap;transition:var(--tr-ui);
 }
-.cm-ins-info:hover,.cm-ins-info.on{background:var(--accent-soft);border-color:var(--accent-line);color:#cdd9ff;}
+.cm-ins-info:hover,.cm-ins-info.on{background:var(--accent-soft);color:var(--accent-ink);}
 .cm-ins-info .ic{width:13px;height:13px;color:var(--accent2);}
 
-.cm-ins-pop{right:0;width:min(600px,calc(100vw - 48px));max-height:min(70vh,560px);overflow-y:auto;padding:14px 16px 6px;scrollbar-width:thin;}
-.cm-pop-h{font-size:.78rem;font-weight:700;margin-bottom:10px;}
+/* The page clips what passes the window's bottom, so the panel stops short of it from under the strip (at 70vh
+   its last lines were cut off on a 768px screen). */
+.cm-ins-pop{right:0;transform-origin:top right;width:min(600px,calc(100vw - 48px));max-height:min(60vh,560px);overflow-y:auto;padding:14px 16px 6px;}
+.cm-pop-h{font-size:var(--fs-body);font-weight:600;margin-bottom:10px;}
 .cm-pop-sec{padding:10px 0;border-top:1px solid var(--border);}
-.cm-pop-sec h4{display:flex;align-items:center;gap:6px;font-size:.64rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted2);margin-bottom:6px;}
+.cm-pop-sec h4{display:flex;align-items:center;gap:6px;font-size:var(--fs-meta);font-weight:600;color:var(--text);margin-bottom:6px;}
 .cm-pop-sec h4 .ic{width:13px;height:13px;color:var(--accent2);}
-.cm-pop-sec h4 em{font-style:normal;font-weight:600;text-transform:none;letter-spacing:0;color:var(--muted);}
-.cm-pop-sec p{font-size:.68rem;line-height:1.6;color:var(--muted2);margin-bottom:6px;}
-.cm-pop-sec p b{color:var(--text);}
-.cm-pop-sec code{font-family:var(--mono);font-size:.62rem;padding:0 4px;border-radius:4px;background:var(--surface3);color:var(--text);}
+.cm-pop-sec h4 em{font-style:normal;font-weight:400;color:var(--muted);}
+.cm-pop-sec p{font-size:var(--fs-meta);line-height:1.6;color:var(--muted2);margin-bottom:6px;}
+.cm-pop-sec p b{color:var(--text);font-weight:600;}
+.cm-pop-sec code{font-family:var(--mono);font-size:.92em;padding:0 4px;border-radius:4px;background:var(--surface3);color:var(--text);}
 .cm-pop-run{padding:7px 10px;border-radius:8px;background:var(--surface2);}
 
-/* Failed discovery reads (DiscoveryGapsChip.razor): the chip sits on the strip's left, so the panel opens rightwards. */
-.cm-gaps-pop{left:0;width:min(520px,calc(100vw - 48px));max-height:min(60vh,480px);overflow-y:auto;padding:14px 16px 8px;scrollbar-width:thin;}
-.cm-gaps-note{font-size:.68rem;line-height:1.6;color:var(--muted2);margin-bottom:8px;}
+/* Failed discovery reads (DiscoveryGapsChip.razor): the chip sits in the grid header's counts, so the panel opens
+   rightwards and stays short enough for the grid panel, which clips anything past its bottom. */
+.cm-gaps-pop{left:0;transform-origin:top left;width:min(520px,calc(100vw - 48px));max-height:min(50vh,420px);overflow-y:auto;padding:14px 16px 8px;}
+.cm-gaps-note{font-size:var(--fs-meta);line-height:1.6;color:var(--muted2);margin-bottom:8px;}
 .cm-gaps-list{list-style:none;margin:0 0 8px;padding:0;display:flex;flex-direction:column;gap:4px;}
-.cm-gaps-list li{display:flex;flex-direction:column;gap:2px;padding:6px 10px;border-radius:8px;background:var(--surface2);font-size:.66rem;line-height:1.5;color:var(--muted2);}
+.cm-gaps-list li{display:flex;flex-direction:column;gap:2px;padding:6px 10px;border-radius:8px;background:var(--surface2);font-size:var(--fs-meta);line-height:1.5;color:var(--muted2);}
 .cm-gaps-list b{font-weight:600;color:var(--text);}
 
 /* Laptop widths: a tighter strip, and the help button keeps only its icon. */
@@ -476,4 +522,33 @@ button.cm-qf:focus-visible,.cm-ins-info:focus-visible{outline:2px solid var(--ac
   .cm-ins{gap:8px 12px;}
   .cm-ins-bar{width:80px;}
   .cm-ins-info span{display:none;}
+}
+
+/* Below this width the toolbar no longer fits two rows: it took three or four (210 to 360px) from 900 to
+   1317px, a third of the grid's rows, and the margin above that leaves room for the longer labels a running
+   check shows. So the filters fold into one summary line with Filters and Load, and open above the grid when
+   asked for; Load folds them again. The strip keeps one line and scrolls sideways. */
+@media(max-width:1339px){
+  .cm-tb-mini{display:flex;align-items:center;gap:8px;}
+  .cm-tb-sum{flex:1;min-width:0;font-size:var(--fs-meta);color:var(--muted2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .cm-toolbar:not(.cm-filters-open) .cm-tb-filters{display:none;}
+  /* Opening drops the fields in from the summary line; folding them is instant. */
+  .cm-filters-open .cm-tb-filters{animation:cm-drop .16s var(--ease-out);}
+  .cm-ins{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;}
+  .cm-ins > *{flex-shrink:0;}
+  /* A scrolling strip clips its own children, so "How it's checked" anchors to the toolbar instead and opens below it. */
+  .cm-toolbar{position:relative;}
+  .cm-ins .cm-ins-help{position:static;}
+  .cm-ins-seg{flex-wrap:nowrap;}
+}
+
+/* Phones and small tablets: the page itself scrolls, so opened filters never cut off the grid, which keeps a
+   usable height of its own. */
+@media(max-width:900px){
+  .cm-page{overflow:visible;}
+  .cm-body{min-height:60vh;}
+  /* The grid's tools take a line of their own and wrap inside it, so none runs off the right edge. */
+  .cm-phead-tools{flex:1 1 100%;flex-wrap:wrap;row-gap:6px;margin-left:0;}
+  .cm-search{flex:1 1 160px;}
+  .cm-search input{width:100%;max-width:none;}
 }

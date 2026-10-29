@@ -5,61 +5,75 @@
 @inject ILogger<TaskCreationPanel> Logger
 @implements IDisposable
 
+<div class="si-toolbar">
 <div class="cfg-bar">
     @Selectors
     <div class="cfg-divider"></div>
-    <div class="cfg-col" style="flex:0 0 auto;">
-        <button class="cfg-load-btn" @onclick="LoadRequirements" disabled="@(Area == null || string.IsNullOrEmpty(Sprint) || loading)">
-            @if (loading) { <span class="spin spin-sm" style="color:#fff;"></span> } else { <span>⬇</span> }
+    <div class="cfg-col">
+        <button type="button" class="cfg-load-btn" @onclick="LoadRequirements" disabled="@(loading || LoadBlocked is not null)" title="@LoadBlocked">
+            @if (loading) { <span class="spin spin-sm"></span> } else { <span aria-hidden="true">⬇</span> }
             Load Requirements
         </button>
-        @if (Requirements.Count > 0) { <span class="chip chip-green" style="font-size:.56rem;">@Requirements.Count req(s)</span> }
     </div>
 </div>
 @if (Requirements.Count > 0)
 {
-    <div class="cfg-bar-filters" style="margin-top:16px;">
-        <div style="flex:2;min-width:200px;"><div class="cfg-field"><label class="cfg-label">🔍 Search</label><input class="cfg-fi" placeholder="ID, title, assignee…" value="@State.SearchQ" @oninput="OnSearch" /></div></div>
-        <div style="flex:1;min-width:150px;"><div class="cfg-field"><label class="cfg-label">🏷 Type</label>
-            <GlassDropdown Value="@State.TypeFilter" Placeholder="All" EmptyLabel="All" EmptyValue="" Options="@TypeOptions" OnChange="OnType" /></div></div>
-        <div style="flex:1;min-width:150px;"><div class="cfg-field"><label class="cfg-label">👤 Assignee</label>
-            <GlassDropdown Value="@State.AssigneeFilter" Placeholder="All" EmptyLabel="All" EmptyValue="" Options="@AssigneeOptions()" OnChange="OnAssignee" /></div></div>
+    <div class="cfg-bar-filters">
+        <div class="tc-f-search"><div class="cfg-field"><label class="cfg-label">🔍 Search</label><input class="cfg-fi" placeholder="ID, title, assignee…" aria-label="Search requirements" value="@State.SearchQ" @oninput="OnSearch" /></div></div>
+        <div class="tc-f-pick"><div class="cfg-field"><label class="cfg-label">🏷 Type</label>
+            <GlassDropdown Value="@State.TypeFilter" Placeholder="All" EmptyLabel="All" EmptyValue="" Label="Type" Options="@TypeOptions" OnChange="OnType" /></div></div>
+        <div class="tc-f-pick"><div class="cfg-field"><label class="cfg-label">👤 Assignee</label>
+            <GlassDropdown Value="@State.AssigneeFilter" Placeholder="All" EmptyLabel="All" EmptyValue="" Label="Assignee" Options="@AssigneeOptions()" OnChange="OnAssignee" /></div></div>
     </div>
 }
-<div class="content" style="flex-direction:column;">
-    <div class="gpanel" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+</div>
+@if (!string.IsNullOrEmpty(error)) { <div class="notice warn" role="alert">⚠ @error</div> }
+<div class="content">
+    <div class="gpanel tc-panel">
+        @* How the tab works is the Task Creation tab's tooltip, so the heading keeps to the title and the count. *@
         <div class="phead">
             <span class="ptitle">🧩 Create Tasks</span>
-            <span style="font-size:.64rem;color:var(--muted);">Pick an item, tick the tasks you need, then create them. Each task gets its discipline and the @PlanningTaskCatalog.ProductTag tag (@BugWork.MaintenanceTag under a Bug).</span>
+            @if (Requirements.Count > 0) { <span class="si-count">@ItemCountText</span> }
         </div>
-        <div class="pbody" style="flex:1;overflow:auto;padding:0;">
-            @if (!string.IsNullOrEmpty(error)) { <div class="notice warn" style="margin:12px;">⚠ @error</div> }
-            @if (Requirements.Count == 0 && !loading)
+        <div class="pbody">
+            <div class="sr-only" role="status">@announcement</div>
+            @if (loading)
             {
-                <div class="tbl-empty">Select an area and sprint, then Load Requirements.</div>
+                <LoadingState>Reading requirements, change requests and bugs for <b>@AreaSprintSelect.Describe(Area, Sprint)</b></LoadingState>
+            }
+            else if (LoadedEmpty)
+            {
+                <BlankState Glyph="@Icons.TabTaskCreation" Title="Nothing to add tasks to">This area and sprint have no requirements, change requests or bugs.</BlankState>
+            }
+            else if (Requirements.Count == 0)
+            {
+                <BlankState Glyph="@Icons.TabTaskCreation" Title="Nothing loaded yet">
+                    Select an area and sprint, then <b>Load Requirements</b> to list the items you can add the standard tasks to.
+                </BlankState>
             }
             else
             {
                 var rows = Filtered();
                 <table class="req-table">
-                    <thead><tr><th style="width:64px;">ID</th><th>Title</th><th style="width:120px;">Assigned</th><th style="width:90px;">State</th><th style="width:210px;"></th></tr></thead>
-                    <tbody>
+                    <thead><tr><th class="tc-c-id">ID</th><th>Title</th><th class="tc-c-type">Type</th><th class="tc-c-user">Assigned</th><th class="tc-c-state">State</th><th class="tc-c-act"></th></tr></thead>
+                    @* One Tab stop: the arrow keys move between the rows' buttons (app.js), and the IDs open TFS for the
+                       pointer only; the dialog's "#id" is the keyboard's way to TFS. *@
+                    <tbody class="@arrival.Class" data-roving data-roving-stop>
                         @if (rows.Count == 0)
                         {
-                            <tr><td colspan="5" class="tbl-empty">No items match the filters.</td></tr>
+                            <tr><td colspan="6" class="tbl-empty">No items match the filters.</td></tr>
                         }
                         @foreach (var r in rows)
                         {
                             <tr @key="r.Id">
-                                <td><a class="id-link" href="@TfsApi.WorkItemUrl(r.Project, r.Id)" target="_blank" rel="noopener">#@r.Id</a></td>
-                                <td>
-                                    <span class="type-pill @WorkItemBadges.TypeClass(r.Type)">@r.Type</span>
-                                    <div class="cell-title">@r.Title</div>
-                                </td>
-                                <td style="font-size:.7rem;">@r.Assigned</td>
-                                <td><span class="state-pill @WorkItemBadges.StateClass(r.State)">@r.State</span></td>
-                                <td>
-                                    <button class="btn-sm btn-sm-active" @onclick="() => OpenCreate(r)">
+                                <td><a class="id-link" href="@TfsApi.WorkItemUrl(r.Project, r.Id)" target="_blank" rel="noopener" tabindex="-1">#@r.Id</a></td>
+                                <td class="tc-title" title="@r.Title">@r.Title</td>
+                                <td class="tc-clip"><span class="type-pill @WorkItemBadges.TypeClass(r.Type)">@r.Type</span></td>
+                                <td class="tc-clip tc-user">@r.Assigned</td>
+                                <td class="tc-clip"><span class="state-pill @WorkItemBadges.StateClass(r.State)">@r.State</span></td>
+                                <td class="tc-act">
+                                    <button type="button" class="si-row-act" data-roving-item tabindex="@(ReferenceEquals(r, rows[0]) ? "0" : "-1")"
+                                            aria-label="@RowActionName(r)" @onclick="() => OpenCreate(r)">
                                         @if (State.CreatedCounts.TryGetValue(r.Id, out var n) && n > 0) { <text>✅ @n Created · add more</text> }
                                         else { <text>Create Tasks</text> }
                                     </button>
@@ -75,15 +89,16 @@
 
 @if (target != null)
 {
-    <div class="modal-overlay" @onclick="CloseCreate">
-        <div class="modal" style="max-width:560px;" @onclick:stopPropagation>
-            <h3>Create tasks under #@target.Id</h3>
-            <div class="modal-body">
-                <div style="font-size:.74rem;color:var(--muted2);margin-bottom:14px;">@target.Title</div>
+    <ModalDialog CssClass="tc-dialog" OnClose="CloseCreate">
+        <Title>
+            Create tasks under <a class="tc-dialog-link" href="@TfsApi.WorkItemUrl(target.Project, target.Id)" target="_blank" rel="noopener">#@target.Id<span class="sr-only"> (opens TFS in a new tab)</span></a>
+        </Title>
+        <ChildContent>
+                <div class="si-dialog-sub">@target.Title</div>
                 @if (confirmShown)
                 {
                     <div class="notice info">Create these @confirmTitles.Count task(s)? They'll be children of #@target.Id with a <b>@PlanningTaskCatalog.TagFor(target.Type)</b> tag.</div>
-                    <ul style="font-size:.76rem;line-height:1.9;margin:10px 0 0 18px;">
+                    <ul class="si-confirm-list">
                         @foreach (var t in confirmTitles) { <li>@t</li> }
                     </ul>
                 }
@@ -129,30 +144,31 @@
                         }
                     </div>
                 }
-                @if (!string.IsNullOrEmpty(createResult))
-                {
-                    <div style="margin-top:12px;font-size:.74rem;color:@(createOk ? "var(--green)" : "var(--red)");">@createResult</div>
-                }
-            </div>
-            <div class="modal-actions">
+                <div role="status">
+                    @if (!string.IsNullOrEmpty(createResult))
+                    {
+                        <div class="si-create-result @(createOk ? "ok" : "bad")">@createResult</div>
+                    }
+                </div>
+        </ChildContent>
+        <Actions>
                 @if (confirmShown)
                 {
-                    <button class="btn-ghost" @onclick="() => confirmShown = false" disabled="@creating">Back</button>
-                    <button class="btn-primary" style="width:auto;" @onclick="ConfirmCreate" disabled="@creating">
+                    <button type="button" class="btn-ghost" @onclick="() => confirmShown = false" disabled="@creating">Back</button>
+                    <button type="button" class="btn-primary" @onclick="ConfirmCreate" disabled="@creating">
                         @if (creating) { <span class="spin spin-sm"></span> }
                         Confirm & Create
                     </button>
                 }
                 else
                 {
-                    <button class="btn-ghost" @onclick="CloseCreate">Close</button>
-                    <button class="btn-primary" style="width:auto;" @onclick="PrepareConfirm" disabled="@(selection.Count == 0)">
+                    <button type="button" class="btn-ghost" @onclick="CloseCreate">Close</button>
+                    <button type="button" class="btn-primary" @onclick="PrepareConfirm" disabled="@(selection.Count == 0)">
                         Create Selected Tasks (@selection.Count)
                     </button>
                 }
-            </div>
-        </div>
-    </div>
+        </Actions>
+    </ModalDialog>
 }
 
 @code {
@@ -185,10 +201,20 @@
     // Kept in PageState so the list and the "n Created" badges survive switching tabs.
     private TaskCreationState State => PageState.TaskCreation;
 
-    // Leaving the tab stops the list's read; tasks being created are left to finish.
+    // Leaving Sprint Insights stops the list's read (a tab switch only hides this panel); tasks being created are
+    // left to finish.
     private readonly PageLifetime page = new();
+    private readonly ArrivalCue arrival = new();
 
-    private string SelectionKey => $"{Area?.Project}|{Area?.Path}|{Sprint}";
+    // What a screen reader is told once a load finishes; a failure is the alert notice.
+    private string announcement = "";
+
+    private string SelectionKey => AreaSprintSelect.Key(Area, Sprint);
+
+    private string? LoadBlocked => AreaSprintSelect.MissingSelection(Area, Sprint);
+
+    // Loaded for the area and sprint picked now, and nothing came back: an answer, not a failure.
+    private bool LoadedEmpty => State.LoadedKey.Length > 0 && State.LoadedKey == SelectionKey && State.Requirements.Count == 0;
 
     // A list loaded for another area or sprint is hidden rather than shown under the new
     // selection: creating from it would put tasks into a sprint their requirement isn't in.
@@ -208,7 +234,7 @@
         if (area == null || string.IsNullOrEmpty(sprint)) return;
 
         var key = SelectionKey;
-        loading = true; error = null;
+        loading = true; error = null; announcement = "";
         State.LoadedKey = ""; State.Requirements = new(); State.CreatedCounts = new();
         StateHasChanged();
         try
@@ -220,11 +246,14 @@
             State.LoadedKey = key;
             State.LoadedSprint = sprint;
             State.SearchQ = ""; State.TypeFilter = ""; State.AssigneeFilter = "";
-            if (State.Requirements.Count == 0) error = "No Requirements, Change Requests, or Bugs found for this area and sprint.";
+            arrival.Mark();
+            announcement = State.Requirements.Count == 0
+                ? "This area and sprint have no requirements, change requests or bugs."
+                : $"Loaded {State.Requirements.Count} items.";
         }
         catch (OperationCanceledException ex) when (page.Token.IsCancellationRequested)
         {
-            Logger.LogDebug(ex, "Task Creation load for {Area} / {Sprint} stopped because the tab was left", area.Path, sprint);
+            Logger.LogDebug(ex, "Task Creation load for {Area} / {Sprint} stopped because the page was left", area.Path, sprint);
         }
         catch (Exception ex)
         {
@@ -252,6 +281,10 @@
     private string DefaultTasksList => string.Join(", ", selection.Defaults);
 
     private void CloseCreate() { target = null; confirmShown = false; }
+
+    // Names the row's button for a screen reader: which item it is for, and how many tasks it has made there.
+    private string RowActionName(WorkItem r) =>
+        State.CreatedCounts.TryGetValue(r.Id, out var n) && n > 0 ? $"{n} created under #{r.Id}, add more" : $"Create tasks under #{r.Id}";
 
     private string SelectedExec(PlanningCategory cat) => selectedExec.TryGetValue(cat.Prefix, out var v) ? v : cat.ExecTypes[0];
     private static string ExecGroupName(string prefix) => "exec-" + new string(prefix.Where(char.IsLetterOrDigit).ToArray());
@@ -319,6 +352,16 @@
             || r.Assigned.Contains(State.SearchQ, StringComparison.OrdinalIgnoreCase))
         && (string.IsNullOrEmpty(State.TypeFilter) || r.Type == State.TypeFilter)
         && (string.IsNullOrEmpty(State.AssigneeFilter) || r.Assigned == State.AssigneeFilter);
+
+    /// <summary>"10/34 item(s)" once a filter hides some, so the one count also says how many were loaded.</summary>
+    private string ItemCountText
+    {
+        get
+        {
+            var shown = Requirements.Count(Matches);
+            return shown == Requirements.Count ? $"{shown} item(s)" : $"{shown}/{Requirements.Count} item(s)";
+        }
+    }
 
     private void OnSearch(ChangeEventArgs e) => State.SearchQ = e.Value?.ToString() ?? "";
     private void OnType(ChangeEventArgs e) => State.TypeFilter = e.Value?.ToString() ?? "";

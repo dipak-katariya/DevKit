@@ -1,23 +1,30 @@
 @inherits ClickOutsideComponent
 
-@* Searchable multi-select built on the same .gdd-* shell as GlassDropdown. *@
+@* Searchable multi-select built on the same .gdd-* shell as GlassDropdown. The arrow keys move
+   through the options from the search box and Enter ticks one, so it works from the keyboard alone. *@
 
+@{ var triggerLabel = TriggerLabel; }
 <div class="gdd msd @(IsOpen ? "gdd-open" : "") @CssClass" @ref="Root" style="@Style">
-    <div class="gdd-trigger @(Disabled ? "bpk-disabled" : "")" @onclick="Toggle" @onclick:stopPropagation>
-        <span class="gdd-value @(Selected.Count == 0 ? "gdd-placeholder" : "")">@TriggerLabel</span>
+    <button type="button" class="gdd-trigger" @ref="trigger" @onclick="Toggle" @onclick:stopPropagation
+            disabled="@Disabled" aria-haspopup="listbox" aria-expanded="@(IsOpen ? "true" : "false")"
+            aria-label="@(Label is null ? null : $"{Label}: {triggerLabel}")">
+        <span class="gdd-value @(Selected.Count == 0 ? "gdd-placeholder" : "")" title="@SelectedLabels">@triggerLabel</span>
         @if (Selected.Count > 1)
         {
-            <span class="msd-count">@Selected.Count</span>
+            <span class="msd-count" aria-hidden="true">@Selected.Count</span>
         }
-        <span class="gdd-arrow">▾</span>
-    </div>
+        <span class="gdd-arrow" aria-hidden="true">▾</span>
+    </button>
 
     @if (IsOpen && !Disabled)
     {
         <div class="gdd-panel" @onclick:stopPropagation>
             <div class="gdd-search-wrap">
-                <input class="gdd-search" type="text" placeholder="@SearchPlaceholder"
-                       @oninput="OnSearchInput" @ref="searchInput" @onkeydown="OnKeyDown" />
+                @* Keydown stops here, so Escape closes only this list and not a popover the dropdown sits in. *@
+                <input class="gdd-search" type="text" placeholder="@SearchPlaceholder" autocomplete="off"
+                       role="combobox" aria-label="@Label" aria-autocomplete="list" aria-expanded="true"
+                       aria-controls="@PanelId" aria-activedescendant="@(highlightIdx >= 0 ? OptionId(highlightIdx) : null)"
+                       @oninput="OnSearchInput" @ref="searchInput" @onkeydown="OnKeyDown" @onkeydown:stopPropagation />
             </div>
 
             <div class="msd-bulk">
@@ -27,20 +34,29 @@
                 <button class="msd-bulk-btn" @onclick="ClearAll" disabled="@(Selected.Count == 0)">Clear</button>
             </div>
 
+            @* A listbox only while it has options, so "No matches" is read as a status line, not as a list item. It
+               does the scrolling, with tabindex -1, because a list that scrolls is otherwise a Tab stop of its own
+               in Chrome, and the arrows already move through it from the search box. *@
+            @{ var optionIndex = 0; }
+            <div id="@PanelId" class="gdd-scroll" tabindex="-1" role="@(Visible().Count > 0 ? "listbox" : null)" aria-label="@Label" aria-multiselectable="true">
             <div class="gdd-list">
                 @foreach (var opt in Visible())
                 {
                     var isOn = Selected.Contains(opt.Value);
-                    <div class="gdd-item msd-item @(isOn ? "gdd-item-active" : "")"
-                         title="@(opt.Hint ?? opt.Label)" @onclick="() => ToggleValue(opt.Value)">
-                        <span class="msd-box @(isOn ? "on" : "")">@(isOn ? "✓" : "")</span>
+                    var idx = optionIndex++;
+                    @* Pressing an option keeps focus in the search box, so the keys go on working after a click. *@
+                    <div class="gdd-item msd-item @(isOn ? "gdd-item-active" : "") @(highlightIdx == idx ? "gdd-item-hl" : "")"
+                         id="@OptionId(idx)" role="option" aria-selected="@(isOn ? "true" : "false")"
+                         title="@(opt.Hint ?? opt.Label)" @onmousedown:preventDefault @onclick="() => ToggleValue(opt.Value)">
+                        <span class="msd-box @(isOn ? "on" : "")" aria-hidden="true">@(isOn ? "✓" : "")</span>
                         <span class="msd-label">@opt.Label</span>
                     </div>
                 }
                 @if (Visible().Count == 0)
                 {
-                    <div class="gdd-empty">No matches</div>
+                    <div class="gdd-empty" role="status">No matches</div>
                 }
+            </div>
             </div>
             @if (HiddenCount > 0)
             {
@@ -71,9 +87,14 @@
     [Parameter] public string? CssClass { get; set; }
     [Parameter] public string? Style { get; set; }
 
+    /// <summary>What the field is, such as "Sprint". Screen readers then hear the trigger as "Sprint: value".</summary>
+    [Parameter] public string? Label { get; set; }
+
     private bool IsOpen;
     private string searchText = "";
     private ElementReference searchInput;
+    private ElementReference trigger;
+    private int highlightIdx = -1;
 
     protected override bool IsPanelOpen => IsOpen;
 
@@ -98,6 +119,11 @@
         }
     }
 
+    // Every selected label for the trigger's tooltip, since the trigger names only the first.
+    private string? SelectedLabels => Selected.Count == 0
+        ? null
+        : string.Join(", ", Options.Where(o => Selected.Contains(o.Value)).Select(o => o.Label));
+
     private async Task Toggle()
     {
         if (Disabled)
@@ -106,6 +132,7 @@
         }
         IsOpen = !IsOpen;
         searchText = "";
+        highlightIdx = -1;
         if (IsOpen)
         {
             await Task.Yield();
@@ -139,10 +166,48 @@
         return SelectedChanged.InvokeAsync(Selected);
     }
 
-    private void OnSearchInput(ChangeEventArgs e) => searchText = e.Value?.ToString() ?? "";
+    private void OnSearchInput(ChangeEventArgs e)
+    {
+        searchText = e.Value?.ToString() ?? "";
+        highlightIdx = -1;
+    }
 
     private async Task OnKeyDown(KeyboardEventArgs e)
     {
-        if (e.Key == "Escape") await Toggle();
+        if (e.Key == "Escape")
+        {
+            await CloseToTriggerAsync();
+            return;
+        }
+
+        var visible = Visible();
+        if (e.Key == "Enter")
+        {
+            // Ticks and stays open, since the point of this list is to pick several.
+            if (highlightIdx >= 0 && highlightIdx < visible.Count)
+            {
+                await ToggleValue(visible[highlightIdx].Value);
+            }
+            return;
+        }
+
+        var step = e.Key switch { "ArrowDown" => 1, "ArrowUp" => -1, _ => 0 };
+        if (step == 0 || visible.Count == 0)
+        {
+            return;
+        }
+        highlightIdx = Math.Clamp(highlightIdx + step, 0, visible.Count - 1);
+        await RevealAsync(OptionId(highlightIdx));
     }
+
+    /// <summary>Closes from the keyboard. Focus goes back to the trigger, since the search box it was in is gone.</summary>
+    private async Task CloseToTriggerAsync()
+    {
+        IsOpen = false;
+        searchText = "";
+        highlightIdx = -1;
+        await FocusAsync(trigger);
+    }
+
+    private string OptionId(int index) => $"{PanelId}-{index}";
 }

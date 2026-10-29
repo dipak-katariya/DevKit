@@ -59,4 +59,20 @@ public class AreaSprintSelectTests
         Assert.Single(AreaSprintSelect.AreaGroups(new[] { Ara }));
         Assert.Equal(2, AreaSprintSelect.SprintGroups(Sprints).Count);
     }
+
+    [Fact]
+    public void A_load_says_what_it_still_needs_before_it_can_start()
+    {
+        Assert.Equal("Select an area first.", AreaSprintSelect.MissingSelection(null, Sprints[0].Path));
+        Assert.Equal("Select an area first.", AreaSprintSelect.MissingSelection(null, null));
+        Assert.Equal("Select a sprint first.", AreaSprintSelect.MissingSelection(Ara, ""));
+        Assert.Null(AreaSprintSelect.MissingSelection(Ara, Sprints[0].Path));
+    }
+
+    [Fact]
+    public void A_loading_message_names_the_area_and_the_sprint_by_their_short_names()
+    {
+        Assert.Equal("FX to CPFOIA Migration · PI-2026-5_1", AreaSprintSelect.Describe(Ara, Sprints[0].Path));
+        Assert.Equal("PI-2026-5_1", AreaSprintSelect.Describe(null, "PI-2026-5_1"));
+    }
 }

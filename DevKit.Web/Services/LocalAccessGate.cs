@@ -2,6 +2,7 @@ using System.Buffers.Text;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using DevKit.Web.Components;
 using Microsoft.AspNetCore.Http.Extensions;
 
 namespace DevKit.Web.Services;
@@ -22,17 +23,34 @@ public sealed class LocalAccessGate
     private const string CookiePrefix = "devkit-access-";
     private const int KeyBytes = 32;
 
-    private const string LockedPage = """
+    // The sign-in page's card, so a locked DevKit still reads as DevKit rather than as a bare browser page.
+    private const string LockedPage = $$"""
         <!DOCTYPE html>
-        <html lang="en"><head><meta charset="utf-8" /><title>DevKit is locked</title></head>
-        <body style="font-family:system-ui,sans-serif;max-width:560px;margin:80px auto;padding:0 20px;line-height:1.5;">
-        <h1 style="font-size:1.3rem;">DevKit only opens for the person who started it</h1>
-        <p>Open DevKit from the link it printed in its window when it started; it also opens that link in your
-        browser. A tab from before DevKit restarted needs the new link.</p>
-        </body></html>
+        <html lang="en">
+        <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>DevKit is locked</title>
+        <link rel="icon" type="image/svg+xml" href="/favicon.svg?v={{App.AssetVersion}}" />
+        <link rel="stylesheet" href="/app.css?v={{App.AssetVersion}}" />
+        <link rel="stylesheet" href="/signin.css?v={{App.AssetVersion}}" />
+        </head>
+        <body class="signin-page">
+        <main class="signin-card">
+          <div class="signin-brand"><span class="profile-avatar">DK</span><span>DevKit</span></div>
+          <h1>DevKit only opens for the person who started it</h1>
+          <p class="signin-lead">Open DevKit from the link it printed in its window when it started; it also opens that link in your
+          browser. A tab from before DevKit restarted needs the new link.</p>
+        </main>
+        </body>
+        </html>
         """;
 
     private static readonly PathString HealthPath = new("/healthz");
+
+    // What the locked page itself loads. They are public files of the repository, so serving them before the key is
+    // checked gives nothing away; every other file and page still needs the key.
+    private static readonly PathString[] LockedPageAssets = { new("/app.css"), new("/signin.css"), new("/favicon.svg") };
     /// <summary>The names this machine answers to locally; hosted mode starts its own list from them.</summary>
     internal static readonly string[] LocalHostNames = { "localhost", "127.0.0.1", "[::1]" };
 
@@ -79,13 +97,16 @@ public sealed class LocalAccessGate
             return SignIn(context, offered.ToString());
         }
 
-        if (context.Request.Path.Equals(HealthPath) || HasValidCookie(context))
+        if (context.Request.Path.Equals(HealthPath) || IsLockedPageAsset(context.Request) || HasValidCookie(context))
         {
             return next(context);
         }
 
         return ShowLocked(context);
     }
+
+    private static bool IsLockedPageAsset(HttpRequest request) =>
+        (HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method)) && LockedPageAssets.Contains(request.Path);
 
     /// <summary>
     /// The address the request came from, as the client itself has it. A listener on every address (http://*:port)

@@ -8,12 +8,23 @@
 @implements IDisposable
 
 <div class="cm-page">
-    <div class="cm-toolbar">
+    @* The top bar already names the page, so the heading is for screen readers and for the focus a new page gets. *@
+    <h1 class="sr-only">Code Merging Sheet</h1>
+    <div class="sr-only" role="status">@announcement</div>
+    <div class="cm-toolbar @(filtersOpen ? "cm-filters-open" : "")">
+        @* Below 900px (merging.css) the filters fold into this one line, so the grid keeps the screen. *@
+        <div class="cm-tb-mini">
+            <span class="cm-tb-sum" title="@FilterSummary">@FilterSummary</span>
+            <button class="btn-sm" aria-expanded="@(filtersOpen ? "true" : "false")" aria-controls="cmFilters"
+                    @onclick="() => filtersOpen = !filtersOpen">Filters</button>
+            <button class="cfg-load-btn" @onclick="Load" disabled="@(!CanLoad)" title="@(Activity.IsIdle ? null : BusyReason)">Load</button>
+        </div>
+        <div class="cm-tb-filters" id="cmFilters">
         <div class="cm-tb-row">
             <div class="cm-fld" style="flex:1 1 200px;">
                 <label class="cfg-label">📂 Area Path</label>
                 <GlassDropdown Value="@(selectedArea != null ? AreaSprintSelect.Serialize(selectedArea) : "")"
-                               Placeholder="Select area" Disabled="@(areas.Count == 0)"
+                               Placeholder="Select area" Label="Area path" ShowEmptyOption="false" Disabled="@(areas.Count == 0)"
                                Groups="@AreaGroups" OnChange="OnAreaChange" />
             </div>
             <div class="cm-fld" style="flex:1 1 170px;">
@@ -22,7 +33,7 @@
                     @if (selectedSprints.Count > 1) { <span class="cm-hint">@selectedSprints.Count selected</span> }
                 </label>
                 <MultiSelectDropdown Options="@SprintOptions" Selected="@selectedSprints"
-                                     SelectedChanged="OnSprintsChanged" ItemNoun="sprint"
+                                     SelectedChanged="OnSprintsChanged" ItemNoun="sprint" Label="Sprint"
                                      Disabled="@(iterations.Count == 0)"
                                      Placeholder="Select sprint" SearchPlaceholder="Search sprints…" />
             </div>
@@ -31,25 +42,29 @@
                     📦 Repositories
                     @if (selectedRepoIds.Count > 1) { <span class="cm-hint">@selectedRepoIds.Count selected</span> }
                 </label>
-                <MultiSelectDropdown Options="@RepoOptions" Selected="@selectedRepoIds"
+                <MultiSelectDropdown Options="@RepoOptions" Selected="@selectedRepoIds" Label="Repositories"
                                      SelectedChanged="OnReposChanged" ItemNoun="repository"
                                      Disabled="@(AvailableRepos().Count == 0)"
                                      Placeholder="Select repositories" SearchPlaceholder="Search repositories…" />
             </div>
             <div class="cm-fld" style="flex:0 0 auto;">
                 <label class="cfg-label">🏷 Scope</label>
-                <div class="cm-seg">
-                    <button class="cm-seg-btn @(deliverableOnly ? "on" : "")" @onclick="() => deliverableOnly = true"
+                <div class="cm-seg" role="group" aria-label="Scope">
+                    <button class="cm-seg-btn @(deliverableOnly ? "on" : "")" aria-pressed="@(deliverableOnly ? "true" : "false")"
+                            @onclick="() => deliverableOnly = true"
                             title="Requirements need the Deliverable tag; Bugs and Change Requests are always included.">Deliverable</button>
-                    <button class="cm-seg-btn @(deliverableOnly ? "" : "on")" @onclick="() => deliverableOnly = false">All</button>
+                    <button class="cm-seg-btn @(deliverableOnly ? "" : "on")" aria-pressed="@(deliverableOnly ? "false" : "true")"
+                            @onclick="() => deliverableOnly = false">All</button>
                 </div>
             </div>
             <div class="cm-fld" style="flex:0 0 auto;">
                 <label class="cfg-label">🔗 Discovery</label>
-                <button class="cm-seg-btn @(matchByBranchOrTitle ? "on" : "")" style="height:32px;"
+                @* The text names the mode it is in, so the name carries it rather than a pressed state as well. *@
+                @{ var discovery = matchByBranchOrTitle ? "Links + branch/title" : "Links only"; }
+                <button class="cm-seg-btn @(matchByBranchOrTitle ? "on" : "")" style="height:32px;" aria-label="Discovery: @discovery"
                         @onclick="() => matchByBranchOrTitle = !matchByBranchOrTitle"
                         title="Also match pull requests whose source branch or title contains the work item id, for PRs nobody linked.">
-                    @(matchByBranchOrTitle ? "Links + branch/title" : "Links only")
+                    @discovery
                 </button>
             </div>
             <div class="cm-fld cm-fld-btn">
@@ -61,19 +76,19 @@
         </div>
 
         <div class="cm-tb-row">
-            <div class="cm-fld cm-fld-filter">
+            <div class="cm-fld cm-fld-filter" role="group" aria-label="Assigned to">
                 <label class="cfg-label @(Marked(filter.Member))">👤 Assigned To</label>
                 <GlassDropdown Value="@filter.Member" Placeholder="All members" EmptyLabel="All members"
                                EmptyValue="" Options="@MemberOptions()" OnChange="OnMemberChange" />
             </div>
-            <div class="cm-fld cm-fld-filter">
+            <div class="cm-fld cm-fld-filter" role="group" aria-label="Created by">
                 <label class="cfg-label @(Marked(filter.Author))">✍ Created By</label>
                 <GlassDropdown Value="@filter.Author" Placeholder="All creators" EmptyLabel="All creators"
                                EmptyValue="" Options="@AuthorOptions()" OnChange="OnAuthorChange" />
             </div>
             <div class="cm-fld cm-fld-filter cm-fld-state">
                 <label class="cfg-label @(Marked(filter.MergeState))">✅ Merge State</label>
-                <GlassDropdown Value="@filter.MergeState" Placeholder="All" EmptyLabel="All" EmptyValue=""
+                <GlassDropdown Value="@filter.MergeState" Placeholder="All" EmptyLabel="All" EmptyValue="" Label="Merge state"
                                Disabled="@(bundle.TargetBranchName is null)" Options="@MergedOptions" OnChange="OnMergedChange" />
             </div>
             <div class="cm-fld cm-fld-branch">
@@ -98,7 +113,7 @@
                     }
                     else
                     {
-                        <button class="cm-verify-btn cm-compare-btn" @onclick="CompareAllCode" disabled="@(!CanCompareCode)"
+                        <button class="cm-verify-btn" @onclick="CompareAllCode" disabled="@(!CanCompareCode)"
                                 title="@(CanCompareCode ? CompareAllTooltip : VerifyBlockedReason)">
                             <Icon Inner="@Icons.Code" /> Compare Code
                         </button>
@@ -106,10 +121,11 @@
                 </div>
             </div>
         </div>
+        </div>
 
         @if (bundle.Requirements.Count > 0)
         {
-            <MergingInsights Bundle="@bundle" Filter="@filter" VisibleRows="@visibleRows" ScopeRows="@scopeRows"
+            <MergingInsights Bundle="@bundle" Filter="@filter" ScopeRows="@scopeRows"
                              Comparing="@ComparingCode" Progress="@codeProgress" OnMergeStateChanged="SetMergeState" />
         }
     </div>
@@ -126,16 +142,22 @@
                     <div class="cm-gridtabs">
                         <button class="cm-gridtab @(showUnlinked ? "" : "active")" @onclick="() => showUnlinked = false">
                             <Icon Inner="@Icons.List" /><span>Work Items</span>
-                            <span class="cm-gridtab-n">@visibleRows.Count</span>
+                            @* "/43" once a merge-state filter hides some rows, so the count says what it is out of. *@
+                            <span class="cm-gridtab-n">@visibleRows.Count@(visibleRows.Count != scopeRows.Count ? $"/{scopeRows.Count}" : "")</span>
                         </button>
                         <button class="cm-gridtab @(showUnlinked ? "active" : "")" @onclick="ShowUnlinked">
                             <Icon Inner="@Icons.GitBranch" /><span>Unlinked PRs</span>
-                            @if (unlinked.HasRun)
+                            @* Hidden while a search runs, so the last search's count is never read as this one's. *@
+                            @if (unlinked.HasRun && !unlinkedSearching)
                             {
                                 <span class="cm-gridtab-n">@unlinked.PullRequests.Count</span>
                             }
                         </button>
                     </div>
+                    @if (!showUnlinked && bundle.Requirements.Count > 0)
+                    {
+                        <MergingCounts Bundle="@bundle" Filter="@filter" VisibleRows="@visibleRows" />
+                    }
                     @if (!showUnlinked && PendingRowCount > 0)
                     {
                         <button class="cm-pending-chip" disabled="@loadingRest" @onclick="LoadRemainingCommits" title="@PendingTooltip">
@@ -160,7 +182,7 @@
                         {
                             <label class="cm-check" title="How far back to look for pull requests.">
                                 <span>Last</span>
-                                <input type="number" min="1" max="180" value="@unlinkedDays" style="width:52px;"
+                                <input type="number" class="cm-days" min="1" max="180" value="@unlinkedDays"
                                        @onchange="OnUnlinkedDaysChanged" />
                                 <span>days</span>
                             </label>
@@ -174,10 +196,11 @@
                         }
                         else
                         {
-                        <div class="cm-search">
+                        @* A label, so a tap anywhere in the box reaches the input. *@
+                        <label class="cm-search">
                             <Icon Inner="@Icons.Search" />
-                            <input placeholder="Filter by ID or title…" @oninput="OnSearchInput" />
-                        </div>
+                            <input placeholder="Filter by ID or title…" aria-label="Filter by ID or title" value="@filter.Search" @oninput="OnSearchInput" />
+                        </label>
                         <label class="cm-check" title="Order work items by when work started: the earliest commit of their pull requests, or the creation date until the commits are read. Follows All PRs and Created By.">
                             <input type="checkbox" checked="@filter.CommitWise" @onchange="OnCommitWiseChanged" />
                             <span>Commit-wise</span>
@@ -256,11 +279,18 @@
                 }
             </div>
         }
-        else if (!loading)
+        else if (loading)
         {
-            <div class="cm-blank">
-                <div class="cm-blank-icon"><Icon Inner="@Icons.Sheet" CssClass="ic-xl" /></div>
-                <h3>Code Merging Sheet</h3>
+            <div class="blank-state loading" role="status">
+                <span class="spin"></span>
+                <p>Reading work items and pull requests for <b>@FilterSummary…</b></p>
+            </div>
+        }
+        else
+        {
+            <div class="blank-state">
+                <div class="blank-state-icon"><Icon Inner="@Icons.Sheet" CssClass="ic-xl" /></div>
+                <h2>Code Merging Sheet</h2>
                 <p>
                     Pick an area, a sprint and one or more repositories, set each repository's branches under
                     <b>Branch setup</b>, then <b>Load Data</b> to see whether every work item's code actually

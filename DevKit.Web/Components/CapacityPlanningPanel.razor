@@ -6,43 +6,59 @@
 @* Capacity Planning tab of Sprint Insights. TFS is read once per Load; every change of mode,
    scope, view, tag or setting after that is recomputed in memory from what was loaded. *@
 
+<div class="si-toolbar">
 <div class="cfg-bar">
     @Selectors
     <div class="cfg-divider"></div>
-    <div class="cfg-col" style="flex:0 0 auto;">
-        <div class="cfg-field">
+    <div class="cfg-col">
+        <div class="cfg-field" role="group" aria-label="Planning">
             <label class="cfg-label">🧮 Planning</label>
             <div class="cm-seg">
-                <button type="button" class="cm-seg-btn @(settings.Mode == PlanningMode.Regular ? "on" : "")"
+                <button type="button" class="cm-seg-btn @(settings.Mode == PlanningMode.Regular ? "on" : "")" aria-pressed="@(settings.Mode == PlanningMode.Regular ? "true" : "false")"
                         title="Plan to capacity: 100% means every available hour is planned" @onclick="() => SetMode(PlanningMode.Regular)">Regular</button>
-                <button type="button" class="cm-seg-btn @(settings.Mode == PlanningMode.AiOverPlan ? "on" : "")"
+                <button type="button" class="cm-seg-btn @(settings.Mode == PlanningMode.AiOverPlan ? "on" : "")" aria-pressed="@(settings.Mode == PlanningMode.AiOverPlan ? "true" : "false")"
                         title="Plan @OverPlanLabel above capacity on the work AI speeds up" @onclick="() => SetMode(PlanningMode.AiOverPlan)">AI +@OverPlanLabel</button>
             </div>
         </div>
     </div>
     <div class="cfg-divider"></div>
-    <div class="cfg-col" style="flex:0 0 auto;">
-        <button type="button" class="btn-sm" style="height:32px;" title="Hours per day, sprint length, over-plan %, tags and teams" @onclick="() => settingsOpen = true">⚙ Settings</button>
+    <div class="cfg-col">
+        <button type="button" class="btn-sm" title="Hours per day, sprint length, over-plan %, tags and teams" @onclick="() => settingsOpen = true"><span aria-hidden="true">⚙</span> Settings</button>
     </div>
     <div class="cfg-divider"></div>
-    <div class="cfg-col" style="flex:0 0 auto;">
-        <button class="cfg-load-btn" @onclick="LoadPlanning" disabled="@(Area == null || string.IsNullOrEmpty(Sprint) || loading)">
-            @if (loading) { <span class="spin spin-sm" style="color:#fff;"></span> } else { <span>⬇</span> }
+    <div class="cfg-col">
+        <button type="button" class="cfg-load-btn" @onclick="LoadPlanning" disabled="@(loading || LoadBlocked is not null)" title="@LoadBlocked">
+            @if (loading) { <span class="spin spin-sm"></span> } else { <span aria-hidden="true">⬇</span> }
             Load
         </button>
-        @if (Rows.Count > 0) { <span class="chip chip-green" style="font-size:.56rem;">@Rows.Count member(s)</span> }
     </div>
 </div>
+</div>
 
-<div class="cp-body">
-    @if (!string.IsNullOrEmpty(loadError)) { <div class="notice warn">⚠ @loadError</div> }
-    @if (CapacityNotice is { } notice) { <div class="notice warn">⚠ @notice</div> }
+<div class="cp-body @arrival.Class">
+    <div class="sr-only" role="status">@announcement</div>
+    @if (ShowsSelection && !string.IsNullOrEmpty(loadError)) { <div class="notice warn" role="alert">⚠ @loadError</div> }
+    @if (ShowsSelection && CapacityNotice is { } notice) { <div class="notice warn">⚠ @notice</div> }
 
-    @if (work.Tasks.Count == 0)
+    @if (loading)
     {
-        <div class="gpanel"><div class="pbody"><div class="tbl-empty">
-            @(loading ? "Loading tasks and team capacity…" : "Select an area and sprint, then Load to see each member's planned hours against capacity.")
-        </div></div></div>
+        <div class="gpanel"><LoadingState>Reading tasks and team capacity for <b>@AreaSprintSelect.Describe(loadedFor.Area, loadedFor.Sprint)</b></LoadingState></div>
+    }
+    else if (ShowsSelection && loadedEmpty)
+    {
+        <div class="gpanel">
+            <BlankState Glyph="@Icons.TabCapacity" Title="No tasks in this sprint">
+                This area and sprint have no tasks, so there are no planned hours to set against capacity.
+            </BlankState>
+        </div>
+    }
+    else if (!ShowsSelection || work.Tasks.Count == 0)
+    {
+        <div class="gpanel">
+            <BlankState Glyph="@Icons.TabCapacity" Title="Nothing loaded yet">
+                Select an area and sprint, then <b>Load</b> to see each member's planned hours against their capacity.
+            </BlankState>
+        </div>
     }
     else
     {
@@ -50,7 +66,7 @@
             @foreach (var s in Scopes)
             {
                 var sum = plan.SummaryFor(s);
-                <button type="button" class="cp-team @(scope == s ? "on" : "")" title="@ScopeTitle(s)" @onclick="() => scope = s">
+                <button type="button" class="cp-team @(scope == s ? "on" : "")" aria-pressed="@(scope == s ? "true" : "false")" title="@ScopeTitle(s)" @onclick="() => scope = s">
                     <div class="cp-team-head">
                         <span class="cp-team-name">@ScopeName(s)</span>
                         <span class="cp-team-count">@sum.MemberCount member(s)</span>
@@ -59,16 +75,19 @@
                     <div class="cp-team-planned"><b>@H(sum.PlannedReviewDay)</b> planned of <b>@H(sum.TargetCapacity)</b> target</div>
                     <div class="cp-meter"><div class="cp-meter-fill @CapacityPlanningTable.PctClass(sum.PlanningPct)" style="width:@Css(Math.Min(100, sum.PlanningPct))%;"></div></div>
                     <div class="cp-team-split">
-                        <span class="cp-del">● Deliverable @H(sum.Split.DeliverableHours) · @sum.Split.DeliverablePct.ToString("0.#")%</span>
-                        <span class="cp-non">● Non-Deliverable @H(sum.Split.NonDeliverableHours) · @sum.Split.NonDeliverablePct.ToString("0.#")%</span>
+                        @* One line of shares: the strip under the cards names the colours, and each share names itself on hover
+                           and to a screen reader. *@
+                        <span class="cp-del" title="Deliverable @H(sum.Split.DeliverableHours)">● @sum.Split.DeliverablePct.ToString("0.#")%<span class="sr-only"> Deliverable</span></span>
+                        <span class="cp-non" title="Non-Deliverable @H(sum.Split.NonDeliverableHours)">● @sum.Split.NonDeliverablePct.ToString("0.#")%<span class="sr-only"> Non-Deliverable</span></span>
                         @if (sum.Split.OtherHours > 0)
                         {
-                            <span class="cp-unt">● Untagged @H(sum.Split.OtherHours) · @sum.Split.OtherPct.ToString("0.#")%</span>
+                            <span class="cp-unt" title="Untagged @H(sum.Split.OtherHours)">● @sum.Split.OtherPct.ToString("0.#")%<span class="sr-only"> Untagged</span></span>
                         }
+                        @* Bugs ride on the short line of shares, so Completed has its own line and never wraps. *@
+                        <span class="cp-team-bugs @CapacityPlanningTable.BugClass(sum.BugHours)">Bugs <b>@H(sum.BugHours)</b> · @sum.BugPct.ToString("0.#")%</span>
                     </div>
                     <div class="cp-team-progress">
                         <span>Completed <b>@H(sum.CompletedHours)</b> · @sum.CompletedPct.ToString("0.#")%@ExpectedSuffix(sum.ExpectedPct)</span>
-                        <span class="cp-bug">Bugs <b>@H(sum.BugHours)</b> · @sum.BugPct.ToString("0.#")%</span>
                     </div>
                     <div class="cp-team-foot">
                         Actual @H(sum.ActualCapacity)
@@ -84,65 +103,71 @@
             }
         </div>
 
-        <div class="gpanel" style="margin-bottom:14px;">
-            <div class="phead">
-                <span class="ptitle">📦 Deliverable vs Non-Deliverable · @ScopeName(scope)</span>
-                <span style="font-size:.62rem;color:var(--muted);">Tag rules first, then the parent's "@settings.DeliverableMarkerTag" / "@settings.NonDeliverableMarkerTag" tag</span>
-            </div>
-            <div class="pbody" style="display:flex;flex-direction:column;gap:12px;">
-                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                    <span style="font-size:.66rem;font-weight:600;color:var(--muted2);">Count as Deliverable:</span>
-                    @foreach (var rule in settings.TagRules)
+        @* The chosen team's split in one strip: legend, bar, and the tag rules behind a button, since they are settings
+           (pressing one saves it) and the member table should start on the first screen. *@
+        <div class="cp-split-strip">
+            <span class="cp-strip-title">📦 @ScopeName(scope)</span>
+            @if (Summary.Split.Total > 0)
+            {
+                <div class="cp-split">
+                    <span class="cp-del">● Deliverable @H(Summary.Split.DeliverableHours) (@Summary.Split.DeliverablePct.ToString("0.#")%)</span>
+                    <span class="cp-non">● Non-Deliverable @H(Summary.Split.NonDeliverableHours) (@Summary.Split.NonDeliverablePct.ToString("0.#")%)</span>
+                    @if (Summary.Split.OtherHours > 0)
                     {
-                        <button type="button" class="btn-sm @(rule.Deliverable ? "btn-sm-active" : "")" @onclick="() => ToggleTagDeliverable(rule.Tag)"
-                                title="Click to count @rule.Tag work as @(rule.Deliverable ? "Non-Deliverable" : "Deliverable")">
-                            @rule.Tag · @(rule.Deliverable ? "Deliverable" : "Non-Deliverable")
-                        </button>
-                    }
-                    @if (settings.TagRules.Count == 0)
-                    {
-                        <span style="font-size:.64rem;color:var(--muted);">No tag rules. Add them under ⚙ Settings.</span>
+                        <span class="cp-unt">● Untagged @H(Summary.Split.OtherHours) (@Summary.Split.OtherPct.ToString("0.#")%)</span>
                     }
                 </div>
-                @if (Summary.Split.Total > 0)
-                {
-                    <div>
-                        <div style="display:flex;gap:18px;font-size:.72rem;margin-bottom:7px;flex-wrap:wrap;">
-                            <span class="cp-del" style="font-weight:700;">● Deliverable @H(Summary.Split.DeliverableHours) (@Summary.Split.DeliverablePct.ToString("0.#")%)</span>
-                            <span class="cp-non" style="font-weight:700;">● Non-Deliverable @H(Summary.Split.NonDeliverableHours) (@Summary.Split.NonDeliverablePct.ToString("0.#")%)</span>
-                            @if (Summary.Split.OtherHours > 0)
-                            {
-                                <span class="cp-unt">● Untagged @H(Summary.Split.OtherHours) (@Summary.Split.OtherPct.ToString("0.#")%)</span>
-                            }
-                        </div>
-                        <div class="deliv-bar">
-                            <div class="deliv-seg deliv-del" style="width:@(Css(Summary.Split.DeliverablePct))%;"></div>
-                            <div class="deliv-seg deliv-non" style="width:@(Css(Summary.Split.NonDeliverablePct))%;"></div>
-                            <div class="deliv-seg deliv-other" style="width:@(Css(Summary.Split.OtherPct))%;"></div>
-                        </div>
+                <div class="deliv-bar">
+                    <div class="deliv-seg deliv-del" style="width:@(Css(Summary.Split.DeliverablePct))%;"></div>
+                    <div class="deliv-seg deliv-non" style="width:@(Css(Summary.Split.NonDeliverablePct))%;"></div>
+                    <div class="deliv-seg deliv-other" style="width:@(Css(Summary.Split.OtherPct))%;"></div>
+                </div>
+            }
+            else
+            {
+                <div class="cp-tags-none">No estimated hours to classify for this team.</div>
+            }
+            <Popover Open="@tagRulesOpen" OpenChanged="@(o => tagRulesOpen = o)" CssClass="cp-tagrules" PanelClass="cp-tagrules-pop" Label="Tag rules">
+                <Trigger>
+                    <button type="button" class="si-quiet-btn cp-tagrules-btn @(tagRulesOpen ? "on" : "")" aria-expanded="@(tagRulesOpen ? "true" : "false")"
+                            title="Which tags count as Deliverable" @onclick="() => tagRulesOpen = !tagRulesOpen">
+                        <span aria-hidden="true">🏷</span> Tag rules<span class="si-btn-count"> · @settings.TagRules.Count</span>
+                    </button>
+                </Trigger>
+                <ChildContent>
+                    <div class="cp-tags-note">Tag rules first, then the parent's "@settings.DeliverableMarkerTag" / "@settings.NonDeliverableMarkerTag" tag</div>
+                    <div class="cp-tags">
+                        <span class="cp-tags-label">Count as Deliverable:</span>
+                        @foreach (var rule in settings.TagRules)
+                        {
+                            <button type="button" class="cp-tag @(rule.Deliverable ? "del" : "non")" @onclick="() => ToggleTagDeliverable(rule.Tag)"
+                                    title="Click to count @rule.Tag work as @(rule.Deliverable ? "Non-Deliverable" : "Deliverable")">
+                                @rule.Tag · @(rule.Deliverable ? "Deliverable" : "Non-Deliverable")
+                            </button>
+                        }
+                        @if (settings.TagRules.Count == 0)
+                        {
+                            <span class="cp-tags-none">No tag rules. Add them under ⚙ Settings.</span>
+                        }
                     </div>
-                }
-                else
-                {
-                    <div style="font-size:.7rem;color:var(--muted);">No estimated hours to classify for this team.</div>
-                }
-            </div>
+                </ChildContent>
+            </Popover>
         </div>
 
-        <div class="gpanel" style="margin-bottom:14px;">
+        <div class="gpanel">
             <div class="phead">
                 <span class="ptitle">@(view == PanelView.Progress ? "📈 Sprint progress" : "📊 Planning by member") · @ScopeName(scope)</span>
-                <div style="display:flex;align-items:center;gap:12px;">
-                    <span style="font-size:.64rem;color:var(--muted);">@HeaderSummary</span>
-                    <div class="cm-seg">
-                        <button type="button" class="cm-seg-btn @(view == PanelView.Planning ? "on" : "")" @onclick="() => view = PanelView.Planning"
+                <div class="si-head-tools">
+                    <span class="si-head-note">@HeaderSummary</span>
+                    <div class="cm-seg" role="group" aria-label="View">
+                        <button type="button" class="cm-seg-btn @(view == PanelView.Planning ? "on" : "")" aria-pressed="@(view == PanelView.Planning ? "true" : "false")" @onclick="() => view = PanelView.Planning"
                                 title="Capacity, over-plan and planned hours per member">Planning</button>
-                        <button type="button" class="cm-seg-btn @(view == PanelView.Progress ? "on" : "")" @onclick="() => view = PanelView.Progress"
+                        <button type="button" class="cm-seg-btn @(view == PanelView.Progress ? "on" : "")" aria-pressed="@(view == PanelView.Progress ? "true" : "false")" @onclick="() => view = PanelView.Progress"
                                 title="Completed and remaining work against the plan, with bug hours kept apart">Progress</button>
                     </div>
                 </div>
             </div>
-            <div class="pbody" style="overflow-x:auto;padding:14px 16px;">
+            <div class="pbody cp-table-body">
                 @if (Rows.Count == 0)
                 {
                     <div class="tbl-empty">No tasks in this sprint belong to the @ScopeName(scope).</div>
@@ -185,17 +210,16 @@
 
 @if (breakdown != null)
 {
-    <div class="modal-overlay" @onclick="() => breakdown = null">
-        <div class="modal" style="max-width:460px;" @onclick:stopPropagation>
-            <h3>Capacity breakdown · @breakdown.DisplayName</h3>
-            <div class="modal-body">
+    <ModalDialog CssClass="cp-breakdown" OnClose="() => breakdown = null">
+        <Title>Capacity breakdown · @breakdown.DisplayName</Title>
+        <ChildContent>
                 <div class="modal-row"><span class="label">Cap / day</span><span>@breakdown.CapacityPerDay.ToString("0.##") h @(breakdown.CapacityFromTfs ? "(TFS)" : "(default)")</span></div>
                 <div class="modal-row"><span class="label">Sprint days</span><span>@breakdown.SprintDays − @breakdown.LeaveDays.ToString("0.##") leave = @breakdown.AvailableDays.ToString("0.##")</span></div>
                 @foreach (var team in breakdown.TfsTeams)
                 {
                     <div class="modal-row"><span class="label">@team.Team</span><span>@team.CapacityPerDay.ToString("0.##") h × (@breakdown.SprintDays − @team.LeaveDays.ToString("0.##") leave) = @team.ActualCapacity.ToString("0.##") h</span></div>
                 }
-                <div class="modal-row"><span class="label">Actual</span><span style="font-weight:700;">@breakdown.ActualCapacity.ToString("0.##") h</span></div>
+                <div class="modal-row"><span class="label">Actual</span><span class="cp-key">@breakdown.ActualCapacity.ToString("0.##") h</span></div>
                 @if (IsAi)
                 {
                     <hr class="cp-rule" />
@@ -205,27 +229,26 @@
                     }
                     <div class="modal-row"><span class="label">AI @OverPlanLabel</span><span>(@breakdown.ActualCapacity.ToString("0.##") − @breakdown.ExcludedHours.ToString("0.##")) × @OverPlanLabel = + @breakdown.AiHours.ToString("0.##") h</span></div>
                 }
-                <div class="modal-row"><span class="label">Target</span><span style="font-weight:700;color:var(--purple);">@breakdown.TargetCapacity.ToString("0.##") h</span></div>
+                <div class="modal-row"><span class="label">Target</span><span class="cp-key">@breakdown.TargetCapacity.ToString("0.##") h</span></div>
                 <hr class="cp-rule" />
                 <div class="modal-row"><span class="label">Planned · Plan</span><span>@breakdown.PlannedPlanningDay.ToString("0.##") h (@breakdown.PlanningPctPlanningDay.ToString("0.#")%)</span></div>
-                <div class="modal-row"><span class="label">Planned · Review</span><span style="font-weight:700;color:var(--accent2);">@breakdown.PlannedReviewDay.ToString("0.##") h (@breakdown.PlanningPctReviewDay.ToString("0.#")%)</span></div>
+                <div class="modal-row"><span class="label">Planned · Review</span><span class="cp-key">@breakdown.PlannedReviewDay.ToString("0.##") h (@breakdown.PlanningPctReviewDay.ToString("0.#")%)</span></div>
                 <hr class="cp-rule" />
-                <div class="modal-row"><span class="label">Deliverable</span><span class="cp-del" style="font-weight:700;">@breakdown.Split.DeliverableHours.ToString("0.##") h (@breakdown.Split.DeliverablePct.ToString("0.#")%)</span></div>
+                <div class="modal-row"><span class="label">Deliverable</span><span class="cp-del cp-key">@breakdown.Split.DeliverableHours.ToString("0.##") h (@breakdown.Split.DeliverablePct.ToString("0.#")%)</span></div>
                 <div class="modal-row"><span class="label">Non-Deliverable</span><span class="cp-non">@breakdown.Split.NonDeliverableHours.ToString("0.##") h (@breakdown.Split.NonDeliverablePct.ToString("0.#")%)</span></div>
                 @if (breakdown.Split.OtherHours > 0)
                 {
                     <div class="modal-row"><span class="label">Untagged</span><span class="cp-unt">@breakdown.Split.OtherHours.ToString("0.##") h (@breakdown.Split.OtherPct.ToString("0.#")%)</span></div>
                 }
                 <hr class="cp-rule" />
-                <div class="modal-row"><span class="label">Completed</span><span style="font-weight:700;">@breakdown.CompletedHours.ToString("0.##") h (@breakdown.CompletedPct.ToString("0.#")% of plan@(ExpectedSuffix(breakdown.ExpectedPct)))</span></div>
+                <div class="modal-row"><span class="label">Completed</span><span class="cp-key">@breakdown.CompletedHours.ToString("0.##") h (@breakdown.CompletedPct.ToString("0.#")% of plan@(ExpectedSuffix(breakdown.ExpectedPct)))</span></div>
                 <div class="modal-row"><span class="label">Remaining</span><span>@breakdown.RemainingHours.ToString("0.##") h (@breakdown.RemainingPct.ToString("0.#")%)</span></div>
-                <div class="modal-row"><span class="label">Bugs</span><span class="cp-bug">@breakdown.BugHours.ToString("0.##") h (@breakdown.BugPct.ToString("0.#")% of logged time)</span></div>
-            </div>
-            <div class="modal-actions">
+                <div class="modal-row"><span class="label">Bugs</span><span class="@CapacityPlanningTable.BugClass(breakdown.BugHours)">@breakdown.BugHours.ToString("0.##") h (@breakdown.BugPct.ToString("0.#")% of logged time)</span></div>
+        </ChildContent>
+        <Actions>
                 <button type="button" class="btn-ghost" @onclick="() => breakdown = null">Close</button>
-            </div>
-        </div>
-    </div>
+        </Actions>
+    </ModalDialog>
 }
 
 @if (settingsOpen)
@@ -252,15 +275,27 @@
     // Development first: it is what the tab always opened on.
     private PlanningScope scope = PlanningScope.Development;
     private PanelView view = PanelView.Planning;
-    private bool loading, settingsOpen;
+    private bool loading, settingsOpen, tagRulesOpen;
     private string? loadError;
+
+    // The last load came back with no tasks: an answer for that area and sprint, not a failure.
+    private bool loadedEmpty;
+
+    // The area and sprint the last load read. Its numbers show only while that pair is still picked.
+    private (TfsArea? Area, string? Sprint) loadedFor;
+    private bool ShowsSelection => AreaSprintSelect.Key(loadedFor.Area, loadedFor.Sprint) == AreaSprintSelect.Key(Area, Sprint);
     private MemberPlanning? breakdown;
     private CancellationTokenSource? loadCts;
+    private readonly ArrivalCue arrival = new();
+
+    // What a screen reader is told once a load finishes; a failure is the alert notice.
+    private string announcement = "";
 
     private bool IsAi => settings.Mode == PlanningMode.AiOverPlan;
     private IReadOnlyList<MemberPlanning> Rows => plan.For(scope);
     private TeamPlanningSummary Summary => plan.SummaryFor(scope);
     private string OverPlanLabel => $"{settings.AiOverPlanPercent:0.##}%";
+    private string? LoadBlocked => AreaSprintSelect.MissingSelection(Area, Sprint);
 
     protected override void OnInitialized() => settings = Settings.CapacityPlanning;
 
@@ -276,7 +311,12 @@
         var area = Area;
         var sprint = Sprint;
 
-        loading = true; loadError = null; breakdown = null;
+        loading = true; loadError = null; loadedEmpty = false; breakdown = null; announcement = "";
+        loadedFor = (area, sprint);
+        // The last sprint's numbers go as the new read starts, as on every other tab, so a failure never leaves them
+        // showing under the new selection.
+        work = SprintWorkData.Empty;
+        Recompute();
         StateHasChanged();
         try
         {
@@ -296,11 +336,15 @@
 
             work = new SprintWorkData(tasks, cap, parents);
             Recompute();
-            if (work.Tasks.Count == 0) loadError = "No tasks found for this area and sprint.";
+            loadedEmpty = work.Tasks.Count == 0;
+            arrival.Mark();
+            announcement = loadedEmpty
+                ? "This area and sprint have no tasks."
+                : $"Loaded {plan.For(PlanningScope.All).Count} members' capacity.";
         }
         catch (OperationCanceledException ex) when (ct.IsCancellationRequested)
         {
-            Logger.LogDebug(ex, "Capacity planning load for {Area} / {Sprint} was superseded or the tab was left", area.Path, sprint);
+            Logger.LogDebug(ex, "Capacity planning load for {Area} / {Sprint} was superseded or the page was left", area.Path, sprint);
         }
         catch (Exception ex)
         {

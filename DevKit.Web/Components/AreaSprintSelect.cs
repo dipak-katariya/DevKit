@@ -67,6 +67,33 @@ public static class AreaSprintSelect
                ?? dated.Where(i => i.FinishDate!.Value.Date < today.Date).MaxBy(i => i.FinishDate);
     }
 
+    /// <summary>
+    /// Why a load that reads an area and a sprint cannot start yet, for its disabled button's tooltip; null once both
+    /// are picked.
+    /// </summary>
+    public static string? MissingSelection(TfsArea? area, string? sprint)
+    {
+        if (area is null)
+        {
+            return "Select an area first.";
+        }
+        return string.IsNullOrEmpty(sprint) ? "Select a sprint first." : null;
+    }
+
+    /// <summary>
+    /// Identifies an area and sprint pair, so a tab can tell whether its results were loaded for the pair picked now.
+    /// Results for another pair stay hidden: under a newly picked sprint they would read as that sprint's.
+    /// </summary>
+    public static string Key(TfsArea? area, string? sprint) => $"{area?.Project}|{area?.Path}|{sprint}";
+
+    /// <summary>The area and sprint a load reads, as its loading message names them: "FX to CPFOIA Migration · PI-2026-5_4".</summary>
+    public static string Describe(TfsArea? area, string? sprint)
+    {
+        var path = sprint ?? "";
+        var sprintName = path[(path.LastIndexOf('\\') + 1)..];
+        return area is null ? sprintName : $"{TfsApiService.AreaDisplayPath(area.Path)} · {sprintName}";
+    }
+
     public static List<GlassDropdown.DropdownGroup> AreaGroups(IEnumerable<TfsArea> areas) => areas
         .GroupBy(a => a.Project)
         .Select(grp => new GlassDropdown.DropdownGroup

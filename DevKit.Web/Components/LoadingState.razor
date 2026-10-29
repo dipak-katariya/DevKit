@@ -1,0 +1,11 @@
+@* What holds a list's place while a load runs: a spinner and what is being read, so the page never sits empty or
+   shows a stale "nothing found" while it waits. Read once by screen readers. *@
+<div class="blank-state loading" role="status">
+    <span class="spin" aria-hidden="true"></span>
+    <p>@ChildContent</p>
+</div>
+
+@code {
+    /// <summary>What is being read; a bold part (the area and sprint) takes a line of its own.</summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

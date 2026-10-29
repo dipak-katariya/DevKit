@@ -6,88 +6,96 @@
 @inject IJSRuntime JS
 @inject ILogger<Settings> Logger
 
-<div style="flex:1;display:flex;flex-direction:column;max-width:800px;margin:0 auto;overflow-y:auto;width:100%;padding-bottom:20px;">
-    <div class="gpanel">
-        <div class="phead">
-            <span class="ptitle">⚙ Configuration</span>
-            <div style="margin-left:auto;display:flex;gap:6px;">
-                <button class="btn-sm" @onclick="ExportSettings"
-                        title="Download your settings as a file. The TFS connection and token are not included.">📤 Export</button>
-                <label class="btn-sm" style="cursor:pointer;"
-                       title="Load settings from a file exported by DevKit. Your TFS connection is not changed.">
-                    📥 Import
-                    <InputFile OnChange="ImportSettings" accept=".json,application/json" style="display:none;" />
-                </label>
-            </div>
+@* One column of raised sections. Every choice is saved as it is made, except the TFS connection: that one is checked
+   with TFS first and saved only when TFS accepts it. *@
+<div class="st-page">
+    <h1 class="sr-only">Settings</h1>
+    <div class="st-col">
+    <div class="st-bar">
+        <p class="st-where" title="@SettingsSvc.SettingsFilePath">Saved in <code>@SettingsSvc.SettingsFilePath</code></p>
+        <div class="st-bar-tools">
+            <button type="button" class="btn-sm" @onclick="ExportSettings"
+                    title="Download your settings as a file. The TFS connection and token are not included."><span aria-hidden="true">📤</span> Export</button>
+            @* The file input stays in the Tab order, hidden only from sight, so Import works from the keyboard too. *@
+            <label class="btn-sm st-import"
+                   title="Load settings from a file exported by DevKit. Your TFS connection is not changed.">
+                <span aria-hidden="true">📥</span> Import
+                <InputFile OnChange="ImportSettings" accept=".json,application/json" class="sr-only" />
+            </label>
         </div>
+    </div>
+    <div role="status">
+        @if (!string.IsNullOrEmpty(transferMsg))
+        {
+            <div class="notice @(transferOk ? "ok" : "bad")">@transferMsg</div>
+        }
+    </div>
+    @foreach (var problem in new[] { SettingsSvc.LoadProblem, SettingsSvc.LastSaveError }.OfType<string>().Distinct())
+    {
+        <div class="notice bad" role="alert">@problem</div>
+    }
+
+    <section class="gpanel st-sec" aria-labelledby="stTfsTitle">
+        <div class="phead"><h2 class="ptitle" id="stTfsTitle">TFS / Azure DevOps Connection</h2></div>
         <div class="pbody">
-            @if (!string.IsNullOrEmpty(transferMsg))
-            {
-                <div style="margin-bottom:14px;font-size:.74rem;color:@(transferOk ? "var(--green)" : "var(--red)");">@transferMsg</div>
-            }
-            @foreach (var problem in new[] { SettingsSvc.LoadProblem, SettingsSvc.LastSaveError }.OfType<string>().Distinct())
-            {
-                <div style="margin-bottom:14px;font-size:.74rem;color:var(--red);">@problem</div>
-            }
-            <!-- TFS Connection -->
-            <h3 style="font-size:.82rem;font-weight:700;margin-bottom:14px;color:var(--text);">TFS / Azure DevOps Connection</h3>
             @* Windows sign-in to TFS acts as the account DevKit runs as, so shared DevKit offers it to that account alone. *@
             @if (SettingsSvc.AllowsWindowsSignIn)
             {
-                <div class="f-row">
-                    <div class="f-label">Sign in with</div>
+                <div class="f-row" role="group" aria-labelledby="stSignInLabel">
+                    <div class="f-label" id="stSignInLabel">Sign in with</div>
                     <div class="cm-seg">
-                        <button type="button" class="cm-seg-btn @(tfsAuth == TfsAuthMode.Windows ? "on" : "")"
+                        <button type="button" class="cm-seg-btn @(tfsAuth == TfsAuthMode.Windows ? "on" : "")" aria-pressed="@(tfsAuth == TfsAuthMode.Windows ? "true" : "false")"
                                 @onclick="() => SetSignIn(TfsAuthMode.Windows)">Windows account</button>
-                        <button type="button" class="cm-seg-btn @(tfsAuth == TfsAuthMode.Pat ? "on" : "")"
+                        <button type="button" class="cm-seg-btn @(tfsAuth == TfsAuthMode.Pat ? "on" : "")" aria-pressed="@(tfsAuth == TfsAuthMode.Pat ? "true" : "false")"
                                 @onclick="() => SetSignIn(TfsAuthMode.Pat)">Personal Access Token</button>
                     </div>
                 </div>
             }
             <div class="settings-grid">
                 <div class="f-row">
-                    <div class="f-label">Server URL <span class="req-badge">required</span></div>
+                    <label class="f-label" for="stTfsUrl">Server URL <span class="req-badge">required</span></label>
                     @if (SettingsSvc.FixedTfsUrl is { } fixedUrl)
                     {
-                        <input class="fi" value="@fixedUrl" readonly title="Set for everyone by whoever runs this shared DevKit." />
+                        <input id="stTfsUrl" class="fi" value="@fixedUrl" readonly title="Set for everyone by whoever runs this shared DevKit." />
                     }
                     else
                     {
-                        <input class="fi" @bind="tfsUrl" placeholder="@TfsConnectionForm.ExampleHint" />
+                        <input id="stTfsUrl" class="fi" @bind="tfsUrl" placeholder="@TfsConnectionForm.ExampleHint" />
                     }
                 </div>
                 @if (tfsAuth == TfsAuthMode.Windows)
                 {
                     <div class="f-row">
-                        <div class="f-label">Windows account <em>no token needed</em></div>
-                        <input class="fi" value="@WindowsAccount" readonly title="DevKit signs in to TFS as the Windows account it runs as." />
+                        <label class="f-label" for="stAccount">Windows account <em>no token needed</em></label>
+                        <input id="stAccount" class="fi" value="@WindowsAccount" readonly title="DevKit signs in to TFS as the Windows account it runs as." />
                     </div>
                 }
                 else
                 {
                     <div class="f-row">
-                        <div class="f-label">Personal Access Token <span class="req-badge">required</span></div>
-                        <input class="fi" type="password" autocomplete="new-password" @bind="tfsPat"
+                        <label class="f-label" for="stPat">Personal Access Token <span class="req-badge">required</span></label>
+                        <input id="stPat" class="fi" type="password" autocomplete="new-password" @bind="tfsPat"
                                placeholder="@(hasStoredPat ? "Saved. Leave blank to keep it" : "Enter PAT")" />
                     </div>
                 }
             </div>
-            <div style="display:flex;gap:8px;margin-top:12px;">
-                <button class="btn-ghost" @onclick="SaveAndConnect" disabled="@saving">
-                    @if (saving) { <span class="spin spin-sm"></span> } else { <span>💾</span> }
+            <div class="st-actions">
+                <button type="button" class="btn-primary" @onclick="SaveAndConnect" disabled="@saving">
+                    @if (saving) { <span class="spin spin-sm"></span> } else { <span aria-hidden="true">💾</span> }
                     Save & Connect
                 </button>
-                <button class="btn-ghost" @onclick="TestConnection" disabled="@testing">
-                    @if (testing) { <span class="spin spin-sm"></span> } else { <span>🔌</span> }
+                <button type="button" class="btn-ghost" @onclick="TestConnection" disabled="@testing">
+                    @if (testing) { <span class="spin spin-sm"></span> } else { <span aria-hidden="true">🔌</span> }
                     Test Connection
                 </button>
             </div>
-            @if (!string.IsNullOrEmpty(statusMsg))
-            {
-                <div style="margin-top:10px;font-size:.74rem;color:@(statusOk ? "var(--green)" : "var(--red)");">@statusMsg</div>
-            }
-            <p style="font-size:.62rem;color:var(--muted);margin-top:10px;">
-                Saved in <code style="font-size:.62rem;color:var(--cyan);">@SettingsSvc.SettingsFilePath</code>.
+            <div role="status">
+                @if (!string.IsNullOrEmpty(statusMsg))
+                {
+                    <div class="notice @(statusOk ? "ok" : "bad")">@statusMsg</div>
+                }
+            </div>
+            <p class="st-hint">
                 @if (SettingsSvc.FixedTfsUrl is not null)
                 {
                     <text>They are encrypted for your Windows account and kept only here, never on the DevKit server. They stay when DevKit is updated or moves to another server; in another browser or on another PC, enter them once there.</text>
@@ -101,24 +109,23 @@
                     <text>Only your Windows account can open it, and the PAT inside is encrypted for this server.</text>
                 }
             </p>
+        </div>
+    </section>
 
-            <hr style="border:none;border-top:1px solid rgba(255,255,255,.05);margin:20px 0;" />
-
-            <!-- Team Name & Default Selections -->
-            <h3 style="font-size:.82rem;font-weight:700;margin-bottom:6px;color:var(--text);">Team & Default Selections</h3>
-            <p style="font-size:.66rem;color:var(--muted);margin-bottom:10px;">
-                Configure your team name and default selections. These pre-fill the area and sprint pickers on the other pages.
-            </p>
-            <div class="f-row" style="max-width:400px;margin-bottom:14px;">
-                <div class="f-label">Team Name</div>
-                <input class="fi" value="@teamName" @onchange="OnTeamNameChange" placeholder="e.g. FOIA, Platform, Core…" />
-                <p style="font-size:.56rem;color:var(--muted);margin-top:4px;">Used in branch naming: <code style="font-size:.56rem;color:var(--cyan);">TeamName/sprint/id_title</code></p>
+    <section class="gpanel st-sec" aria-labelledby="stDefaultsTitle">
+        <div class="phead"><h2 class="ptitle" id="stDefaultsTitle">Team & Default Selections</h2></div>
+        <div class="pbody">
+            <p class="st-desc">Configure your team name and default selections. These pre-fill the area and sprint pickers on the other pages.</p>
+            <div class="f-row st-team">
+                <label class="f-label" for="stTeam">Team Name</label>
+                <input id="stTeam" class="fi" value="@teamName" @onchange="OnTeamNameChange" placeholder="e.g. FOIA, Platform, Core…" />
+                <p class="st-hint">Used in branch naming: <code>TeamName/sprint/id_title</code></p>
             </div>
-            @if (!string.IsNullOrEmpty(metadataError)) { <div class="notice warn">⚠ @metadataError</div> }
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+            @if (!string.IsNullOrEmpty(metadataError)) { <div class="notice warn" role="alert">⚠ @metadataError</div> }
+            <div class="st-grid3">
                 <div class="f-row">
                     <div class="f-label">Default Area Path</div>
-                    <GlassDropdown CssClass="fi-size"
+                    <GlassDropdown CssClass="fi-size" Label="Default area path"
                                    Value="@defaultAreaPath"
                                    Placeholder="None"
                                    EmptyLabel="None" EmptyValue=""
@@ -126,22 +133,22 @@
                                    Groups="@AreaGroups"
                                    OnChange="OnDefaultAreaChange" />
                 </div>
-                <div class="f-row">
-                    <div class="f-label">Default Sprint</div>
-                    <div class="cm-seg" style="margin-bottom:6px;">
-                        <button type="button" class="cm-seg-btn @(defaultSprintIsCurrent ? "on" : "")"
+                <div class="f-row" role="group" aria-labelledby="stSprintLabel">
+                    <div class="f-label" id="stSprintLabel">Default Sprint</div>
+                    <div class="cm-seg st-seg">
+                        <button type="button" class="cm-seg-btn @(defaultSprintIsCurrent ? "on" : "")" aria-pressed="@(defaultSprintIsCurrent ? "true" : "false")"
                                 @onclick="() => SetDefaultSprintMode(true)">Current sprint</button>
-                        <button type="button" class="cm-seg-btn @(defaultSprintIsCurrent ? "" : "on")"
+                        <button type="button" class="cm-seg-btn @(defaultSprintIsCurrent ? "" : "on")" aria-pressed="@(defaultSprintIsCurrent ? "false" : "true")"
                                 @onclick="() => SetDefaultSprintMode(false)">Choose a sprint</button>
                     </div>
                     @if (defaultSprintIsCurrent)
                     {
-                        <input class="fi" value="@CurrentSprintLabel" readonly
+                        <input class="fi" value="@CurrentSprintLabel" readonly aria-label="Current sprint"
                                title="Worked out from today's date and the sprint dates in TFS, in the default area's project." />
                     }
                     else
                     {
-                        <GlassDropdown CssClass="fi-size"
+                        <GlassDropdown CssClass="fi-size" Label="Default sprint"
                                        Value="@defaultSprint"
                                        Placeholder="None"
                                        EmptyLabel="None" EmptyValue=""
@@ -152,7 +159,7 @@
                 </div>
                 <div class="f-row">
                     <div class="f-label">Default Repository</div>
-                    <GlassDropdown CssClass="fi-size"
+                    <GlassDropdown CssClass="fi-size" Label="Default repository"
                                    Value="@defaultRepoId"
                                    Placeholder="None"
                                    EmptyLabel="None" EmptyValue=""
@@ -161,21 +168,21 @@
                                    OnChange="OnDefaultRepoChange" />
                 </div>
             </div>
+        </div>
+    </section>
 
-            <hr style="border:none;border-top:1px solid rgba(255,255,255,.05);margin:20px 0;" />
-
-            <!-- Most-used repositories -->
-            <h3 style="font-size:.82rem;font-weight:700;margin-bottom:6px;color:var(--text);">Most-Used Repositories</h3>
-            <p style="font-size:.66rem;color:var(--muted);margin-bottom:10px;">
+    <section class="gpanel st-sec" aria-labelledby="stPinsTitle">
+        <div class="phead"><h2 class="ptitle" id="stPinsTitle">Most-Used Repositories</h2></div>
+        <div class="pbody">
+            <p class="st-desc">
                 Pin the repositories you work in most often. They appear in a
                 <b>@RepoSelect.MostUsedGroupLabel</b> group at the top of every repository picker in DevKit,
                 in the order you pin them.
             </p>
-
-            <div style="display:grid;grid-template-columns:150px 1fr;gap:12px;align-items:start;">
+            <div class="st-pins-grid">
                 <div class="f-row">
                     <div class="f-label">How many</div>
-                    <GlassDropdown CssClass="fi-size"
+                    <GlassDropdown CssClass="fi-size" Label="How many repositories to pin"
                                    Value="@mostUsedCount.ToString()"
                                    ShowEmptyOption="false"
                                    Placeholder="Off"
@@ -187,10 +194,10 @@
                         Pinned repositories
                         @if (mostUsedCount > 0)
                         {
-                            <span style="font-size:.52rem;color:var(--muted);font-weight:400;">@mostUsedRepoIds.Count of @mostUsedCount used</span>
+                            <span class="st-count">@mostUsedRepoIds.Count of @mostUsedCount used</span>
                         }
                     </div>
-                    <MultiSelectDropdown Options="@AllRepoOptions" Selected="@mostUsedSelection"
+                    <MultiSelectDropdown Options="@AllRepoOptions" Selected="@mostUsedSelection" Label="Pinned repositories"
                                          SelectedChanged="OnMostUsedReposChanged" ItemNoun="repository"
                                          Disabled="@(mostUsedCount == 0 || repos.Count == 0)"
                                          Placeholder="@(mostUsedCount == 0 ? "Turned off" : "Select repositories")"
@@ -202,29 +209,42 @@
                flashing "(unknown repository)" for every pin. *@
             @if (mostUsedRepoIds.Count > 0 && repos.Count > 0)
             {
-                <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;">
+                <ol class="st-pins" aria-label="Pinned repositories, in order">
                     @for (var i = 0; i < mostUsedRepoIds.Count; i++)
                     {
                         var repoId = mostUsedRepoIds[i];
                         var position = i + 1;
-                        <span class="chip chip-cyan" style="display:inline-flex;align-items:center;gap:6px;font-size:.6rem;" @key="repoId">
-                            <span style="opacity:.6;">@position</span>
+                        <li class="st-pin" @key="repoId">
+                            <span class="st-pin-n" aria-hidden="true">@position</span>
                             @MostUsedRepoLabel(repoId)
-                            <button class="bpk-clear" title="Unpin" @onclick="() => UnpinMostUsedRepo(repoId)">✕</button>
-                        </span>
+                            <button type="button" class="bpk-clear" title="Unpin" aria-label="Unpin @MostUsedRepoLabel(repoId)" @onclick="() => UnpinMostUsedRepo(repoId)">✕</button>
+                        </li>
                     }
-                </div>
+                </ol>
             }
-            @if (!string.IsNullOrEmpty(mostUsedMsg))
+            <div role="status">
+                @if (!string.IsNullOrEmpty(mostUsedMsg))
+                {
+                    <div class="notice warn">⚠ @mostUsedMsg</div>
+                }
+            </div>
+        </div>
+    </section>
+
+    <section class="gpanel st-sec" aria-labelledby="stBranchesTitle">
+        <div class="phead">
+            <h2 class="ptitle" id="stBranchesTitle">Default Branches for Code Merging</h2>
+            @if (repos.Count > 0)
             {
-                <div style="margin-top:8px;font-size:.64rem;color:var(--amber);">⚠ @mostUsedMsg</div>
+                <span class="si-count">@ConfiguredBranchCount of @repos.Count configured@(BranchRepos.Count < repos.Count ? $" · showing {BranchRepos.Count}" : "")</span>
             }
-
-            <hr style="border:none;border-top:1px solid rgba(255,255,255,.05);margin:20px 0;" />
-
-            <!-- Code Merging branch defaults -->
-            <h3 style="font-size:.82rem;font-weight:700;margin-bottom:6px;color:var(--text);">Default Branches for Code Merging</h3>
-            <p style="font-size:.66rem;color:var(--muted);margin-bottom:10px;">
+            <label class="st-filter">
+                <span class="sr-only">Filter repositories</span>
+                <input class="cfg-fi" placeholder="Filter by name or project…" value="@repoBranchFilter" @oninput="OnRepoBranchFilter" />
+            </label>
+        </div>
+        <div class="pbody">
+            <p class="st-desc">
                 The branches the Code Merging Sheet starts with for each repository. The <b>QA branch</b> is where
                 developers merge their pull requests, and decides which pull requests the sheet lists. The
                 <b>merging target</b> is the release branch the changes must reach, and is what verification checks.
@@ -234,12 +254,11 @@
                 Your most-used repositories are listed first.
             </p>
 
-            <div class="cfg-field" style="max-width:320px;margin-bottom:12px;">
-                <label class="cfg-label">🔍 Filter repositories</label>
-                <input class="cfg-fi" placeholder="Name or project…" value="@repoBranchFilter" @oninput="OnRepoBranchFilter" />
-            </div>
-
-            @if (repos.Count == 0)
+            @if (repos.Count == 0 && listsLoading)
+            {
+                <LoadingState>Reading the repositories from TFS…</LoadingState>
+            }
+            else if (repos.Count == 0)
             {
                 <div class="tbl-empty">Connect to TFS above to configure repository branches.</div>
             }
@@ -249,12 +268,13 @@
             }
             else
             {
+                <div class="st-table-wrap">
                 <table class="repo-path-table">
                     <thead>
                         <tr>
-                            <th style="width:34%;">Repository</th>
-                            <th style="width:33%;">QA branch</th>
-                            <th style="width:33%;">Merging target</th>
+                            <th class="st-c-repo">Repository</th>
+                            <th class="st-c-branch">QA branch</th>
+                            <th class="st-c-branch">Merging target</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -263,24 +283,24 @@
                             var saved = SettingsSvc.GetRepoBranches(repo.Id);
                             <tr @key="repo.Id">
                                 <td>
-                                    <div style="font-weight:700;">
+                                    <div class="st-repo">
                                         @repo.Name
                                         @if (mostUsedSelection.Contains(repo.Id))
                                         {
-                                            <span class="chip chip-cyan" style="font-size:.5rem;margin-left:4px;">Most used</span>
+                                            <span class="st-tag">Most used</span>
                                         }
                                     </div>
-                                    <div style="font-size:.6rem;color:var(--muted);">@repo.Project</div>
+                                    <div class="st-repo-project">@repo.Project</div>
                                 </td>
                                 <td>
-                                    <BranchPicker Branches="@BranchesFor(repo.Id)" Value="@saved.QaBranch"
+                                    <BranchPicker Branches="@BranchesFor(repo.Id)" Value="@saved.QaBranch" Label="@($"QA branch for {repo.Name}")"
                                                   ValueChanged="@(b => OnQaBranchChange(repo.Id, b))"
                                                   OnOpened="@(() => LoadBranchesFor(repo))"
                                                   Loading="@(loadingBranchRepoId == repo.Id)"
                                                   Placeholder="@AutomaticBranch(repo, MergingBranchDefaults.QaBranch, "main")" />
                                 </td>
                                 <td>
-                                    <BranchPicker Branches="@BranchesFor(repo.Id)" Value="@saved.MergingBranch"
+                                    <BranchPicker Branches="@BranchesFor(repo.Id)" Value="@saved.MergingBranch" Label="@($"Merging target for {repo.Name}")"
                                                   ValueChanged="@(b => OnMergingBranchChange(repo.Id, b))"
                                                   OnOpened="@(() => LoadBranchesFor(repo))"
                                                   Loading="@(loadingBranchRepoId == repo.Id)"
@@ -290,10 +310,9 @@
                         }
                     </tbody>
                 </table>
-                <div style="margin-top:6px;font-size:.6rem;color:var(--muted);">
-                    @ConfiguredBranchCount of @repos.Count repositories configured@(BranchRepos.Count < repos.Count ? $" · showing {BranchRepos.Count}" : "")
                 </div>
             }
         </div>
+    </section>
     </div>
 </div>

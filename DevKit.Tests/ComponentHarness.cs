@@ -37,8 +37,8 @@ internal sealed class ComponentHarness : IDisposable
 
     /// <summary>
     /// A harness whose components resolve the given services. JS interop resolves too, but refuses every call, and
-    /// logging (ILogger&lt;T&gt; and ILoggerFactory) resolves to loggers that drop everything. A test can register its own
-    /// of either to replace it.
+    /// logging (ILogger&lt;T&gt; and ILoggerFactory) resolves to loggers that drop everything, and the clock is the system
+    /// one, as in the app. A test can register its own of any of these to replace it.
     /// </summary>
     public static ComponentHarness Create(Action<IServiceCollection> register)
     {
@@ -46,6 +46,7 @@ internal sealed class ComponentHarness : IDisposable
         services.AddSingleton<IJSRuntime, NoJsRuntime>();
         services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
         services.AddSingleton<ILoggerFactory>(NullLoggerFactory.Instance);
+        services.AddSingleton(TimeProvider.System);
         register(services);
         return new ComponentHarness(services.BuildServiceProvider());
     }
@@ -53,6 +54,10 @@ internal sealed class ComponentHarness : IDisposable
     /// <summary>Renders the component as a root with the given parameters and returns its id.</summary>
     public Task<int> RenderAsync<TComponent>(IDictionary<string, object?> parameters) where TComponent : IComponent =>
         _renderer.RenderRootAsync(typeof(TComponent), ParameterView.FromDictionary(parameters));
+
+    /// <summary>Gives a rendered root new parameters, the way its parent does when what it passes down changes.</summary>
+    public Task SetParametersAsync(int componentId, IDictionary<string, object?> parameters) =>
+        _renderer.SetParametersAsync(componentId, ParameterView.FromDictionary(parameters));
 
     /// <summary>The component's own elements in document order. Markup rendered by its child components is not included.</summary>
     public Task<List<Element>> ElementsAsync(int componentId) => _renderer.ElementsAsync(componentId);
@@ -106,6 +111,12 @@ internal sealed class ComponentHarness : IDisposable
             });
             ThrowIfFailed();
             return componentId;
+        }
+
+        public async Task SetParametersAsync(int componentId, ParameterView parameters)
+        {
+            await Dispatcher.InvokeAsync(() => RenderRootComponentAsync(componentId, parameters));
+            ThrowIfFailed();
         }
 
         public Task<List<Element>> ElementsAsync(int componentId) =>
