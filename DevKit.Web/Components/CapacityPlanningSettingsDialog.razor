@@ -1,17 +1,16 @@
 @* Capacity Planning settings. Edits a private draft and hands it back through OnSave, so
    nothing reaches the saved settings (or the table behind the dialog) until Save. *@
 
-<div class="modal-overlay" @onclick="Cancel">
-    <div class="modal cp-settings" @onclick:stopPropagation role="dialog" aria-label="Capacity planning settings">
-        <h3>⚙ Capacity planning settings</h3>
-        <div class="modal-body cp-settings-body">
+<ModalDialog CssClass="cp-settings" BodyClass="cp-settings-body" OnClose="Cancel">
+    <Title><span aria-hidden="true">⚙</span> Capacity planning settings</Title>
+    <ChildContent>
 
             <section class="cp-sec">
                 <div class="cp-sec-title">Planning mode</div>
                 <div class="cm-seg">
-                    <button type="button" class="cm-seg-btn @(draft.Mode == PlanningMode.Regular ? "on" : "")"
+                    <button type="button" class="cm-seg-btn @(draft.Mode == PlanningMode.Regular ? "on" : "")" aria-pressed="@(draft.Mode == PlanningMode.Regular ? "true" : "false")"
                             @onclick="() => draft.Mode = PlanningMode.Regular">Regular · plan to capacity</button>
-                    <button type="button" class="cm-seg-btn @(draft.Mode == PlanningMode.AiOverPlan ? "on" : "")"
+                    <button type="button" class="cm-seg-btn @(draft.Mode == PlanningMode.AiOverPlan ? "on" : "")" aria-pressed="@(draft.Mode == PlanningMode.AiOverPlan ? "true" : "false")"
                             @onclick="() => draft.Mode = PlanningMode.AiOverPlan">AI over-plan</button>
                 </div>
                 <div class="cp-grid2">
@@ -41,7 +40,7 @@
                     <div class="cp-days">
                         @foreach (var day in Week)
                         {
-                            <button type="button" class="cp-day @(IsWorkingDay(day) ? "on" : "")" @onclick="() => ToggleDay(day)"
+                            <button type="button" class="cp-day @(IsWorkingDay(day) ? "on" : "")" aria-pressed="@(IsWorkingDay(day) ? "true" : "false")" @onclick="() => ToggleDay(day)"
                                     title="@(IsWorkingDay(day) ? "Working day" : "Day off"). Click to change.">@day.ToString()[..3]</button>
                         }
                     </div>
@@ -51,9 +50,9 @@
             <section class="cp-sec">
                 <div class="cp-sec-title">Sprint length</div>
                 <div class="cm-seg">
-                    <button type="button" class="cm-seg-btn @(draft.SprintLength == SprintLengthSource.IterationDates ? "on" : "")"
+                    <button type="button" class="cm-seg-btn @(draft.SprintLength == SprintLengthSource.IterationDates ? "on" : "")" aria-pressed="@(draft.SprintLength == SprintLengthSource.IterationDates ? "true" : "false")"
                             @onclick="() => draft.SprintLength = SprintLengthSource.IterationDates">From TFS iteration dates</button>
-                    <button type="button" class="cm-seg-btn @(draft.SprintLength == SprintLengthSource.Fixed ? "on" : "")"
+                    <button type="button" class="cm-seg-btn @(draft.SprintLength == SprintLengthSource.Fixed ? "on" : "")" aria-pressed="@(draft.SprintLength == SprintLengthSource.Fixed ? "true" : "false")"
                             @onclick="() => draft.SprintLength = SprintLengthSource.Fixed">Fixed length</button>
                 </div>
                 <div class="cp-grid2">
@@ -92,12 +91,12 @@
                             var rule = draft.TagRules[index];
                             <tr @key="rule">
                                 <td class="cp-rule-tag">@rule.Tag</td>
-                                <td class="cp-rule-flag"><input type="checkbox" @bind="rule.Deliverable" /></td>
-                                <td class="cp-rule-flag"><input type="checkbox" @bind="rule.ExcludeFromOverPlan" /></td>
+                                <td class="cp-rule-flag"><input type="checkbox" @bind="rule.Deliverable" aria-label="@rule.Tag counts as Deliverable" /></td>
+                                <td class="cp-rule-flag"><input type="checkbox" @bind="rule.ExcludeFromOverPlan" aria-label="Carve @rule.Tag out of the AI base" /></td>
                                 <td class="cp-rule-act">
-                                    <button type="button" class="bpk-clear" title="Move up" disabled="@(index == 0)" @onclick="() => MoveRule(index, -1)">▲</button>
-                                    <button type="button" class="bpk-clear" title="Move down" disabled="@(index == draft.TagRules.Count - 1)" @onclick="() => MoveRule(index, 1)">▼</button>
-                                    <button type="button" class="bpk-clear" title="Remove @rule.Tag" @onclick="() => RemoveRule(index)">✕</button>
+                                    <button type="button" class="bpk-clear" title="Move up" aria-label="Move @rule.Tag up" disabled="@(index == 0)" @onclick="() => MoveRule(index, -1)">▲</button>
+                                    <button type="button" class="bpk-clear" title="Move down" aria-label="Move @rule.Tag down" disabled="@(index == draft.TagRules.Count - 1)" @onclick="() => MoveRule(index, 1)">▼</button>
+                                    <button type="button" class="bpk-clear" title="Remove @rule.Tag" aria-label="Remove @rule.Tag" @onclick="() => RemoveRule(index)">✕</button>
                                 </td>
                             </tr>
                         }
@@ -121,7 +120,7 @@
                 </div>
                 @if (tagError != null) { <div class="cp-error">@tagError</div> }
 
-                <div class="cp-grid2" style="margin-top:12px;">
+                <div class="cp-grid2">
                     <label class="f-row">
                         <span class="f-label">Parent "Deliverable" tag</span>
                         <input class="fi" maxlength="@MaxName" @bind="draft.DeliverableMarkerTag" />
@@ -149,17 +148,16 @@
                     </div>
                 </div>
             </section>
-        </div>
-        <div class="modal-actions">
-            <button type="button" class="btn-ghost" style="margin-right:auto;" @onclick="ResetToDefaults"
+    </ChildContent>
+    <Actions>
+            <button type="button" class="btn-ghost btn-apart" @onclick="ResetToDefaults"
                     title="Restores the defaults: 40% AI over-plan, 8.5 h a day, Monday to Friday and the four standard tags. Not saved until you press Save.">
                 ↺ Reset to defaults
             </button>
             <button type="button" class="btn-ghost" @onclick="Cancel">Cancel</button>
-            <button type="button" class="btn-primary" style="width:auto;" @onclick="Save">Save settings</button>
-        </div>
-    </div>
-</div>
+            <button type="button" class="btn-primary" @onclick="Save">Save settings</button>
+    </Actions>
+</ModalDialog>
 
 @code {
     private static readonly DayOfWeek[] Week =

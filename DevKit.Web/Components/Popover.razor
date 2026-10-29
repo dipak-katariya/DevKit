@@ -1,9 +1,10 @@
 @inherits ClickOutsideComponent
 
 @* A trigger and a panel floating over the page beneath it. A click anywhere outside closes it,
-   through the outside-click listener the dropdowns use. The owner holds the open state. *@
+   through the outside-click listener the dropdowns use, and so does Escape anywhere inside it.
+   The owner holds the open state. *@
 
-<div class="pop @CssClass" @ref="Root">
+<div class="pop @CssClass" @ref="Root" @onkeydown="OnKeyDown">
     @Trigger
     @if (Open)
     {
@@ -26,8 +27,22 @@
     /// <summary>Accessible name of the panel.</summary>
     [Parameter] public string? Label { get; set; }
 
+    private const string FocusFirstCall = "devKit.focusFirst";
+
     protected override bool IsPanelOpen => Open;
 
     // The owner decides; if it keeps the panel open, the next render adds the listener again.
     protected override Task CloseFromOutsideAsync() => OpenChanged.InvokeAsync(false);
+
+    // A dropdown in the panel handles its own Escape and stops it, so the first Escape closes only that list. Focus
+    // goes back to the trigger, the first control in the popover, since the panel that may have held it is gone.
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key != "Escape" || !Open)
+        {
+            return;
+        }
+        await OpenChanged.InvokeAsync(false);
+        await InvokeJsAsync(FocusFirstCall, Root);
+    }
 }

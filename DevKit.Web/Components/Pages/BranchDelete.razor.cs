@@ -48,6 +48,10 @@ public sealed partial class BranchDelete : IDisposable
     // Closing the page ends its wait for the shared metadata; that load goes on for the next page.
     private readonly PageLifetime page = new();
 
+    // New rows fade in once per load, and a screen reader hears when a load or a delete finishes.
+    private readonly ArrivalCue arrival = new();
+    private string announcement = "";
+
     // Worked out once per load or delete rather than on every render of a grid that can hold thousands of rows.
     private int SprintCount { get; set; }
     private int LinkedCount { get; set; }
@@ -155,6 +159,7 @@ public sealed partial class BranchDelete : IDisposable
 
         loading = true;
         error = null;
+        announcement = "";
         progress = null;
         showConfirm = false;
         selectedKeys.Clear();
@@ -166,6 +171,8 @@ public sealed partial class BranchDelete : IDisposable
             stale = false;
             loadedWithSprints = query.SprintPaths.Count > 0;
             sprintOnly = loadedWithSprints;
+            arrival.Mark();
+            announcement = $"Loaded {result.Rows.Count} branches.";
             RefreshStats();
             Refilter();
         }
@@ -277,6 +284,14 @@ public sealed partial class BranchDelete : IDisposable
         showConfirm = SelectedRows.Count > 0;
     }
 
+    private void CloseConfirm() => showConfirm = false;
+
+    // Why Load or Delete cannot run yet, for the disabled button's tooltip; a load or delete under way needs none.
+    private string? LoadTitle => selectedRepoIds.Count == 0 ? "Select at least one repository first." : null;
+    private string? DeleteTitle => selectedKeys.Count == 0 ? "Tick the branches to delete first." : null;
+
+    private static string Pressed(bool on) => on ? "true" : "false";
+
     private async Task ExecuteDelete()
     {
         showConfirm = false;
@@ -289,6 +304,7 @@ public sealed partial class BranchDelete : IDisposable
 
         deleting = true;
         error = null;
+        announcement = "";
         progress = new BranchCleanupProgress("Deleting branches", 0, rows.Count);
         StateHasChanged();
         try
@@ -301,6 +317,7 @@ public sealed partial class BranchDelete : IDisposable
                 .ToHashSet(StringComparer.Ordinal);
             result.Rows.RemoveAll(r => deleted.Contains(r.Key));
             selectedKeys.ExceptWith(deleted);
+            announcement = $"Deleted {deleted.Count} of {rows.Count} branch(es).";
             // Delete locks a row it found protected since the load; a locked row cannot stay selected.
             selectedKeys.ExceptWith(rows.Where(r => !r.CanDelete).Select(r => r.Key));
             RefreshStats();

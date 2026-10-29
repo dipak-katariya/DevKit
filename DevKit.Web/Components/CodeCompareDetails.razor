@@ -49,6 +49,7 @@
                                 @if (file.Hunks.Count > 0)
                                 {
                                     <button class="cm-expander @(open ? "open" : "")" title="@(open ? "Hide the lines" : "Show the lines")"
+                                            aria-expanded="@(open ? "true" : "false")" aria-label="Lines of @file.Path"
                                             @onclick="() => Toggle(file.Path)">
                                         <Icon Inner="@Icons.ChevronRight" />
                                     </button>

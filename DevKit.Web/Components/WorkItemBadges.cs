@@ -2,8 +2,8 @@ namespace DevKit.Web.Components;
 
 /// <summary>
 /// Formatting the grids share: the work-item state and type pill classes, the pull-request status badge
-/// class, and short SHAs. Every grid takes its pill colours from here, so one state or type reads the same
-/// on every page.
+/// class, short SHAs and the sort state a sortable header announces. Every grid takes its pill colours from
+/// here, so one state or type reads the same on every page.
 /// </summary>
 public static class WorkItemBadges
 {
@@ -58,4 +58,17 @@ public static class WorkItemBadges
 
     public static string ShortSha(string? objectId) =>
         string.IsNullOrEmpty(objectId) ? "" : objectId[..Math.Min(ShortShaLength, objectId.Length)];
+
+    /// <summary>
+    /// A sortable header's aria-sort: the direction on the column the grid is sorted by, and null (no attribute)
+    /// on the others, which also leaves their chevron hidden.
+    /// </summary>
+    public static string? AriaSort(string? sortedColumn, string column, bool ascending)
+    {
+        if (!string.Equals(sortedColumn, column, StringComparison.Ordinal))
+        {
+            return null;
+        }
+        return ascending ? "ascending" : "descending";
+    }
 }

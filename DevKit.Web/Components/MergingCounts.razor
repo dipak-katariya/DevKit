@@ -1,0 +1,30 @@
+@* What the grid is showing, in the grid's own header beside the Work Items tab (whose badge is the work item
+   count): the pull requests and commits of the rows on show, how many of those rows have a pull request, and
+   any discovery reads that failed. It sat in the insight strip until the strip ran out of room at laptop widths. *@
+
+<div class="cm-counts" title="What the grid below is showing">
+    <span class="cm-ins-stat"><b class="cm-ins-acc">@prs</b> PRs</span>
+    <span class="cm-ins-stat"><b class="cm-ins-acc">@commits</b> commits</span>
+    <span class="cm-ins-stat"><b>@withPrs</b><span class="cm-ins-of">/@VisibleRows.Count</span> with PRs</span>
+    @if (Bundle.DiscoveryWarnings.Count > 0)
+    {
+        <DiscoveryGapsChip Bundle="@Bundle" />
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public CodeMergingBundle Bundle { get; set; } = new();
+    [Parameter, EditorRequired] public MergingSheetFilter Filter { get; set; } = new();
+
+    /// <summary>The rows the grid shows.</summary>
+    [Parameter, EditorRequired] public IReadOnlyList<RequirementMergingRow> VisibleRows { get; set; } = Array.Empty<RequirementMergingRow>();
+
+    private int prs, commits, withPrs;
+
+    protected override void OnParametersSet()
+    {
+        prs = Filter.CountPrs(VisibleRows);
+        commits = Filter.CountCommits(VisibleRows);
+        withPrs = Filter.CountWithPrs(VisibleRows);
+    }
+}

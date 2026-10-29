@@ -71,6 +71,62 @@ public sealed class LocalAccessGateTests
         Assert.True(passed);
     }
 
+    // The locked page wears the sign-in page's look. Those files are public, so they need no key; nothing else does.
+    [Theory]
+    [InlineData("/app.css")]
+    [InlineData("/signin.css")]
+    [InlineData("/favicon.svg")]
+    public async Task The_locked_pages_own_stylesheets_and_icon_load_without_the_cookie(string path)
+    {
+        var request = NewRequest(path, "?v=51");
+        request.Request.Method = HttpMethods.Get;
+
+        var (_, passed) = await SendAsync(request);
+
+        Assert.True(passed);
+    }
+
+    [Theory]
+    [InlineData("GET", "/components.css")]
+    [InlineData("GET", "/app.js")]
+    [InlineData("GET", "/_framework/blazor.web.js")]
+    [InlineData("POST", "/app.css")]
+    public async Task Every_other_file_and_method_still_needs_the_cookie(string method, string path)
+    {
+        var request = NewRequest(path);
+        request.Request.Method = method;
+
+        var (status, passed) = await SendAsync(request);
+
+        Assert.Equal(StatusCodes.Status401Unauthorized, status);
+        Assert.False(passed);
+    }
+
+    [Fact]
+    public async Task The_locked_pages_files_are_still_refused_to_another_machine()
+    {
+        var request = NewRequest("/app.css");
+        request.Request.Method = HttpMethods.Get;
+        request.Connection.RemoteIpAddress = IPAddress.Parse("10.0.0.7");
+
+        var (status, passed) = await SendAsync(request);
+
+        Assert.Equal(StatusCodes.Status403Forbidden, status);
+        Assert.False(passed);
+    }
+
+    [Fact]
+    public async Task The_locked_page_loads_the_sign_in_pages_look()
+    {
+        var request = NewRequest("/settings");
+
+        await SendAsync(request);
+
+        var body = Body(request);
+        Assert.Contains("href=\"/signin.css?v=", body, StringComparison.Ordinal);
+        Assert.Contains("class=\"signin-card\"", body, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task The_sign_in_link_sets_a_strict_http_only_cookie_and_drops_the_key_from_the_address()
     {

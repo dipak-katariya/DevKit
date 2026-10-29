@@ -1,8 +1,22 @@
 @inject TfsApiService TfsApi
 
+@* One panel, headed like the other tabs: the member count and the colour key sit in the heading, so the table starts
+   right under it, and how to read the grid is the title's tooltip. *@
+<div class="gpanel bd-panel">
+    <div class="phead">
+        <span class="ptitle" title="Hover a column heading for its expected hours. Click a cell, or press Enter on it, for its work items.">📆 Hours by member</span>
+        @if (Matrix is { IsEmpty: false }) { <span class="si-count">@Matrix.Rows.Count member(s)</span> }
+        <span class="bd-legend">
+            <span><span class="bd-reg-green" aria-hidden="true">●</span> meets the hours expected</span>
+            <span><span class="bd-reg-red" aria-hidden="true">●</span> below them</span>
+            <span><span class="bd-reg-none" aria-hidden="true">●</span> not due yet</span>
+            <span><span class="bd-bug-red">+Nb</span> = bug hours</span>
+            <span class="bd-legend-note">@ThresholdLabel h expected per working day</span>
+        </span>
+    </div>
 @if (Matrix is null || Matrix.IsEmpty)
 {
-    <div class="tbl-empty">No CompletedWork changes found for this sprint and area.</div>
+    <div class="tbl-empty">@EmptyText</div>
 }
 else
 {
@@ -15,7 +29,9 @@ else
                     <th class="bd-total" title="@TotalTitle">Total</th>
                 </tr>
             </thead>
-            <tbody>
+            @* One Tab stop: the arrow keys move between the cells with hours (app.js), and a new matrix starts over. *@
+            <tbody @key="Matrix" data-roving="grid" data-roving-stop>
+                @{ var firstCell = true; }
                 @foreach (var row in Matrix.Rows)
                 {
                     <tr>
@@ -32,11 +48,16 @@ else
                                 }
                                 else
                                 {
-                                    <span class="@RegClass(cell.Regular, expected)">@cell.Regular.ToString("0.#")</span>
-                                    @if (cell.Bug > 0)
-                                    {
-                                        <div class="bd-bug @(overBug ? "bd-bug-red" : "")">+@cell.Bug.ToString("0.#")b</div>
-                                    }
+                                    @* No click handler of its own: Enter and clicks reach the cell's. *@
+                                    <button type="button" class="bd-hit" data-roving-item tabindex="@(firstCell ? "0" : "-1")"
+                                            aria-label="@CellName(row.MemberDisplay, col.Label, cell)">
+                                        <span class="@RegClass(cell.Regular, expected)">@cell.Regular.ToString("0.#")</span>
+                                        @if (cell.Bug > 0)
+                                        {
+                                            <span class="bd-bug @(overBug ? "bd-bug-red" : "")">+@cell.Bug.ToString("0.#")b</span>
+                                        }
+                                    </button>
+                                    firstCell = false;
                                 }
                             </td>
                         }
@@ -49,25 +70,16 @@ else
             </tbody>
         </table>
     </div>
-    <div class="bd-legend">
-        <span><span class="bd-reg-green">●</span> meets the hours expected</span>
-        <span><span class="bd-reg-red">●</span> below them</span>
-        <span><span class="bd-reg-none">●</span> not due yet</span>
-        <span><span class="bd-bug-red">+Nb</span> = bug hours</span>
-        <span style="color:var(--muted);">@ThresholdLabel h expected per working day</span>
-        <span style="color:var(--muted);">hover a column for its total</span>
-        <span style="color:var(--muted);">click a cell for the work items</span>
-    </div>
 }
+</div>
 
 @if (sel is not null)
 {
-    <div class="modal-overlay" @onclick="() => sel = null">
-        <div class="modal" style="max-width:620px;" @onclick:stopPropagation>
-            <h3>@selMember · @selPeriod</h3>
-            <div class="modal-body" style="padding:0;">
+    <ModalDialog CssClass="bd-dialog" BodyClass="bd-dialog-body" OnClose="CloseCell">
+        <Title>@selMember · @selPeriod</Title>
+        <ChildContent>
                 <table class="req-table">
-                    <thead><tr><th style="width:64px;">ID</th><th>Title</th><th style="width:90px;">Type</th><th style="width:70px;text-align:right;">Hours</th></tr></thead>
+                    <thead><tr><th class="bd-c-id">ID</th><th>Title</th><th class="bd-c-type">Type</th><th class="bd-c-hours">Hours</th></tr></thead>
                     <tbody>
                         @foreach (var it in sel.Items.OrderByDescending(i => i.Delta))
                         {
@@ -78,25 +90,36 @@ else
                                     <div class="cell-meta" title="@it.ItemArea">@(it.ItemArea.Split('\\').LastOrDefault())</div>
                                 </td>
                                 <td><span class="type-pill @WorkItemBadges.TypeClass(it.IsBug ? BugWork.BugType : it.ItemType)">@(it.IsBug ? "Bug work" : it.ItemType)</span></td>
-                                <td style="text-align:right;font-family:var(--mono);@(it.Delta < 0 ? "color:var(--amber);" : "")">@it.Delta.ToString("0.#")</td>
+                                <td class="bd-hours @(it.Delta < 0 ? "neg" : "")">@it.Delta.ToString("0.#")</td>
                             </tr>
                         }
                     </tbody>
                 </table>
-            </div>
-            <div class="modal-actions"><button class="btn-ghost" @onclick="() => sel = null">Close</button></div>
-        </div>
-    </div>
+        </ChildContent>
+        <Actions>
+            <button type="button" class="btn-ghost" @onclick="CloseCell">Close</button>
+        </Actions>
+    </ModalDialog>
 }
 
 @code {
     [Parameter] public BurndownMatrix? Matrix { get; set; }
     [Parameter] public string Project { get; set; } = "";
 
+    /// <summary>What the panel says when no row is left to show, which depends on why (a member filter, for one).</summary>
+    [Parameter] public string EmptyText { get; set; } = "No hours to show.";
+
     /// <summary>Hours a member is expected to log in a working day: the Capacity Planning hours-per-day setting.</summary>
     [Parameter] public double DailyThreshold { get; set; } = CapacityPlanningSettings.DefaultHoursPerDay;
 
     private string ThresholdLabel => DailyThreshold.ToString("0.##");
+
+    // The table has no row headers, so a cell's button names its member and period itself.
+    private static string CellName(string member, string period, BurndownCell cell) => cell.Bug > 0
+        ? $"{member}, {period}: {cell.Regular:0.#} h plus {cell.Bug:0.#} h on bugs. Show the work items"
+        : $"{member}, {period}: {cell.Regular:0.#} h. Show the work items";
+
+    private void CloseCell() => sel = null;
 
     private BurndownCell? sel;
     private string selMember = "", selPeriod = "";

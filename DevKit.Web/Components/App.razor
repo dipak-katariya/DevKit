@@ -4,12 +4,15 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+    @* A phone browser tints its own bar with this: the room's colour, so the app runs to the top edge. *@
+    <meta name="theme-color" content="#050507" />
     @* The tab's title is set per page by MainLayout, from ToolCatalog. *@
     <link rel="icon" type="image/svg+xml" href="favicon.svg?v=@AssetVersion" />
     @* Order is the cascade: app.css holds the tokens and shell, the rest build on it. *@
     <link rel="stylesheet" href="app.css?v=@AssetVersion" />
     <link rel="stylesheet" href="components.css?v=@AssetVersion" />
     <link rel="stylesheet" href="tools.css?v=@AssetVersion" />
+    <link rel="stylesheet" href="insights.css?v=@AssetVersion" />
     <link rel="stylesheet" href="merging.css?v=@AssetVersion" />
     <link rel="stylesheet" href="code-compare.css?v=@AssetVersion" />
     <HeadOutlet @rendermode="RenderMode.InteractiveServer" />
@@ -52,5 +55,5 @@
 @code {
     // Bump to force browsers to re-fetch the stylesheets and scripts after a UI change,
     // so a previously cached stylesheet can't render the new markup unstyled. The sign-in page uses it too.
-    public const string AssetVersion = "30";
+    public const string AssetVersion = "55";
 }

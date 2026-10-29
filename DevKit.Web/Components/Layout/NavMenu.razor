@@ -8,14 +8,17 @@
         <span>@ToolCatalog.Dashboard.Name</span>
     </a>
 
-    <div class="sidebar-cap">Tools</div>
-    @foreach (var tool in ToolCatalog.Tools)
+    @foreach (var group in ToolCatalog.Groups)
     {
-        <a class="nav-item @ActiveClass(tool.Path)" href="@tool.Path"
-           @onclick="() => Go(tool.Path)" @onclick:preventDefault>
-            <Icon Inner="@tool.Icon" />
-            <span>@tool.Name</span>
-        </a>
+        <div class="sidebar-cap">@group.Name</div>
+        @foreach (var tool in group.Tools)
+        {
+            <a class="nav-item @ActiveClass(tool.Path)" href="@tool.Path"
+               @onclick="() => Go(tool.Path)" @onclick:preventDefault>
+                <Icon Inner="@tool.Icon" />
+                <span>@tool.Name</span>
+            </a>
+        }
     }
 </nav>
 

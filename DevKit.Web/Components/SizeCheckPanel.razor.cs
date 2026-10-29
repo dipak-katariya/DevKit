@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
+using Microsoft.JSInterop;
 using DevKit.Web.Models;
 using DevKit.Web.Services;
 
@@ -35,12 +36,19 @@ public sealed partial class SizeCheckPanel : IDisposable
     private string statusMsg = "";
     private bool statusOk;
 
+    // A failed load, and a load that read the requirements but not all of their tasks. Both sit under the toolbar as on
+    // the other tabs; the floating note is for size saves.
+    private string? loadError;
+    private string? partialNotice;
+
     // What the loaded rows actually describe, so a sprint/area switch can drop stale data
     // instead of showing another sprint's numbers under the new selection.
     private string loadedKey = "";
 
-    // Leaving the tab stops the sprint's reads; a size write already sent is left to finish.
+    // Leaving Sprint Insights stops the sprint's reads (a tab switch only hides this panel); a size write already
+    // sent is left to finish.
     private readonly PageLifetime page = new();
+    private readonly ArrivalCue arrival = new();
 
     private bool AllExpanded => filteredItems.Count > 0 && filteredItems.All(p => p.IsExpanded);
     private int CalcDiffersCount => planningItems.Count(p => p.CalcDiffersFromCurrent);
@@ -49,7 +57,30 @@ public sealed partial class SizeCheckPanel : IDisposable
         ? "No types selected. Tick at least one type to see items."
         : "No items match the filter.";
 
-    private string SelectionKey => $"{Area?.Project}|{Area?.Path}|{Sprint}";
+    private const string NothingLoaded = "Load a sprint first.";
+
+    private string? LoadBlocked => AreaSprintSelect.MissingSelection(Area, Sprint);
+
+    // Loaded for the area and sprint picked now, and no requirement came back: an answer, not a failure.
+    private bool LoadedEmpty =>
+        !loading && loadError is null && planningItems.Count == 0 && loadedKey.Length > 0 && loadedKey == SelectionKey;
+
+    // Apply All's tooltip: why it cannot run yet, else what it does.
+    private string ApplyAllTitle
+    {
+        get
+        {
+            if (planningItems.Count == 0)
+            {
+                return NothingLoaded;
+            }
+            return CalcDiffersCount == 0
+                ? "Every size already matches its calculated value."
+                : "Set every requirement's size to its calculated value (past completed + current estimate)";
+        }
+    }
+
+    private string SelectionKey => AreaSprintSelect.Key(Area, Sprint);
 
     protected override void OnParametersSet()
     {
@@ -87,6 +118,86 @@ public sealed partial class SizeCheckPanel : IDisposable
         ApplyFilter();
     }
 
+    // Only task rows a click has just opened fade in; rows drawn again after a sort or a filter show at once.
+    private readonly ArrivalCue expandCue = new();
+    private readonly HashSet<PlanningItem> justOpened = new();
+
+    private void ExpanderClicked(PlanningItem pi)
+    {
+        ToggleExpand(pi);
+        MarkOpened(pi.IsExpanded ? new[] { pi } : Array.Empty<PlanningItem>());
+    }
+
+    private void ExpandAllClicked()
+    {
+        var closed = filteredItems.Where(p => !p.IsExpanded).ToList();
+        ToggleExpandAll();
+        MarkOpened(closed.Where(p => p.IsExpanded));
+    }
+
+    private void MarkOpened(IEnumerable<PlanningItem> opened)
+    {
+        justOpened.Clear();
+        justOpened.UnionWith(opened);
+        expandCue.Mark();
+    }
+
+    private string RowArrival(PlanningItem pi) => justOpened.Contains(pi) ? expandCue.Class : "";
+
+    [Inject] private IJSRuntime JS { get; set; } = default!;
+
+    [Inject] private TimeProvider Clock { get; set; } = default!;
+
+    // The timer that clears the floating note. A newer note cancels the older one's, which used to clear the newer note
+    // before its own time was up.
+    private CancellationTokenSource? statusTimer;
+
+    // What a screen reader is told once a load finishes; the floating note carries the size saves and failures.
+    private string announcement = "";
+
+    // Where focus goes once the next render has drawn it: into the size box when an edit opens, back to the size
+    // when it closes. The control that had focus is gone from the page by then.
+    private string? pendingFocusId;
+
+    private static string SizeButtonId(PlanningItem pi) => "scSize" + pi.WorkItem.Id;
+
+    private static string SizeInputId(PlanningItem pi) => "scSizeIn" + pi.WorkItem.Id;
+
+    private void BeginSizeEdit(PlanningItem pi)
+    {
+        pi.BeginSizeEdit();
+        pendingFocusId = SizeInputId(pi);
+    }
+
+    private void CancelSizeEdit(PlanningItem pi)
+    {
+        pi.EditingSize = null;
+        pendingFocusId = SizeButtonId(pi);
+    }
+
+    private string? AriaSort(string col) => WorkItemBadges.AriaSort(sortCol, col, sortAsc);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (pendingFocusId is not { } id)
+        {
+            return;
+        }
+        pendingFocusId = null;
+        try
+        {
+            await JS.InvokeVoidAsync("devKit.focusById", id);
+        }
+        catch (JSDisconnectedException ex)
+        {
+            Logger.LogDebug(ex, "Focus was not moved to {Id} because the page has closed", id);
+        }
+        catch (JSException ex)
+        {
+            Logger.LogError(ex, "Focus could not be moved to {Id}", id);
+        }
+    }
+
     private async Task Load()
     {
         var area = Area;
@@ -95,7 +206,8 @@ public sealed partial class SizeCheckPanel : IDisposable
         {
             return;
         }
-        loading = true; planningItems.Clear(); filteredItems.Clear(); statusMsg = "";
+        loading = true; planningItems.Clear(); filteredItems.Clear(); statusMsg = ""; announcement = "";
+        loadError = null; partialNotice = null;
         loadedKey = SelectionKey;
         StateHasChanged();
         try
@@ -112,19 +224,21 @@ public sealed partial class SizeCheckPanel : IDisposable
             var unread = await LoadChildTasksAsync(page.Token);
             if (unread.Count > 0)
             {
-                statusMsg = $"⚠ Tasks of {unread.Count} requirement(s) could not be read, so their hours show as 0: {unread[0]}";
-                statusOk = false;
+                partialNotice = $"Tasks of {unread.Count} requirement(s) could not be read, so their hours show as 0: {unread[0]}";
             }
+            arrival.Mark();
+            announcement = planningItems.Count == 0
+                ? "This area and sprint have no requirements or change requests."
+                : $"Loaded {planningItems.Count} items, {MismatchedCount} with a size mismatch.";
         }
         catch (OperationCanceledException ex) when (page.Token.IsCancellationRequested)
         {
-            Logger.LogDebug(ex, "Size Check load for {Area} / {Sprint} stopped because the tab was left", area.Path, sprint);
+            Logger.LogDebug(ex, "Size Check load for {Area} / {Sprint} stopped because the page was left", area.Path, sprint);
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Size Check load failed for {Area} / {Sprint}", area.Path, sprint);
-            statusMsg = $"✕ Load failed: {TfsErrors.Describe(ex)}";
-            statusOk = false;
+            loadError = $"Load failed: {TfsErrors.Describe(ex)}";
         }
         loading = false;
     }
@@ -160,8 +274,14 @@ public sealed partial class SizeCheckPanel : IDisposable
 
     private async Task OnSizeKeyDown(KeyboardEventArgs e, PlanningItem pi)
     {
-        if (e.Key == "Enter") await SaveSize(pi);
-        else if (e.Key == "Escape") pi.EditingSize = null;
+        if (e.Key == "Enter")
+        {
+            await SaveSize(pi);
+        }
+        else if (e.Key == "Escape")
+        {
+            CancelSizeEdit(pi);
+        }
     }
 
     private async Task SaveSize(PlanningItem pi)
@@ -184,6 +304,7 @@ public sealed partial class SizeCheckPanel : IDisposable
         else
         {
             pi.EditingSize = null;
+            pendingFocusId = SizeButtonId(pi);
             SetStatus($"✓ Updated #{pi.WorkItem.Id} size to {newSize:0.##}", true, 2000);
         }
         pi.Saving = false;
@@ -207,6 +328,7 @@ public sealed partial class SizeCheckPanel : IDisposable
         else
         {
             pi.EditingSize = null;
+            pendingFocusId = SizeButtonId(pi);
             SetStatus($"✓ Set #{pi.WorkItem.Id} size to {newSize:0.##} ({pi.PastSprintCompleted:0.##}h done + {pi.CurrentSprintOriginal:0.##}h est)", true, 2800);
         }
         pi.Saving = false;
@@ -283,17 +405,29 @@ public sealed partial class SizeCheckPanel : IDisposable
     {
         statusMsg = msg;
         statusOk = ok;
-        _ = ClearStatusAfter(clearMs);
+        CancellationSources.CancelAndDispose(ref statusTimer);
+        statusTimer = new CancellationTokenSource();
+        _ = ClearStatusAfter(clearMs, statusTimer.Token);
     }
 
-    private async Task ClearStatusAfter(int ms)
+    private async Task ClearStatusAfter(int ms, CancellationToken replaced)
     {
-        await Task.Delay(ms);
+        // A cancelled wait is a newer note or a closed page, not a failure, so it ends the wait without throwing.
+        await Task.Delay(TimeSpan.FromMilliseconds(ms), Clock, replaced)
+            .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing | ConfigureAwaitOptions.ContinueOnCapturedContext);
+        if (replaced.IsCancellationRequested)
+        {
+            return;
+        }
         statusMsg = "";
         await InvokeAsync(StateHasChanged);
     }
 
-    public void Dispose() => page.Dispose();
+    public void Dispose()
+    {
+        page.Dispose();
+        CancellationSources.CancelAndDispose(ref statusTimer);
+    }
 
     // ─── Filtering ───
     private void OnSearch(ChangeEventArgs e) { searchQ = (e.Value?.ToString() ?? "").ToLower(); ApplyFilter(); }
@@ -358,19 +492,17 @@ public sealed partial class SizeCheckPanel : IDisposable
         .Select(t => new MultiSelectDropdown.Option { Value = t, Label = t })
         .ToList();
 
-    /// <summary>A requirement row's background: red without a size, amber when its tasks disagree with it, else green.</summary>
-    private static string RowBackground(bool hasSize, bool mismatch) => (hasSize, mismatch) switch
+    /// <summary>
+    /// How a requirement reads: "unset" without a size, "off" when its tasks disagree with the size, "ok" when they
+    /// agree. insights.css tints the row and colours the difference from it (red, amber, green; the difference is muted
+    /// while unset).
+    /// </summary>
+    private static string SizeTone(bool hasSize, bool mismatch)
     {
-        (false, _) => "rgba(248,113,113,.06)",
-        (_, true) => "rgba(251,191,36,.06)",
-        _ => "rgba(16,185,129,.05)"
-    };
-
-    /// <summary>The colour of the size difference: amber when the tasks disagree with the size, green when they agree.</summary>
-    private static string SizeDifferenceColour(bool hasSize, bool mismatch) => (hasSize, mismatch) switch
-    {
-        (_, true) => "var(--amber)",
-        (true, _) => "var(--green)",
-        _ => "var(--muted)"
-    };
+        if (!hasSize)
+        {
+            return "unset";
+        }
+        return mismatch ? "off" : "ok";
+    }
 }

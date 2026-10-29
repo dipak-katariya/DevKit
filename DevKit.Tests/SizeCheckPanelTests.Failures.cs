@@ -59,6 +59,37 @@ public sealed partial class SizeCheckPanelTests
         Assert.Single(Errors());
     }
 
+    // The floating note is for size saves; a load reports where every Sprint Insights tab does, under the toolbar.
+    [Fact]
+    public async Task A_failed_load_is_an_alert_under_the_toolbar_not_the_note_for_size_saves()
+    {
+        _tfs.Respond = _ => (HttpStatusCode.InternalServerError, Broken);
+
+        var panel = await LoadSprintAsync();
+
+        var elements = await _harness.ElementsAsync(panel);
+        Assert.Contains(elements, e => e.Attribute("role") == "alert" && e.Text.Contains("Load failed: " + ServerAdvice, StringComparison.Ordinal));
+        Assert.DoesNotContain(elements, IsSaveNote);
+    }
+
+    [Fact]
+    public async Task A_sprint_with_no_requirements_is_an_answer_not_a_failure()
+    {
+        _tfs.Respond = sent => sent.Method == "POST" ? (HttpStatusCode.OK, """{"workItems":[]}""") : AnswerSprint(sent);
+
+        var panel = await LoadSprintAsync();
+
+        var elements = await _harness.ElementsAsync(panel);
+        Assert.DoesNotContain(elements, e => e.Attribute("role") == "alert");
+        Assert.DoesNotContain(elements, IsSaveNote);
+        Assert.Contains(elements, e => e.Attribute("role") == "status"
+            && e.Text.Contains("no requirements or change requests", StringComparison.Ordinal));
+        Assert.Empty(Errors());
+    }
+
+    private static bool IsSaveNote(ComponentHarness.Element e) =>
+        e.Attribute("class")?.Contains("sc-toast", StringComparison.Ordinal) == true;
+
     private static bool IsChildTaskQuery(RecordingTfsHandler.Request sent) =>
         sent.Method == "POST" && sent.Body?.Contains("WorkItemLinks", StringComparison.Ordinal) == true;
 

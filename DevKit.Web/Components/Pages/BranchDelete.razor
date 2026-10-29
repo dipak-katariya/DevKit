@@ -5,44 +5,45 @@
 @inject PageStateService PageState
 @inject ILogger<BranchDelete> Logger
 
-<div class="cm-page">
+<div class="cm-page bdel-page">
+    <h1 class="sr-only">Branch Cleanup</h1>
     <div class="cm-toolbar">
         <div class="cm-tb-row">
-            <div class="cm-fld" style="flex:1 1 230px;">
+            <div class="cm-fld bdel-f-area">
                 <label class="cfg-label">📂 Area Path <span class="cm-hint">for sprint work items</span></label>
-                <GlassDropdown Value="@(selectedArea != null ? AreaSprintSelect.Serialize(selectedArea) : "")"
+                <GlassDropdown Label="Area path" Value="@(selectedArea != null ? AreaSprintSelect.Serialize(selectedArea) : "")"
                                Placeholder="Any area" EmptyLabel="Any area" EmptyValue=""
                                Disabled="@(areas.Count == 0 || Busy)" Groups="@AreaGroups" OnChange="OnAreaChange" />
             </div>
-            <div class="cm-fld" style="flex:1 1 200px;">
+            <div class="cm-fld bdel-f-sprint">
                 <label class="cfg-label">
                     📅 Sprint
                     @if (selectedSprints.Count > 1) { <span class="cm-hint">@selectedSprints.Count selected</span> }
                 </label>
-                <MultiSelectDropdown Options="@SprintOptions" Selected="@selectedSprints"
+                <MultiSelectDropdown Options="@SprintOptions" Selected="@selectedSprints" Label="Sprints"
                                      SelectedChanged="OnSprintsChanged" ItemNoun="sprint"
                                      Disabled="@(selectedArea == null || Busy)"
                                      Placeholder="@(selectedArea == null ? "Pick an area first" : "Sprints to clean up")"
                                      SearchPlaceholder="Search sprints…" />
             </div>
-            <div class="cm-fld" style="flex:1 1 210px;">
+            <div class="cm-fld bdel-f-repos">
                 <label class="cfg-label">
                     📦 Repositories
                     @if (selectedRepoIds.Count > 1) { <span class="cm-hint">@selectedRepoIds.Count selected</span> }
                 </label>
-                <MultiSelectDropdown Options="@RepoOptions" Selected="@selectedRepoIds"
+                <MultiSelectDropdown Options="@RepoOptions" Selected="@selectedRepoIds" Label="Repositories"
                                      SelectedChanged="OnReposChanged" ItemNoun="repository"
                                      Disabled="@(AvailableRepos().Count == 0 || Busy)"
                                      Placeholder="Select repositories" SearchPlaceholder="Search repositories…" />
             </div>
-            <div class="cm-fld" style="flex:0 1 150px;">
-                <label class="cfg-label" title="The team prefix Branch Creator puts at the start of every branch name. Shared with Branch Creator.">👥 Team</label>
-                <input class="cfg-fi" value="@teamName" @onchange="OnTeamNameChange" placeholder="e.g. FXCPMGR"
+            <div class="cm-fld bdel-f-team">
+                <label class="cfg-label" for="bdelTeam" title="The team prefix Branch Creator puts at the start of every branch name. Shared with Branch Creator.">👥 Team</label>
+                <input id="bdelTeam" class="cfg-fi" value="@teamName" @onchange="OnTeamNameChange" placeholder="e.g. FXCPMGR"
                        maxlength="@MaxTeamNameLength" disabled="@Busy" />
             </div>
             <div class="cm-fld cm-fld-btn">
-                <button class="cfg-load-btn" @onclick="Load" disabled="@(!CanLoad)">
-                    @if (loading) { <span class="spin spin-sm" style="color:#fff;"></span> } else { <Icon Inner="@Icons.Refresh" /> }
+                <button type="button" class="cfg-load-btn" @onclick="Load" disabled="@(!CanLoad)" title="@LoadTitle">
+                    @if (loading) { <span class="spin spin-sm"></span> } else { <Icon Inner="@Icons.Refresh" /> }
                     Load Branches
                 </button>
                 @if (stale) { <span class="cm-hint bdel-stale" title="The grid still shows the last load. Load again to apply the changes.">changed, load again</span> }
@@ -53,35 +54,35 @@
         {
             <div class="cm-tb-row">
                 <div class="cm-fld">
-                    <label class="cfg-label">🔗 Work item link</label>
-                    <div class="cm-seg">
-                        <button class="cm-seg-btn @(linkFilter == LinkFilter.All ? "on" : "")" @onclick="() => SetLinkFilter(LinkFilter.All)">All</button>
-                        <button class="cm-seg-btn @(linkFilter == LinkFilter.Linked ? "on" : "")" @onclick="() => SetLinkFilter(LinkFilter.Linked)"
+                    <label class="cfg-label" id="bdelLinkLabel">🔗 Work item link</label>
+                    <div class="cm-seg" role="group" aria-labelledby="bdelLinkLabel">
+                        <button type="button" class="cm-seg-btn @(linkFilter == LinkFilter.All ? "on" : "")" aria-pressed="@Pressed(linkFilter == LinkFilter.All)" @onclick="() => SetLinkFilter(LinkFilter.All)">All</button>
+                        <button type="button" class="cm-seg-btn @(linkFilter == LinkFilter.Linked ? "on" : "")" aria-pressed="@Pressed(linkFilter == LinkFilter.Linked)" @onclick="() => SetLinkFilter(LinkFilter.Linked)"
                                 title="Branches a work item links to">Linked</button>
-                        <button class="cm-seg-btn @(linkFilter == LinkFilter.Unattached ? "on" : "")" @onclick="() => SetLinkFilter(LinkFilter.Unattached)"
+                        <button type="button" class="cm-seg-btn @(linkFilter == LinkFilter.Unattached ? "on" : "")" aria-pressed="@Pressed(linkFilter == LinkFilter.Unattached)" @onclick="() => SetLinkFilter(LinkFilter.Unattached)"
                                 title="Team branches no work item links to">Unattached</button>
                     </div>
                 </div>
                 <div class="cm-fld">
-                    <label class="cfg-label">📅 Sprint</label>
-                    <div class="cm-seg">
-                        <button class="cm-seg-btn @(sprintOnly ? "on" : "")" disabled="@(!loadedWithSprints)" @onclick="() => SetSprintOnly(true)"
+                    <label class="cfg-label" id="bdelSprintLabel">📅 Sprint</label>
+                    <div class="cm-seg" role="group" aria-labelledby="bdelSprintLabel">
+                        <button type="button" class="cm-seg-btn @(sprintOnly ? "on" : "")" aria-pressed="@Pressed(sprintOnly)" disabled="@(!loadedWithSprints)" @onclick="() => SetSprintOnly(true)"
                                 title="@(loadedWithSprints ? "Linked from the selected sprints' work items, or named after one of those sprints" : "Pick sprints and load again to filter by sprint")">Selected sprints</button>
-                        <button class="cm-seg-btn @(sprintOnly ? "" : "on")" @onclick="() => SetSprintOnly(false)">All</button>
+                        <button type="button" class="cm-seg-btn @(sprintOnly ? "" : "on")" aria-pressed="@Pressed(!sprintOnly)" @onclick="() => SetSprintOnly(false)">All</button>
                     </div>
                 </div>
-                <div class="cm-fld" style="flex:1 1 180px;">
+                <div class="cm-fld bdel-f-creator">
                     <label class="cfg-label">👤 Created by</label>
-                    <GlassDropdown Value="@creatorFilter" Placeholder="Anyone" EmptyLabel="Anyone" EmptyValue=""
+                    <GlassDropdown Label="Created by" Value="@creatorFilter" Placeholder="Anyone" EmptyLabel="Anyone" EmptyValue=""
                                    Options="@CreatorOptions" OnChange="OnCreatorChange" />
                 </div>
-                <div class="cm-fld" style="flex:2 1 220px;">
-                    <label class="cfg-label">🔍 Search</label>
-                    <input class="cfg-fi" placeholder="Branch, work item id or title…" value="@search" @oninput="OnSearchInput" />
+                <div class="cm-fld bdel-f-search">
+                    <label class="cfg-label" for="bdelSearch">🔍 Search</label>
+                    <input id="bdelSearch" class="cfg-fi" placeholder="Branch, work item id or title…" value="@search" @oninput="OnSearchInput" />
                 </div>
                 <div class="cm-fld cm-fld-btn">
-                    <button class="cfg-load-btn bdel-delete-btn" @onclick="OpenConfirm" disabled="@(!CanDelete)">
-                        🗑 Delete selected (@selectedKeys.Count)
+                    <button type="button" class="cfg-load-btn bdel-delete-btn" @onclick="OpenConfirm" disabled="@(!CanDelete)" title="@DeleteTitle">
+                        <span aria-hidden="true">🗑</span> Delete selected (@selectedKeys.Count)
                     </button>
                 </div>
             </div>
@@ -99,36 +100,40 @@
         </div>
     }
     @if (!string.IsNullOrEmpty(metadataError)) { <div class="notice warn">⚠ @metadataError</div> }
-    @if (!string.IsNullOrEmpty(error)) { <div class="notice warn">⚠ @error</div> }
+    @if (!string.IsNullOrEmpty(error)) { <div class="notice warn" role="alert">⚠ @error</div> }
     @foreach (var warning in result.Warnings) { <div class="notice warn">⚠ @warning</div> }
 
     <div class="gpanel bdel-panel">
         <div class="phead">
-            <span class="ptitle">🗑 Branch Cleanup</span>
+            <span class="ptitle"><span aria-hidden="true">🗑</span> Branch Cleanup</span>
             @if (loaded)
             {
-                <div class="bdel-chips">
-                    <span class="chip">@result.Rows.Count branches</span>
-                    @if (loadedWithSprints) { <span class="chip chip-green" title="Linked from the selected sprints, or named after one">@SprintCount in sprint</span> }
-                    <span class="chip">@LinkedCount linked</span>
-                    <span class="chip bdel-chip-warn" title="Team branches no work item links to">@UnattachedCount unattached</span>
-                    <span class="chip bdel-chip-lock">@ProtectedCount locked</span>
+                @* The counts read as words beside the title; colour marks only the ones that need a look. *@
+                <div class="bdel-counts">
+                    <span>@result.Rows.Count branches</span>
+                    @if (loadedWithSprints) { <span class="c-sprint" title="Linked from the selected sprints, or named after one">@SprintCount in sprint</span> }
+                    <span>@LinkedCount linked</span>
+                    <span class="c-warn" title="Team branches no work item links to">@UnattachedCount unattached</span>
+                    <span>@ProtectedCount locked</span>
                 </div>
-                <div style="display:flex;gap:6px;align-items:center;">
+                <div class="bdel-head-tools">
                     @if (HiddenSelection > 0) { <span class="cm-hint">@HiddenSelection selected outside the filter</span> }
-                    <button class="btn-sm" @onclick="SelectAllVisible" disabled="@(VisibleDeletable == 0 || Busy)">Select all shown (@VisibleDeletable)</button>
-                    <button class="btn-sm" @onclick="ClearSelection" disabled="@(selectedKeys.Count == 0 || Busy)">Clear selection</button>
+                    <button type="button" class="btn-sm" @onclick="SelectAllVisible" disabled="@(VisibleDeletable == 0 || Busy)">Select all shown (@VisibleDeletable)</button>
+                    <button type="button" class="btn-sm" @onclick="ClearSelection" disabled="@(selectedKeys.Count == 0 || Busy)">Clear selection</button>
                 </div>
             }
         </div>
-        <div class="pbody" style="padding:0;flex:1;overflow:hidden;">
-            @if (!loaded && !loading)
+        <div class="pbody">
+            <div class="sr-only" role="status">@announcement</div>
+            @if (loading && !loaded)
             {
-                <div class="pr-placeholder">
-                    <div style="font-size:2rem;opacity:.2;">🌿</div>
-                    <div class="bp-title">Pick the repositories to clean up</div>
-                    <div class="bp-sub">Add an area and old sprints to find the branches their work items link. Set the team to find team branches no work item links.</div>
-                </div>
+                <LoadingState>Reading the branches of the selected repositories, and the work items that link them</LoadingState>
+            }
+            else if (!loaded)
+            {
+                <BlankState Glyph="@Icons.ToolCleanup" Title="Pick the repositories to clean up">
+                    Add an area and old sprints to find the branches their work items link. Set the team to find team branches no work item links.
+                </BlankState>
             }
             else
             {
@@ -136,7 +141,7 @@
                     <table class="req-table bdel-table">
                         <thead>
                             <tr>
-                                <th class="bdel-check"></th>
+                                <th class="bdel-check"><span class="sr-only">Select</span></th>
                                 <th>Branch</th>
                                 <th class="bdel-repo">Repository</th>
                                 <th class="bdel-wi">Work item</th>
@@ -145,7 +150,7 @@
                                 <th class="bdel-sha">SHA</th>
                             </tr>
                         </thead>
-                        <tbody>
+                        <tbody class="@arrival.Class">
                             @if (loaded && visible.Count == 0)
                             {
                                 <tr><td colspan="7" class="tbl-empty">No branches match the filters.</td></tr>
@@ -154,13 +159,13 @@
                                 <tr @key="r.Key" class="@RowClass(r)" @onclick="() => Toggle(r)">
                                     <td class="bdel-check">
                                         <input type="checkbox" checked="@selectedKeys.Contains(r.Key)" disabled="@(!r.CanDelete || Busy)"
-                                               @onclick:stopPropagation @onchange="() => Toggle(r)" />
+                                               aria-label="Delete @r.Branch in @r.Repo.Name" @onclick:stopPropagation @onchange="() => Toggle(r)" />
                                     </td>
                                     <td class="bdel-branch">
                                         <CopyableRef Text="@r.Branch" Url="@TfsApi.BranchUrl(r.Repo, r.Branch)" Label="branch" />
                                         @if (!r.CanDelete) { <div class="bdel-lock">🔒 @r.ProtectedReason</div> }
                                     </td>
-                                    <td class="bdel-repo">@r.Repo.Name</td>
+                                    <td class="bdel-repo" title="@r.Repo.Name">@r.Repo.Name</td>
                                     <td class="bdel-wi">
                                         @if (r.LinkedBy.Count > 0)
                                         {
@@ -185,7 +190,7 @@
                                     <td class="bdel-sprint">
                                         <span class="@(r.InSelectedSprint ? "bdel-sprint-on" : "")">@(r.Parsed?.Sprint ?? "")</span>
                                     </td>
-                                    <td class="bdel-creator">@(string.IsNullOrEmpty(r.Creator) ? "Unknown" : r.Creator)</td>
+                                    <td class="bdel-creator" title="@r.Creator">@(string.IsNullOrEmpty(r.Creator) ? "Unknown" : r.Creator)</td>
                                     <td class="bdel-sha"><CopyableRef Text="@r.ObjectId" Display="@WorkItemBadges.ShortSha(r.ObjectId)" Label="SHA" /></td>
                                 </tr>
                             </Virtualize>
@@ -200,9 +205,9 @@
     {
         <div class="gpanel bdel-log">
             <div class="phead">
-                <span class="ptitle">📋 Delete log</span>
+                <span class="ptitle"><span aria-hidden="true">📋</span> Delete log</span>
                 <span class="cm-hint">@DeletedCount deleted · @(deleteLog.Count - DeletedCount) not deleted</span>
-                <button class="btn-sm" @onclick="() => deleteLog.Clear()" disabled="@deleting">Clear</button>
+                <button type="button" class="btn-sm bdel-log-clear" @onclick="() => deleteLog.Clear()" disabled="@deleting">Clear</button>
             </div>
             <div class="pbody bdel-log-body">
                 @foreach (var entry in deleteLog.OrderBy(o => o.Deleted))
@@ -218,11 +223,11 @@
 
 @if (showConfirm)
 {
-    <div class="modal-overlay" @onclick="() => showConfirm = false">
-        <div class="modal" style="max-width:640px;" @onclick:stopPropagation>
-            <h3>⚠ Delete @SelectedRows.Count branch(es)?</h3>
-            <div class="modal-body">
-                <p style="font-size:.76rem;margin-bottom:10px;">
+    @* The dialog takes focus itself rather than the Delete button, so Enter right after opening it deletes nothing. *@
+    <ModalDialog CssClass="bdel-confirm" OnClose="CloseConfirm">
+        <Title><span aria-hidden="true">⚠</span> Delete @SelectedRows.Count branch(es)?</Title>
+        <ChildContent>
+                <p class="bdel-confirm-note">
                     This cannot be undone. Work items keep their links to deleted branches. Branch Creator shows
                     those links as stale and can remove them. A branch someone has pushed to since it was loaded is not deleted.
                 </p>
@@ -232,15 +237,14 @@
                         <div class="bdel-confirm-repo">@byRepo.Key · @byRepo.Count() branch(es)</div>
                         @foreach (var r in byRepo.OrderBy(r => r.Branch, StringComparer.OrdinalIgnoreCase))
                         {
-                            <div class="bdel-confirm-branch">🗑 @r.Branch</div>
+                            <div class="bdel-confirm-branch">@r.Branch</div>
                         }
                     }
                 </div>
-            </div>
-            <div class="modal-actions">
-                <button class="btn-ghost" @onclick="() => showConfirm = false">Cancel</button>
-                <button class="btn-ghost btn-danger" @onclick="ExecuteDelete">🗑 Delete @SelectedRows.Count branch(es)</button>
-            </div>
-        </div>
-    </div>
+        </ChildContent>
+        <Actions>
+            <button type="button" class="btn-ghost" @onclick="CloseConfirm">Cancel</button>
+            <button type="button" class="btn-ghost btn-danger" @onclick="ExecuteDelete"><span aria-hidden="true">🗑</span> Delete @SelectedRows.Count branch(es)</button>
+        </Actions>
+    </ModalDialog>
 }

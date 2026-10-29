@@ -1,208 +1,67 @@
 /* ═══════════════════════════════════════════════════════
-   TOOL PAGES: the Sprint Insights tabs, the Markdown Viewer,
-   the Workday Calculator, and the responsive rules over them.
+   TOOL PAGES: the Markdown Viewer, the Workday Calculator,
+   Branch Creator, Branch Cleanup, and the responsive rules over
+   them. Sprint Insights has its own file (insights.css).
    ═══════════════════════════════════════════════════════ */
 
-/* ─── TABBED TOOL (Sprint Insights) ─── */
-.hub{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden;}
-.tabbar{display:flex;gap:2px;border-bottom:1px solid var(--border);flex-shrink:0;overflow-x:auto;}
-.tab{
-  padding:11px 16px;font-size:.8rem;font-weight:600;color:var(--muted2);background:none;border:none;
-  border-bottom:2px solid transparent;cursor:pointer;display:flex;align-items:center;gap:7px;
-  transition:var(--t);font-family:inherit;white-space:nowrap;
-}
-.tab .ic{width:16px;height:16px;color:var(--muted);transition:var(--t);}
-.tab:hover{color:var(--text);}
-.tab:hover .ic{color:var(--text);}
-.tab.active{color:var(--accent2);border-bottom-color:var(--accent);}
-.tab.active .ic{color:var(--accent2);}
-.tab-body{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden;padding-top:16px;}
+/* ─── NOTICES (every page) ─── */
+/* Tinted, not outlined: the tone says what a notice is. */
+.notice{display:flex;align-items:center;gap:8px;padding:9px 14px;border-radius:var(--r2);font-size:var(--fs-meta);margin-bottom:14px;}
+.notice.warn{background:color-mix(in srgb,var(--amber) 10%,transparent);color:#fde68a;}
+.notice.info{background:var(--accent-soft);color:var(--accent-ink);}
+.notice.ok{background:color-mix(in srgb,var(--green) 10%,transparent);color:var(--green-ink);}
+.notice.bad{background:color-mix(in srgb,var(--red) 10%,transparent);color:var(--red-ink);}
 
-.hub-placeholder{flex:1;display:flex;align-items:center;justify-content:center;}
-.hub-placeholder .inner{max-width:520px;text-align:center;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:34px;box-shadow:var(--shadow);}
-.hub-placeholder .ph-icon{display:flex;justify-content:center;color:var(--accent2);margin-bottom:14px;}
-.hub-placeholder h3{font-size:1.05rem;margin-bottom:8px;}
-.hub-placeholder p{font-size:.78rem;color:var(--muted2);line-height:1.6;}
-.hub-placeholder .ph-tag{display:inline-block;margin-top:14px;font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--accent2);background:var(--accent-soft);padding:4px 10px;border-radius:var(--pill);}
-
-.notice{display:flex;align-items:center;gap:8px;padding:9px 14px;border-radius:var(--r2);font-size:.72rem;margin-bottom:14px;}
-.notice.warn{background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.25);color:#fde68a;}
-.notice.info{background:var(--accent-soft);border:1px solid var(--accent-line);color:#cdd9ff;}
-
-.pct-pill{display:inline-block;font-size:.62rem;font-weight:700;padding:2px 8px;border-radius:var(--pill);}
-.pct-ok{background:rgba(52,211,153,.15);color:#6ee7b7;}
-.pct-under{background:rgba(251,191,36,.14);color:#fcd34d;}
-.pct-over{background:rgba(248,113,113,.14);color:#fca5a5;}
-
-/* deliverable vs non-deliverable bar */
-.deliv-bar{display:flex;height:14px;border-radius:7px;overflow:hidden;background:var(--surface2);}
-.deliv-seg{height:100%;transition:width .3s ease;}
-.deliv-del{background:var(--green);}
-.deliv-non{background:var(--amber);}
-.deliv-other{background:var(--muted);}
-
-/* ─── Capacity planning (CapacityPlanningPanel, CapacityPlanningSettingsDialog) ─── */
-.cp-body{flex:1;min-height:0;overflow-y:auto;margin-top:16px;padding-right:2px;scrollbar-width:thin;}
-.cp-teams{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:14px;}
-@media (max-width:1100px){.cp-teams{grid-template-columns:1fr;}}
-.cp-team{
-  text-align:left;font-family:inherit;color:var(--text);background:var(--surface);border:1px solid var(--border);
-  border-radius:var(--r);padding:13px 15px;cursor:pointer;transition:var(--t);display:flex;flex-direction:column;gap:7px;box-shadow:var(--shadow);
-}
-.cp-team:hover{border-color:var(--border2);}
-.cp-team.on{border-color:var(--accent-line);box-shadow:0 0 0 1px var(--accent-line),var(--shadow);background:linear-gradient(180deg,var(--accent-soft),var(--surface) 70%);}
-.cp-team-head{display:flex;align-items:center;gap:8px;}
-.cp-team-name{font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted2);}
-.cp-team-count{font-size:.6rem;color:var(--muted);}
-.cp-team-pct{margin-left:auto;font-size:.78rem;padding:3px 10px;}
-.cp-team-planned{font-size:.74rem;color:var(--muted2);}
-.cp-team-planned b{color:var(--text);font-family:var(--mono);}
-.cp-meter{height:6px;border-radius:3px;background:var(--surface2);overflow:hidden;}
-.cp-meter-fill{height:100%;border-radius:3px;transition:width .3s ease;}
-.cp-meter-fill.pct-ok{background:var(--green);}
-.cp-meter-fill.pct-under{background:var(--amber);}
-.cp-meter-fill.pct-over{background:var(--red);}
-.cp-team-split{display:flex;flex-direction:column;gap:2px;font-size:.66rem;}
-.cp-team-foot{font-size:.6rem;color:var(--muted);font-family:var(--mono);}
-.cp-team-progress{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:.64rem;color:var(--muted2);padding-top:6px;border-top:1px dashed var(--border);}
-.cp-team-progress b{color:var(--text);font-family:var(--mono);}
-.cp-bug{color:#fca5a5;}
-.cp-rule{border:none;border-top:1px solid var(--border);margin:10px 0;}
-.cp-del{color:#6ee7b7;}
-.cp-non{color:var(--amber);}
-.cp-unt{color:var(--muted2);}
-.cp-cross{color:var(--purple);font-weight:600;}
-.cp-table td.cp-num,.cp-table th.cp-num{text-align:right;white-space:nowrap;}
-.cp-table td.cp-num{font-family:var(--mono);}
-.cp-sub{font-size:.58rem;opacity:.75;}
-.cp-foot td{border-top:1px solid var(--border2);font-weight:700;font-size:.7rem;background:var(--surface2);}
-.cp-formula{margin-bottom:14px;}
-.cp-formula summary{cursor:pointer;padding:12px 18px;font-size:.7rem;font-weight:700;color:var(--muted2);list-style:none;}
-.cp-formula summary::-webkit-details-marker{display:none;}
-.cp-formula[open] summary{border-bottom:1px solid var(--border);color:var(--text);}
-.cp-formula-body{padding:12px 18px;display:flex;flex-direction:column;gap:7px;}
-.cp-formula-body > div{display:grid;grid-template-columns:110px 1fr;gap:10px;align-items:baseline;font-size:.68rem;}
-.cp-formula-body span{color:var(--muted);font-weight:700;text-transform:uppercase;font-size:.56rem;letter-spacing:.06em;}
-.cp-formula-body code{font-family:var(--mono);font-size:.66rem;color:var(--text);white-space:normal;}
-
-.modal.cp-settings{max-width:760px;width:calc(100vw - 32px);}
-.cp-settings-body{max-height:70vh;overflow-y:auto;scrollbar-width:thin;}
-.cp-sec{padding:4px 0 14px;border-bottom:1px solid var(--border);margin-bottom:14px;}
-.cp-sec:last-child{border-bottom:none;margin-bottom:0;}
-.cp-sec-title{font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--accent2);margin-bottom:10px;}
-.cp-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px;align-items:start;}
-@media (max-width:640px){.cp-grid2{grid-template-columns:1fr;}}
-.f-label em{font-style:normal;font-weight:400;color:var(--muted);font-size:.58rem;}
-.cp-check{display:flex;gap:8px;align-items:flex-start;font-size:.68rem;color:var(--muted2);cursor:pointer;padding-top:18px;}
-.cp-check input{accent-color:var(--accent);margin-top:2px;}
-.cp-days{display:flex;gap:5px;flex-wrap:wrap;}
-.cp-day{min-width:44px;height:30px;border-radius:8px;border:1px solid var(--border2);background:var(--surface);color:var(--muted);font-size:.66rem;font-weight:700;cursor:pointer;font-family:inherit;transition:var(--t);}
-.cp-day.on{background:var(--accent-soft);color:#cdd9ff;border-color:var(--accent-line);}
-.cp-hint{font-size:.64rem;color:var(--muted);line-height:1.5;}
-.cp-preview{margin-top:10px;font-size:.66rem;color:#cdd9ff;background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:var(--r2);padding:8px 12px;}
-.cp-error{font-size:.64rem;color:var(--red);margin-top:6px;}
-.cp-rules{margin:10px 0;}
-.cp-rules .cp-rule-flag{width:130px;text-align:center;}
-.cp-rules .cp-rule-flag input{accent-color:var(--accent);width:15px;height:15px;cursor:pointer;}
-.cp-rules .cp-rule-act{width:96px;text-align:right;white-space:nowrap;}
-.cp-rules .cp-rule-tag{font-weight:600;}
-
-/* ─── Chip list editor (ChipListEditor.razor) ─── */
-.chiped-list{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;min-height:24px;}
-.chiped-chip{display:inline-flex;align-items:center;gap:4px;font-size:.64rem;font-weight:600;padding:2px 4px 2px 10px;border-radius:var(--pill);background:var(--accent-soft);color:#cdd9ff;border:1px solid var(--accent-line);}
-.chiped-empty{font-size:.64rem;color:var(--muted);}
-.chiped-add{display:flex;gap:6px;align-items:center;}
-.chiped-add .fi{height:32px;font-size:.72rem;}
-
-/* audit check cards (Tasks / Bugs tabs) */
-.audit-summary{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;}
-.audit-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);margin-bottom:8px;overflow:hidden;}
-.audit-head{display:flex;align-items:center;gap:10px;padding:11px 14px;}
-.audit-head.clickable{cursor:pointer;}
-.audit-head.clickable:hover{background:var(--surface2);}
-.sev-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
-.sev-crit{background:var(--red);box-shadow:0 0 8px rgba(248,113,113,.5);}
-.sev-warn{background:var(--amber);}
-.sev-info{background:var(--accent);}
-.sev-ok{background:var(--green);}
-.audit-title{font-size:.82rem;font-weight:600;flex:1;}
-.audit-count{font-size:.64rem;font-weight:800;padding:2px 9px;border-radius:var(--pill);font-family:var(--mono);}
-.cnt-crit{background:rgba(248,113,113,.15);color:#fca5a5;}
-.cnt-warn{background:rgba(251,191,36,.14);color:#fcd34d;}
-.cnt-info{background:var(--accent-soft);color:#cdd9ff;}
-.cnt-ok{background:rgba(52,211,153,.12);color:#6ee7b7;}
-.audit-chev{color:var(--muted);font-size:.7rem;width:14px;text-align:center;}
-.audit-body{border-top:1px solid var(--border);max-height:400px;overflow:auto;}
-
-/* burndown grid (Hours Updated by Members) */
-.bd-wrap{overflow:auto;border:1px solid var(--border);border-radius:var(--r2);}
-.bd-table{border-collapse:collapse;font-size:.72rem;white-space:nowrap;width:100%;}
-.bd-table th,.bd-table td{border:1px solid var(--border);padding:6px 10px;text-align:center;}
-.bd-table th{background:var(--surface2);color:var(--muted2);font-size:.58rem;text-transform:uppercase;letter-spacing:.06em;position:sticky;top:0;z-index:2;}
-.bd-member{text-align:left!important;font-weight:600;position:sticky;left:0;background:var(--surface);min-width:160px;z-index:1;}
-.bd-table thead .bd-member{z-index:3;}
-.bd-cell{cursor:pointer;font-family:var(--mono);}
-.bd-cell:hover{background:var(--surface2);}
-.bd-reg-red{color:#fca5a5;font-weight:700;}
-.bd-reg-green{color:#6ee7b7;font-weight:700;}
-.bd-zero{color:var(--muted);}
-.bd-reg-none{color:var(--muted2);font-weight:700;}
-.bd-bug{font-size:.58rem;color:var(--muted2);margin-top:2px;}
-.bd-bug-red{color:#fca5a5;}
-.bd-total{font-weight:700;background:var(--surface2);}
-.bd-legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:.66rem;color:var(--muted2);}
-.bd-legend .bd-reg-green,.bd-legend .bd-reg-red,.bd-legend .bd-reg-none,.bd-legend .bd-bug-red{font-weight:700;}
-
-/* task creation categories */
-.cat-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
-.cat-head{font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--accent2);margin-bottom:8px;}
-.cat-item{display:flex;align-items:center;gap:9px;padding:6px 0;font-size:.78rem;cursor:pointer;}
-.cat-item input{accent-color:var(--accent);width:15px;height:15px;}
-.cat-done{margin-left:auto;font-size:.58rem;color:var(--green);font-weight:700;}
-.cat-exec{display:flex;gap:14px;flex-wrap:wrap;margin:0 0 6px 24px;}
-.cat-exec-opt{display:flex;align-items:center;gap:5px;font-size:.66rem;color:var(--muted2);cursor:pointer;}
-.cat-exec-opt input{width:13px;height:13px;accent-color:var(--accent);}
-.cat-exec-single{margin:0 0 6px 24px;font-size:.62rem;color:var(--muted);}
-.cat-defaults{display:flex;align-items:center;gap:9px;padding:9px 12px;margin-bottom:16px;border:1px solid var(--accent-line);border-radius:10px;background:var(--accent-soft);font-size:.78rem;font-weight:600;cursor:pointer;}
-.cat-defaults input{accent-color:var(--accent);width:15px;height:15px;}
-.cat-defaults-count{margin-left:auto;font-family:var(--mono);font-size:.62rem;font-weight:600;color:var(--muted2);}
-.cat-default{font-size:.52rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--accent2);border:1px solid var(--accent-line);border-radius:4px;padding:0 4px;}
-
-/* ─── MARKDOWN VIEWER ─── */
-.mdv{flex:1;display:flex;flex-direction:column;min-height:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;box-shadow:var(--shadow);}
-.mdv-header{display:flex;align-items:center;gap:12px;height:54px;padding:0 16px;border-bottom:1px solid var(--border);flex-shrink:0;}
-.mdv-title{display:flex;align-items:center;gap:9px;font-size:.9rem;font-weight:700;white-space:nowrap;}
+/* ─── MARKDOWN VIEWER (mdv-) ─── */
+/* One raised panel: the header, the editor and preview panes, the status line. No hairlines between them; the panes'
+   label strips and the status line sit a shade lighter instead. The View switch is the same raised thumb in a well as
+   every other switch in DevKit. */
+.mdv{flex:1;display:flex;flex-direction:column;min-height:0;background:var(--surface);border:0;border-radius:var(--r);overflow:hidden;box-shadow:var(--rim),var(--elev-1);}
+.mdv-header{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;min-height:54px;padding:8px 16px;flex-shrink:0;}
+.mdv-title{display:flex;align-items:center;gap:9px;font-size:var(--fs-name);font-weight:600;white-space:nowrap;}
 .mdv-title .ic{color:var(--accent2);}
-.mdv-modes{display:flex;gap:2px;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:3px;}
-.mdv-mode{padding:5px 16px;font-size:.74rem;font-weight:600;font-family:inherit;color:var(--muted2);background:transparent;border:none;border-radius:6px;cursor:pointer;transition:var(--t);}
-.mdv-mode:hover{color:var(--text);background:var(--surface2);}
-.mdv-mode.active{color:#fff;background:var(--accent);}
+.mdv-modes{display:inline-flex;gap:0;background:var(--bg);border:0;border-radius:10px;box-shadow:var(--well);padding:2px;}
+.mdv-mode{padding:5px 14px;font-size:var(--fs-meta);font-weight:600;font-family:inherit;color:var(--muted2);background:transparent;border:0;border-radius:8px;cursor:pointer;transition:var(--tr-ui);}
+.mdv-mode:hover{color:var(--text);}
+.mdv-mode.active{color:var(--text);background:var(--surface3);box-shadow:var(--rim),var(--elev-1);}
+.mdv-mode:active{transform:scale(var(--press));}
 .mdv-actions{display:flex;align-items:center;gap:8px;margin-left:auto;}
 .mdv-dropdown{position:relative;}
-.mdv-menu{display:none;position:absolute;right:0;top:calc(100% + 6px);min-width:200px;background:var(--surface);border:1px solid var(--border2);border-radius:10px;padding:5px;z-index:200;box-shadow:var(--shadow-lg);}
-.mdv-menu.open{display:block;}
-.mdv-menu-item{display:block;width:100%;text-align:left;padding:9px 12px;font-size:.76rem;color:var(--text);background:none;border:none;border-radius:7px;cursor:pointer;font-family:inherit;}
-.mdv-menu-item:hover{background:var(--accent-soft);color:#cdd9ff;}
+/* The export list floats over the panes, so it opens from its button the way DevKit's menus do. */
+.mdv-menu{display:none;position:absolute;right:0;top:calc(100% + 6px);min-width:200px;background:var(--surface);border:1px solid var(--border2);border-radius:12px;padding:5px;z-index:200;box-shadow:var(--shadow-lg);transform-origin:top right;}
+.mdv-menu.open{display:block;animation:menuIn .15s var(--ease-out);}
+.mdv-menu-item{display:block;width:100%;text-align:left;padding:9px 12px;font-size:var(--fs-body);color:var(--text);background:none;border:none;border-radius:8px;cursor:pointer;font-family:inherit;}
+.mdv-menu-item:hover,.mdv-menu-item:focus-visible{background:var(--accent-soft);color:var(--accent-ink);}
 .mdv-content{display:flex;flex:1;min-height:0;overflow:hidden;}
 .mdv-pane{display:flex;flex-direction:column;flex:1;min-width:0;}
-.mdv-pane-label{display:flex;align-items:center;justify-content:space-between;padding:6px 14px;font-size:.58rem;font-weight:700;color:var(--muted);background:var(--surface2);border-bottom:1px solid var(--border);text-transform:uppercase;letter-spacing:.06em;flex-shrink:0;min-height:30px;}
-.mdv-copy{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;font-size:.62rem;font-weight:600;font-family:inherit;color:var(--muted2);background:transparent;border:1px solid var(--border2);border-radius:6px;cursor:pointer;text-transform:none;letter-spacing:0;transition:var(--t);}
+.mdv-pane-label{display:flex;align-items:center;justify-content:space-between;padding:4px 14px;font-size:var(--fs-meta);font-weight:600;color:var(--muted2);background:var(--surface2);flex-shrink:0;min-height:34px;}
+.mdv-copy{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;height:26px;font-size:var(--fs-meta);font-weight:600;font-family:inherit;color:var(--muted2);background:var(--surface);border:0;border-radius:7px;box-shadow:var(--rim);cursor:pointer;transition:var(--tr-ui);}
 .mdv-copy .ic{width:13px;height:13px;}
-.mdv-copy:hover{color:var(--text);background:var(--surface);}
-.mdv-copy.copied{color:var(--green);border-color:var(--green);}
+.mdv-copy:hover{color:var(--text);background:var(--surface3);}
+.mdv-copy:active{transform:scale(var(--press));}
+.mdv-copy.copied{color:var(--green-ink);}
 .mdv-preview{flex:1;overflow-y:auto;padding:22px 28px;background:var(--bg);}
-.mdv-resizer{width:5px;cursor:col-resize;background:var(--border);flex-shrink:0;}
-.mdv-resizer:hover,.mdv-resizer.dragging{background:var(--accent);}
-.mdv-status{display:flex;align-items:center;justify-content:flex-end;gap:16px;padding:0 16px;height:24px;background:var(--surface2);border-top:1px solid var(--border);font-size:.6rem;color:var(--muted2);flex-shrink:0;}
+.mdv-resizer{width:4px;cursor:col-resize;background:var(--surface2);flex-shrink:0;transition:background-color var(--t);}
+.mdv-resizer:hover,.mdv-resizer.dragging,.mdv-resizer:focus-visible{background:var(--accent);}
+.mdv-status{display:flex;align-items:center;justify-content:flex-end;gap:16px;padding:0 16px;height:26px;background:var(--surface2);font-size:var(--fs-meta);color:var(--muted2);font-variant-numeric:tabular-nums;flex-shrink:0;}
 .mdv-content.mode-editor #mdPreviewPane,.mdv-content.mode-editor .mdv-resizer{display:none;}
 .mdv-content.mode-preview #mdEditorPane,.mdv-content.mode-preview .mdv-resizer{display:none;}
-
+/* A phone has no room for two panes side by side, so Split stacks them and the divider goes. */
+@media (max-width:600px){
+  .mdv-header{padding:8px 12px;}
+  .mdv-content.mode-split{flex-direction:column;}
+  .mdv-content.mode-split .mdv-resizer{display:none;}
+  .mdv-content.mode-split .mdv-pane{flex:1 1 50%;min-height:0;width:auto!important;}
+  .mdv-preview{padding:16px;}
+}
 .md-editor{
   flex:1;width:100%;padding:14px 18px;background:transparent;color:var(--text);
-  border:none;outline:none;resize:none;font-family:var(--mono);font-size:.76rem;
+  border:none;outline:none;resize:none;font-family:var(--mono);font-size:var(--fs-body);
   line-height:1.7;tab-size:4;overflow-y:auto;
 }
 .md-editor::placeholder{color:var(--muted);}
+/* The editor draws no box, so a keyboard user sees its focus as a ring inside the pane. */
+.md-editor:focus-visible{box-shadow:inset 0 0 0 2px var(--accent-line);}
 .md-preview{font-size:.82rem;line-height:1.7;}
 .md h1,.md h2,.md h3,.md h4,.md h5,.md h6{margin:20px 0 12px;font-weight:600;line-height:1.3;color:var(--text);}
 .md h1{font-size:1.6em;padding-bottom:.2em;border-bottom:1px solid var(--border);}
@@ -237,59 +96,381 @@
 .md pre .attr{color:#79c0ff;}
 .md pre .val{color:#a5d6ff;}
 
-/* ─── WORKDAY CALCULATOR ─── */
-.wc-tile{
-  display:flex;gap:12px;align-items:center;padding:14px;
-  background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);box-shadow:var(--shadow);
+/* ─── WORKDAY CALCULATOR (wc-) ─── */
+/* One raised panel: the entries on the left, the ring and the day's three figures on the right. Type roles as on
+   the other pages; the figures are the lead size with tabular digits, so a ticking clock does not jitter. */
+.wc-page{flex:1;min-height:0;overflow-y:auto;}
+.wc-panel{border:0;box-shadow:var(--rim),var(--elev-1);max-width:1100px;margin:0 auto;}
+.wc-panel .phead{border-bottom:0;justify-content:flex-start;gap:8px 12px;padding:14px 18px 6px;}
+.wc-panel .ptitle{font-size:var(--fs-name);font-weight:600;text-transform:none;letter-spacing:0;color:var(--text);}
+.wc-lead{font-size:var(--fs-meta);color:var(--muted);}
+.wc-body{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(260px,1fr);gap:24px;padding:12px 18px 20px;align-items:start;}
+/* The three day types wrap on a phone, so the well grows with them (.cm-seg alone has a fixed height). */
+.cm-seg.wc-seg{height:auto;min-height:32px;flex-wrap:wrap;}
+.cm-seg.wc-seg .cm-seg-btn{min-height:28px;}
+.wc-hint{font-size:var(--fs-meta);color:var(--muted);line-height:1.5;margin-bottom:6px;}
+.wc-hint code{font-family:var(--mono);font-size:var(--fs-meta);color:var(--accent-ink);}
+.wc-entries{display:block;width:100%;height:180px;resize:vertical;font-family:var(--mono);font-size:var(--fs-body);line-height:1.6;}
+.wc-entries + .wc-hint{margin-top:6px;}
+.wc-result{display:flex;flex-direction:column;align-items:center;gap:14px;}
+.wc-ring{position:relative;width:168px;height:168px;}
+.wc-ring svg{width:100%;height:100%;transform:rotate(-90deg);}
+.wc-ring circle{fill:none;stroke-width:2.5;}
+.wc-ring-track{stroke:var(--surface3);}
+.wc-ring-fill{stroke:var(--accent);stroke-linecap:round;transition:stroke-dasharray .3s var(--ease-in-out);}
+.wc-ring-text{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;}
+.wc-pct{font-family:var(--display);font-size:var(--fs-title);font-weight:600;color:var(--text);font-variant-numeric:tabular-nums;}
+.wc-ring-note{font-size:var(--fs-meta);color:var(--muted);}
+.wc-sub{align-self:stretch;font-size:var(--fs-body);font-weight:600;color:var(--text);}
+.wc-figures{align-self:stretch;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:0;}
+.wc-figures > div{padding:10px 12px;border-radius:var(--r2);background:var(--bg);box-shadow:var(--well);}
+.wc-figures dt{font-size:var(--fs-meta);color:var(--muted2);margin-bottom:2px;}
+.wc-figures dd{margin:0;font-size:var(--fs-name);font-weight:600;color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap;}
+@media (max-width:900px){
+  .wc-body{grid-template-columns:1fr;}
 }
-.wc-tile-icon{
-  width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;
-  font-size:1rem;border:1px solid;flex-shrink:0;
+@media (max-width:600px){
+  .wc-figures{grid-template-columns:1fr;}
+}
+@media (prefers-reduced-motion:reduce){
+  .wc-ring-fill{transition:none;}
+}
+
+/* ─── BRANCH CREATOR (bc-) ─── */
+/* Spatial, as on the Code Merging Sheet: the filters are one raised panel, the table and the branch form are
+   panels in the window, and what the branch is for sits sunk into the form. The shared classes it uses
+   (.cfg-bar, .req-table, .gpanel, .btn-ghost) keep their look on the other pages until those have their turn.
+   Type roles: --fs-body for titles, field values, buttons and inputs, --fs-meta for labels, hints, counts, ids,
+   headers, type, state and names; weights 400 and 600; monospace only for branch names; digits tabular. */
+.bc-page{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0;overflow:hidden;font-variant-numeric:tabular-nums;}
+
+/* Two groups, what to load and how to narrow the table: on one line when the window has room for both
+   (about 1560px and wider), otherwise the filters wrap below as a whole. */
+.bc-toolbar{
+  flex:0 0 auto;display:flex;flex-wrap:wrap;align-items:flex-end;column-gap:12px;
+  background:var(--surface);border-radius:var(--r);box-shadow:var(--rim),var(--elev-1);padding:4px 6px;
+}
+/* It may shrink, so on a phone its own fields wrap instead of widening the page. */
+.bc-toolbar .cfg-bar{flex:0 1 auto;min-width:0;border-bottom:0;padding:6px 8px 4px;gap:8px 12px;}
+.bc-toolbar .cfg-bar-filters{flex:1 1 560px;background:none;border-top:0;padding:4px 8px 6px;gap:12px;}
+.bc-toolbar .cfg-col{flex:0 0 auto;padding:0;}
+/* The labels read as words rather than tiny capitals; the emojis stay. */
+.bc-toolbar .cfg-label{font-size:var(--fs-meta);font-weight:600;text-transform:none;letter-spacing:0;color:var(--muted2);}
+.bc-toolbar .gdd-trigger,.bc-toolbar .cfg-fi{font-size:var(--fs-body);}
+.bc-toolbar .cfg-load-btn{font-size:var(--fs-meta);font-weight:600;}
+.bc-toolbar .cfg-load-btn .spin{color:var(--text);}
+.bc-area{min-width:260px;}
+.bc-sprint{min-width:180px;}
+.bc-team{width:110px;}
+.bc-f-search{flex:2 1 220px;min-width:0;}
+.bc-f-pick{flex:1 1 140px;min-width:0;}
+.bc-page > .notice{margin:12px 0 0;}
+
+/* The table takes the width; the form keeps a steady column, wide enough for a long branch name. */
+.bc-content .content-left{flex:1 1 auto;}
+.bc-content .content-right{flex:0 0 clamp(340px,32%,460px);min-width:0;}
+.bc-page .gpanel{border:0;box-shadow:var(--rim),var(--elev-1);}
+.bc-page .phead{border-bottom:0;}
+.bc-page .ptitle{font-size:var(--fs-body);font-weight:600;text-transform:none;letter-spacing:0;color:var(--text);}
+.bc-count{font-size:var(--fs-meta);color:var(--muted2);}
+.bc-head-note{margin-left:auto;font-size:var(--fs-meta);color:var(--muted);}
+.bc-grid{height:100%;}
+
+/* One line per work item, about 35px, like the merging grid. Type and state read as coloured text so the title
+   is what the eye finds, and the chosen row keeps its tint with a soft inner edge, not a bar down its side.
+   Below its minimum width the table scrolls sideways rather than squeezing the title to nothing. */
+table.bc-table{table-layout:fixed;min-width:600px;font-size:var(--fs-body);}
+table.bc-table thead th{padding:8px 12px;text-transform:none;letter-spacing:0;font-size:var(--fs-meta);font-weight:600;transition:color var(--t);}
+table.bc-table thead th:hover{color:var(--text);}
+/* A new load's rows arrive softly; the body is keyed to the loaded list, so filters and sorting never replay it. */
+table.bc-table tbody{animation:fade-in .15s var(--ease-out);}
+table.bc-table tbody td{padding:8px 12px;}
+.bc-table .bc-c-id{width:84px;}
+.bc-table .bc-c-type{width:116px;}
+.bc-table .bc-c-state{width:84px;}
+.bc-table .bc-c-user{width:130px;}
+.bc-table td.bc-c-type,.bc-table td.bc-c-state,.bc-table td.bc-c-user{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.bc-table td.bc-c-user{font-size:var(--fs-meta);}
+.bc-title-cell{display:flex;align-items:baseline;gap:8px;min-width:0;}
+/* The title is the row's button (keyboard and screen readers pick a work item with it); it looks like the text it was. */
+.bc-pick{width:100%;padding:0;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;}
+/* Sort headers are buttons too, here and on Size Check (.sc-sort); the sorted one is brighter and carries a chevron,
+   down for descending. */
+.bc-sort,.sc-sort{display:inline-flex;align-items:center;gap:6px;padding:0;border:0;background:none;color:inherit;font:inherit;cursor:pointer;}
+table.bc-table thead th[aria-sort],table.sc-table thead th[aria-sort]{color:var(--text);}
+th[aria-sort] .bc-sort::after,th[aria-sort] .sc-sort::after{
+  content:"";width:5px;height:5px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;
+  transform:translateY(-2px) rotate(45deg);
+}
+th[aria-sort="ascending"] .bc-sort::after,th[aria-sort="ascending"] .sc-sort::after{transform:translateY(1px) rotate(-135deg);}
+/* The ids open TFS for the pointer only, so their tap area grows past the 16px line they sit on. */
+.bc-page .id-link{position:relative;}
+.bc-page .id-link::after{content:"";position:absolute;inset:-4px -2px;}
+.bc-title{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.bc-sub{flex:0 0 auto;font-size:var(--fs-meta);color:var(--muted);white-space:nowrap;}
+.bc-page .type-pill,.bc-page .state-pill{background:none;padding:0;margin:0;border-radius:0;font-size:var(--fs-meta);font-weight:600;}
+.bc-page table.req-table tbody tr.selected{box-shadow:inset 0 0 0 1px var(--accent-line);}
+/* Ids are numbers people read and type, not code. */
+.bc-page .id-link{font-family:inherit;font-size:var(--fs-meta);font-weight:600;}
+.bc-page .tbl-empty{font-size:var(--fs-body);}
+
+/* The form: a tight 10px between fields, the hints at label size rather than 8px. */
+.bc-page .f-row{margin-bottom:10px;}
+.bc-page .f-label{font-size:var(--fs-meta);font-weight:600;}
+.bc-page .fi,.bc-page .fi-size .gdd-trigger{font-size:var(--fs-body);}
+.bc-hint{font-size:var(--fs-meta);font-weight:400;color:var(--muted);}
+.bc-spin{color:var(--accent);margin-left:6px;}
+.bc-field-err{font-size:var(--fs-meta);color:var(--amber);margin-top:3px;}
+.bc-empty-ic{color:var(--accent2);opacity:.7;}
+.bc-page .pr-placeholder .bp-title{font-size:var(--fs-name);font-weight:600;}
+.bc-page .pr-placeholder .bp-sub{font-size:var(--fs-body);}
+
+.bc-item{background:var(--bg);box-shadow:var(--well);border-radius:var(--r2);padding:10px 14px;margin-bottom:10px;}
+.bc-item-title{font-size:var(--fs-body);font-weight:600;line-height:1.4;}
+.bc-item-meta{font-size:var(--fs-meta);color:var(--muted2);margin-top:3px;}
+.bc-item-link{color:var(--accent2);font-weight:600;text-decoration:none;}
+.bc-item-link:hover{text-decoration:underline;}
+.bc-note{
+  display:flex;align-items:center;gap:6px;padding:8px 12px;margin-bottom:10px;border-radius:var(--r2);
+  background:var(--surface2);font-size:var(--fs-meta);color:var(--muted2);
+}
+.bc-note .bc-spin{margin-left:0;}
+
+/* Branches already linked to the work item, on a soft amber surface: one of them may be the branch wanted. */
+.bc-existing{margin-bottom:10px;padding:10px 12px;border-radius:var(--r2);background:color-mix(in srgb,var(--amber) 6%,transparent);}
+/* Linked branches, or the failure to read them, arrive after a wait: a short fade, short because it follows every
+   row selected. */
+.bc-existing,.bc-err{animation:fade-in .12s var(--ease-out);}
+.bc-existing-h{display:flex;align-items:center;gap:5px;margin-bottom:4px;font-size:var(--fs-meta);font-weight:600;color:var(--amber);}
+.bc-existing-note{font-size:var(--fs-meta);color:var(--muted);margin-bottom:6px;}
+.bc-link{
+  display:flex;align-items:center;gap:6px;padding:3px 6px;margin:0 -6px;border-radius:6px;cursor:pointer;word-break:break-all;
+  font-family:var(--mono);font-size:var(--fs-meta);line-height:1.5;color:var(--cyan);transition:var(--tr-ui);
+}
+.bc-link.gone{color:var(--muted2);}
+/* Each row is something to press ("Click one to use it"): it lights up under the pointer and gives a little when
+   its branch is pressed, not when the press is on its ✕ or Remove link. */
+.bc-link:hover{background:color-mix(in srgb,var(--text) 6%,transparent);color:color-mix(in srgb,var(--cyan) 70%,#fff);}
+.bc-link.gone:hover{color:var(--text);}
+.bc-link:has(.bc-link-name:active){transform:scale(var(--press-tile));}
+.bc-link-name{flex:1;padding:0;border:0;background:none;color:inherit;font:inherit;text-align:left;word-break:break-all;cursor:pointer;}
+.bc-gone{color:var(--amber);}
+.bc-link-acts{display:flex;align-items:center;gap:4px;white-space:nowrap;}
+.bc-remove{color:var(--red);}
+.bc-err{
+  margin-bottom:10px;padding:8px 12px;border-radius:var(--r2);
+  background:color-mix(in srgb,var(--red) 8%,transparent);font-size:var(--fs-meta);color:var(--red-ink);
+}
+
+.bc-ref-row{display:flex;align-items:center;gap:6px;}
+.bc-ref-prefix{font-family:var(--mono);font-size:var(--fs-meta);color:var(--muted);white-space:nowrap;}
+/* A branch name is code, like the base branch picked below it. */
+.bc-page .bc-ref-input{font-family:var(--mono);font-size:var(--fs-meta);}
+.bc-valid{font-size:var(--fs-meta);margin-top:3px;}
+.bc-valid.ok{color:var(--green);}
+.bc-valid.bad{color:var(--red);}
+.bc-pattern{font-size:var(--fs-meta);color:var(--muted);margin-top:3px;}
+.bc-pattern code{font-family:var(--mono);font-size:inherit;color:var(--cyan);}
+
+/* Pinned to the bottom of the form column: on a laptop the fields run below the fold once a work item has
+   linked branches, and Create has to stay in reach. Its own background hides what scrolls beneath it. */
+.bc-actions{position:sticky;bottom:0;z-index:2;display:flex;gap:8px;margin-top:12px;padding:10px 0 2px;background:var(--surface);}
+/* While fields scroll beneath it, the row floats above them and casts a soft shadow upward; the shadow fades over
+   the last stretch of the scroll, where the row is back in its own place. It follows the scroll position, so
+   nothing travels. Where the form fits, there is no scroll and no shadow; browsers without scroll-driven
+   animation show none either. */
+@supports (animation-timeline:scroll()){
+  .bc-actions{animation:bc-pinned linear both;animation-timeline:scroll(nearest block);}
+}
+@keyframes bc-pinned{
+  from,85%{box-shadow:0 -12px 14px -12px rgba(0,0,0,.75);}
+  to{box-shadow:0 0 0 0 transparent;}
+}
+.bc-actions .btn-primary{flex:1;}
+.bc-actions .btn-primary,.bc-actions .btn-ghost{font-size:var(--fs-body);font-weight:600;}
+/* Check wears the tint Verify All does on the merging sheet; Clear only empties the form, so it is a plain text
+   button rather than a red one. */
+.bc-actions .bc-check-btn{border-color:transparent;background:var(--accent-soft);color:var(--accent-ink);box-shadow:var(--rim);}
+.bc-actions .bc-check-btn:hover:not(:disabled){border-color:transparent;background:color-mix(in srgb,var(--accent) 24%,transparent);color:#fff;}
+.bc-actions .bc-clear{border-color:transparent;background:none;}
+.bc-actions .bc-clear:hover{border-color:transparent;background:var(--surface2);}
+/* The outcome of Check or Create, the one thing here that rises as it arrives: it answers an action. */
+.bc-result{margin-top:12px;padding:12px 14px;border-radius:var(--r2);font-size:var(--fs-body);line-height:1.5;animation:bc-rise .16s var(--ease-out);}
+.bc-result.ok{background:color-mix(in srgb,var(--green) 8%,transparent);}
+.bc-result.bad{background:color-mix(in srgb,var(--red) 8%,transparent);}
+/* The box takes the tone of what it says: "already exists", a link already gone or a link that failed after the
+   branch was made are warnings, not failures. */
+.bc-result:has(.bc-msg.warn){background:color-mix(in srgb,var(--amber) 8%,transparent);}
+/* Branch names have no spaces to break at, so they break anywhere rather than run out of the box. */
+.bc-result{overflow-wrap:anywhere;}
+.bc-result code,.bc-ref{font-family:var(--mono);font-size:var(--fs-meta);}
+.bc-msg.ok{color:var(--green);}
+.bc-msg.warn{color:var(--amber);}
+.bc-msg.bad{color:var(--red);}
+.bc-msg-h{margin-bottom:8px;font-weight:600;color:var(--green);}
+/* The created branch's summary: labels read as words, like the form's, not tiny capitals. */
+.bc-result .modal-row{font-size:inherit;margin-bottom:4px;}
+.bc-result .modal-row .label{min-width:72px;font-size:var(--fs-meta);font-weight:600;text-transform:none;color:var(--muted2);}
+.bc-result .modal-row > span:last-child{min-width:0;}
+.bc-loading{display:inline-flex;align-items:center;gap:8px;color:var(--muted2);}
+.bc-loading .spin{color:var(--accent);}
+/* --rise is zero under reduced motion, so this keeps its fade and loses its travel. The plain fades use the shared
+   fade-in (components.css). */
+@keyframes bc-rise{from{opacity:0;transform:translateY(var(--rise));}}
+
+/* Below 1280px the table could not keep its 600px minimum beside the form (it scrolled sideways all the way down to
+   900px), so the form moves under it and the page scrolls as a whole: the toolbar, the table in its own scroll area,
+   then the form, whose actions stay pinned to the bottom of the screen. !important only because the shared
+   .content-left .grid-wrap rules use it. */
+@media(max-width:1279px){
+  .bc-page{overflow:visible;}
+  .bc-content{flex-direction:column;overflow:visible;}
+  .bc-content .content-left{overflow:visible;min-height:300px;}
+  .bc-content .content-left .bc-grid{max-height:min(440px,55vh)!important;}
+  .bc-content .content-right{flex:none;width:100%;overflow:visible;}
+}
+/* Phones and small tablets: a shorter table area, and the filters always take their own line. */
+@media(max-width:900px){
+  .bc-content .content-left .bc-grid{max-height:340px!important;}
+  .bc-toolbar .cfg-bar-filters{flex-basis:100%;}
+}
+/* Phones, and the narrow form column beside the table up to 1499px: the three actions keep one line, so Create
+   Branch does not break in two. */
+@media(max-width:600px),(min-width:1280px) and (max-width:1499px){
+  .bc-actions{gap:6px;}
+  .bc-actions .btn-primary{padding:10px;white-space:nowrap;}
+  .bc-actions .btn-ghost{padding:8px;}
 }
 
 /* ─── BRANCH CLEANUP (bdel-: bd- belongs to the burndown) ─── */
-.bdel-delete-btn{background:rgba(248,113,113,.12);border-color:rgba(248,113,113,.3);color:#fca5a5;}
+/* Builds on the Code Merging toolbar (cm-) it shares. Type roles as on the other pages: 13 for cells, 12 for labels,
+   meta and the refs, which are monospace because they are refs. Colour only for meaning: red for what will be deleted,
+   amber for unattached branches, green for the selected sprints. */
+.bdel-page .cfg-load-btn .spin{color:#fff;}
+.bdel-f-area{flex:1 1 230px;}
+.bdel-f-sprint{flex:1 1 200px;}
+.bdel-f-repos{flex:1 1 210px;}
+.bdel-f-team{flex:0 1 150px;}
+.bdel-f-creator{flex:1 1 180px;}
+.bdel-f-search{flex:2 1 220px;}
+/* Delete is the page's one destructive action, so it wears a red tint instead of the filled accent. */
+.bdel-delete-btn{background:color-mix(in srgb,var(--red) 12%,transparent);border-color:transparent;color:var(--red-ink);box-shadow:var(--rim);}
+.bdel-delete-btn:hover:not(:disabled){background:color-mix(in srgb,var(--red) 20%,transparent);}
 .bdel-delete-btn:disabled{opacity:.45;}
-.bdel-stale{display:block;margin-top:4px;color:var(--amber);opacity:1;}
-.bdel-progress{margin-top:12px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);}
-.bdel-progress-text{display:flex;align-items:center;gap:8px;font-size:.72rem;color:var(--muted2);}
-.bdel-progress-text b{margin-left:auto;font-family:var(--mono);color:var(--text);}
-.bdel-panel{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden;margin-top:12px;}
-.bdel-chips{display:flex;gap:6px;flex-wrap:wrap;margin-right:auto;margin-left:12px;}
-.bdel-chip-warn{background:rgba(251,191,36,.1);color:var(--amber);}
-.bdel-chip-lock{background:var(--surface2);color:var(--muted2);}
-.bdel-grid{overflow:auto;height:100%;}
+.bdel-stale{display:block;margin-top:4px;color:var(--amber-ink);opacity:1;}
+.bdel-progress{margin-top:12px;padding:10px 14px;background:var(--surface);border-radius:var(--r2);box-shadow:var(--rim),var(--elev-1);}
+.bdel-progress-text{display:flex;align-items:center;gap:8px;font-size:var(--fs-meta);color:var(--muted2);}
+.bdel-progress-text b{margin-left:auto;font-variant-numeric:tabular-nums;font-weight:600;color:var(--text);}
+.bdel-page .notice{margin:12px 0 0;}
+.bdel-panel{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden;margin-top:12px;border:0;box-shadow:var(--rim),var(--elev-1);}
+.bdel-panel .phead,.bdel-log .phead{border-bottom:0;justify-content:flex-start;gap:8px 12px;padding:10px 16px;}
+.bdel-page .ptitle{font-size:var(--fs-body);font-weight:600;text-transform:none;letter-spacing:0;color:var(--text);}
+.bdel-panel .pbody{flex:1;min-height:0;overflow:hidden;padding:0;display:flex;flex-direction:column;}
+.bdel-counts{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:var(--fs-meta);color:var(--muted2);}
+.bdel-counts .c-sprint{color:var(--green-ink);}
+.bdel-counts .c-warn{color:var(--amber-ink);}
+.bdel-head-tools{display:flex;gap:6px;align-items:center;margin-left:auto;}
+.bdel-grid{flex:1;min-height:0;overflow:auto;}
 /* Fixed layout keeps virtualised rows a steady height; the minimum width guarantees the Branch column
    (the only one without a set width) keeps room, and a narrow window scrolls instead of hiding it. */
-table.bdel-table{table-layout:fixed;width:100%;min-width:1080px;}
-table.bdel-table thead th{position:sticky;top:0;z-index:1;background:var(--surface);}
+/* 1040 fits the 1058px a 1366 window leaves the panel; at 1080 the SHA column was cut off and the grid scrolled sideways. */
+table.bdel-table{table-layout:fixed;width:100%;min-width:1040px;font-size:var(--fs-body);}
+table.bdel-table thead th{position:sticky;top:0;z-index:1;background:var(--surface);font-family:var(--sans);font-size:var(--fs-meta);font-weight:600;text-transform:none;letter-spacing:0;}
 .bdel-check{width:36px;text-align:center;}
-.bdel-check input{accent-color:var(--red);width:14px;height:14px;}
-.bdel-branch{font-family:var(--mono);font-size:.7rem;overflow:hidden;}
-.bdel-branch .cref-text{white-space:normal;word-break:break-all;color:var(--text);font-size:.68rem;}
-.bdel-repo{width:140px;font-size:.7rem;color:var(--muted2);}
-.bdel-wi{width:260px;font-size:.7rem;}
-.bdel-sprint{width:110px;font-family:var(--mono);font-size:.66rem;color:var(--muted2);}
-.bdel-creator{width:130px;font-size:.68rem;color:var(--muted2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.bdel-sha{width:100px;font-family:var(--mono);font-size:.64rem;}
-.bdel-lock{margin-top:3px;font-family:var(--sans);font-size:.58rem;color:var(--amber);}
+.bdel-check input{accent-color:var(--red);width:15px;height:15px;}
+.bdel-branch{overflow:hidden;}
+.bdel-branch .cref-text{white-space:normal;word-break:break-all;color:var(--text);font-family:var(--mono);font-size:var(--fs-meta);}
+.bdel-repo{width:150px;font-size:var(--fs-meta);color:var(--muted2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.bdel-wi{width:210px;font-size:var(--fs-meta);}
+.bdel-sprint{width:110px;font-family:var(--mono);font-size:var(--fs-meta);color:var(--muted2);}
+.bdel-creator{width:130px;font-size:var(--fs-meta);color:var(--muted2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.bdel-sha{width:100px;font-family:var(--mono);font-size:var(--fs-meta);}
+.bdel-lock{margin-top:3px;font-family:var(--sans);font-size:var(--fs-meta);color:var(--amber-ink);}
 .bdel-wi-line{display:flex;align-items:center;gap:6px;min-width:0;}
 .bdel-wi-line + .bdel-wi-line{margin-top:3px;}
 .bdel-wi-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted2);}
-.bdel-unattached{display:inline-block;padding:1px 7px;border-radius:var(--pill);font-size:.6rem;font-weight:700;
-  background:rgba(251,191,36,.1);color:var(--amber);border:1px solid rgba(251,191,36,.25);}
+.bdel-page .state-pill{background:none;padding:0;margin:0;border-radius:0;font-weight:600;}
+/* Unattached reads as amber words, as the other pages show a type or a state, not as an outlined pill. */
+.bdel-unattached{font-weight:600;color:var(--amber-ink);}
 .bdel-muted{color:var(--muted);}
-.bdel-sprint-on{color:var(--accent2);font-weight:700;}
+.bdel-sprint-on{color:var(--green-ink);font-weight:600;}
 .bdel-table tr.bdel-row-locked{opacity:.5;cursor:default;}
-.bdel-log{flex:none;margin-top:12px;}
-.bdel-log-body{max-height:190px;overflow-y:auto;padding:8px 14px;}
-.bdel-log-line{font-family:var(--mono);font-size:.66rem;padding:2px 0;}
-.bdel-log-line.ok{color:var(--green);}
-.bdel-log-line.err{color:var(--red);}
-.bdel-confirm-list{max-height:280px;overflow-y:auto;background:rgba(0,0,0,.2);border-radius:8px;padding:8px 12px;}
-.bdel-confirm-repo{font-size:.66rem;font-weight:700;color:var(--muted2);text-transform:uppercase;letter-spacing:.05em;margin:8px 0 4px;}
+.bdel-log{flex:none;margin-top:12px;border:0;box-shadow:var(--rim),var(--elev-1);animation:fade-in .15s var(--ease-out);}
+.bdel-log-clear{margin-left:auto;}
+.bdel-log-body{max-height:190px;overflow-y:auto;padding:0 16px 12px;}
+.bdel-log-line{font-family:var(--mono);font-size:var(--fs-meta);padding:2px 0;}
+.bdel-log-line.ok{color:var(--green-ink);}
+.bdel-log-line.err{color:var(--red-ink);}
+.modal.bdel-confirm{max-width:640px;}
+.bdel-confirm-note{font-size:var(--fs-body);color:var(--muted2);line-height:1.55;margin-bottom:12px;}
+/* The branches about to go sit in a well, in the red the delete button wears. */
+.bdel-confirm-list{max-height:280px;overflow-y:auto;background:var(--bg);box-shadow:var(--well);border-radius:var(--r2);padding:8px 12px;}
+.bdel-confirm-repo{font-size:var(--fs-meta);font-weight:600;color:var(--muted2);margin:8px 0 4px;}
 .bdel-confirm-repo:first-child{margin-top:0;}
-.bdel-confirm-branch{font-family:var(--mono);font-size:.66rem;color:#fca5a5;padding:2px 0;}
+.bdel-confirm-branch{font-family:var(--mono);font-size:var(--fs-meta);color:var(--red-ink);padding:2px 0;}
+
+/* ─── SETTINGS (st-) ─── */
+/* One centred column of raised sections, no hairlines between them. The page scrolls as a whole, so its scrollbar
+   sits at the window's edge rather than beside the column. Type roles as on the other pages: 16 for section titles,
+   13 for fields and text, 12 for labels, hints and counts. */
+.st-page{flex:1;min-height:0;overflow-y:auto;padding-bottom:20px;}
+.st-col{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:12px;}
+.st-col > [role=status]:empty{display:none;}
+.st-col > .notice,.st-col > [role=status] > .notice{margin:0;}
+.st-bar{
+  display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;padding:8px 8px 8px 16px;
+  background:var(--surface);border-radius:var(--r);box-shadow:var(--rim),var(--elev-1);
+}
+.st-where{flex:1 1 280px;min-width:0;font-size:var(--fs-meta);color:var(--muted2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.st-where code{font-family:var(--mono);font-size:var(--fs-meta);color:var(--muted2);}
+.st-bar-tools{display:flex;gap:6px;margin-left:auto;}
+.st-import{cursor:pointer;}
+.st-import:focus-within{outline:2px solid var(--accent2);outline-offset:2px;}
+.st-sec{border:0;box-shadow:var(--rim),var(--elev-1);}
+.st-sec .phead{padding:14px 16px 10px;border-bottom:0;justify-content:flex-start;gap:8px 12px;}
+.st-sec .ptitle{font-size:var(--fs-name);font-weight:600;text-transform:none;letter-spacing:0;color:var(--text);}
+.st-sec .pbody{padding:0 16px 16px;}
+.st-page .fi,.st-page .gdd-trigger{font-size:var(--fs-body);}
+.st-page .btn-sm{font-size:var(--fs-meta);font-weight:600;}
+.st-page .btn-primary,.st-page .btn-ghost{font-size:var(--fs-body);font-weight:600;}
+.st-desc{font-size:var(--fs-body);color:var(--muted2);line-height:1.55;max-width:72ch;margin-bottom:14px;}
+.st-hint{font-size:var(--fs-meta);color:var(--muted);line-height:1.5;margin-top:8px;}
+.st-desc code,.st-hint code{font-family:var(--mono);font-size:var(--fs-meta);color:var(--accent-ink);}
+.st-actions{display:flex;flex-wrap:wrap;gap:8px;}
+.st-actions .btn-primary{width:auto;}
+.st-sec [role=status] > .notice{margin:12px 0 0;}
+.st-team{max-width:400px;}
+.st-grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0 12px;}
+.st-seg{margin-bottom:6px;}
+.st-pins-grid{display:grid;grid-template-columns:180px minmax(0,1fr);gap:0 12px;align-items:start;}
+.st-count{font-weight:400;color:var(--muted);}
+/* Pinned repositories in their order: tinted chips, the number quiet, the unpin cross with room to be tapped. */
+.st-pins{list-style:none;display:flex;flex-wrap:wrap;gap:6px;margin:0;padding:0;}
+.st-pin{
+  display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 4px 0 10px;border-radius:var(--pill);
+  background:var(--accent-soft);color:var(--accent-ink);font-size:var(--fs-meta);font-weight:600;
+}
+.st-pin-n{color:var(--muted2);font-weight:400;}
+.st-pin .bpk-clear{position:relative;}
+.st-pin .bpk-clear::after{content:"";position:absolute;inset:-6px -3px;}
+.st-filter{margin-left:auto;flex:0 1 260px;}
+.st-filter .cfg-fi{width:100%;}
+.st-c-repo{width:34%;}
+.st-c-branch{width:33%;}
+.st-repo{font-weight:600;}
+.st-repo-project{font-size:var(--fs-meta);color:var(--muted);margin-top:1px;}
+/* "Most used" is a word in the accent, as Task Creation marks its default tasks, not a boxed badge. */
+.st-tag{margin-left:6px;font-size:var(--fs-meta);font-weight:600;color:var(--accent2);}
+/* A message that a click brings fades in, as a load's results do; nothing else on the page moves. */
+.st-col .notice{animation:fade-in .15s var(--ease-out);}
+@media (max-width:600px){
+  .st-bar{padding:8px 12px;}
+  .st-pins-grid{grid-template-columns:1fr;}
+  .st-filter{flex:1 1 100%;margin-left:0;}
+  /* Only phones need the sideways scroll: anywhere wider it would also clip the branch lists the last rows open. */
+  .st-table-wrap{overflow-x:auto;}
+  .st-table-wrap .repo-path-table{min-width:560px;}
+}
 
 /* ─── BLAZOR RECONNECT ─── */
 #components-reconnect-modal{display:none;}
@@ -302,16 +483,17 @@ table.bdel-table thead th{position:sticky;top:0;z-index:1;background:var(--surfa
   position:fixed;inset:0;z-index:99999;align-items:center;justify-content:center;
   background:rgba(0,0,0,.6);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
 }
+/* These float over the whole app, so they take the floating layer's glass, like the search results. */
 #components-reconnect-modal>div,#devkit-startup-failed>div{
-  background:var(--surface);border:1px solid var(--border2);border-radius:var(--r3);
-  padding:36px 44px;text-align:center;box-shadow:var(--shadow-lg);
-  animation:modalIn .3s ease;color:var(--text);font-family:var(--sans);
+  background:var(--glass);-webkit-backdrop-filter:var(--glass-blur);backdrop-filter:var(--glass-blur);
+  border-radius:var(--r3);padding:36px 44px;text-align:center;box-shadow:var(--rim),var(--elev-3);
+  animation:modalIn .2s var(--ease-out);color:var(--text);font-family:var(--sans);
 }
-#components-reconnect-modal h5,#components-reconnect-modal .reconnect-title,#devkit-startup-failed h5{font-size:1rem;font-weight:700;margin-bottom:8px;color:var(--text);}
-#components-reconnect-modal p,#components-reconnect-modal .reconnect-msg,#devkit-startup-failed p{font-size:.78rem;color:var(--muted2);line-height:1.6;}
+#components-reconnect-modal h5,#devkit-startup-failed h5{font-size:var(--fs-name);font-weight:600;margin-bottom:8px;color:var(--text);}
+#components-reconnect-modal p,#devkit-startup-failed p{font-size:var(--fs-body);color:var(--muted2);line-height:1.6;}
 #devkit-startup-failed>div{max-width:460px;}
 #devkit-startup-failed p+p{margin-top:6px;}
-#devkit-startup-failed code{font-family:var(--mono);font-size:.72rem;color:var(--text);}
+#devkit-startup-failed code{font-family:var(--mono);font-size:var(--fs-meta);color:var(--text);}
 #devkit-startup-failed .btn-sm{margin-top:16px;text-decoration:none;}
 #components-reconnect-modal .glass-spinner{
   width:36px;height:36px;margin:0 auto 16px;border-radius:50%;
@@ -319,13 +501,35 @@ table.bdel-table thead th{position:sticky;top:0;z-index:1;background:var(--surfa
 }
 
 /* ─── RESPONSIVE ─── */
+/* At 900px and narrower the sidebar is a drawer over the page (MainLayout opens it). Closed, it is also hidden,
+   once it has slid out, so its links cannot take focus off screen. Touch-sized controls from here down. */
 @media(max-width:900px){
-  .sidebar{position:fixed;z-index:300;height:100vh;transform:translateX(-100%);transition:transform .25s;}
-  .sidebar.open{transform:translateX(0);}
+  .sidebar{
+    position:fixed;z-index:300;height:100vh;height:100dvh;background:var(--room);
+    transform:translateX(-100%);visibility:hidden;
+    transition:transform var(--dur-drawer) var(--ease-drawer),visibility 0s linear var(--dur-drawer);
+  }
+  .sidebar.open{transform:translateX(0);visibility:visible;box-shadow:var(--elev-3);transition:transform var(--dur-drawer) var(--ease-drawer);}
+  .nav-scrim{display:block;position:fixed;inset:0;z-index:299;background:rgba(0,0,0,.55);animation:fade-in .16s var(--ease-out);}
+  .sidebar .nav-item{min-height:44px;}
+  .main{margin:8px;}
+  .tb-menu{display:flex;}
+  .tb-btn{width:44px;height:44px;border-radius:12px;}
+  .dash-view .tb-btn{width:44px;height:38px;}
   .topbar-search{max-width:none;}
   .shell{padding:14px;}
   .content{flex-direction:column;overflow:visible;}
   .content-left{overflow:visible;min-height:300px;}
   .content-left .grid-wrap{max-height:340px!important;overflow:auto;}
   .content-right{flex:none;width:100%;overflow:visible;}
+}
+/* On a phone the window fills the screen: an inset frame would only cost width. The top bar keeps the menu,
+   search and status: the browser has its own back and forward, a phone has no Ctrl K, and the status keeps its
+   dot while its words stay for screen readers. */
+@media(max-width:600px){
+  .main{margin:0;border-radius:0;box-shadow:none;}
+  .topbar{padding:0 14px;gap:10px;}
+  .tb-nav,.tb-spacer,.kbd,.tb-user-name{display:none;}
+  .conn-pill{padding:9px;}
+  .conn-pill .conn-label{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;}
 }

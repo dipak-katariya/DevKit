@@ -1,55 +1,71 @@
 @inherits ClickOutsideComponent
 
 @* Searchable single-select. Only a bounded slice is rendered, so a list with thousands of
-   options cannot flood the DOM. BranchPicker and MultiSelectDropdown use the same cap. *@
+   options cannot flood the DOM. BranchPicker and MultiSelectDropdown use the same cap.
+   The trigger is a button and the search box a combobox over the list, so it works from the
+   keyboard alone and a screen reader hears the list and the option the arrows reached. *@
 
+@{ var triggerText = TriggerText; }
 <div class="gdd @(IsOpen ? "gdd-open" : "") @CssClass" @ref="Root" style="@Style">
-    <div class="gdd-trigger" @onclick="Toggle" @onclick:stopPropagation>
-        <span class="gdd-value @(string.IsNullOrEmpty(Value) ? "gdd-placeholder" : "")">
-            @(string.IsNullOrEmpty(Value) ? Placeholder : GetDisplayText(Value))
-        </span>
-        <span class="gdd-arrow">▾</span>
-    </div>
+    <button type="button" class="gdd-trigger" @ref="trigger" @onclick="Toggle" @onclick:stopPropagation
+            disabled="@Disabled" aria-haspopup="listbox" aria-expanded="@(IsOpen ? "true" : "false")"
+            aria-label="@(Label is null ? null : $"{Label}: {triggerText}")">
+        <span class="gdd-value @(string.IsNullOrEmpty(Value) ? "gdd-placeholder" : "")" title="@(string.IsNullOrEmpty(Value) ? null : triggerText)">@triggerText</span>
+        <span class="gdd-arrow" aria-hidden="true">▾</span>
+    </button>
 
     @if (IsOpen)
     {
         var render = BuildRender();
+        var showAll = ShowAllRow;
+        var index = 0;
         <div class="gdd-panel" @onclick:stopPropagation>
             <div class="gdd-search-wrap">
-                <input class="gdd-search" type="text" placeholder="Search…" @oninput="OnSearchInput"
-                       @ref="searchInput" @onkeydown="OnKeyDown" />
+                @* Keydown stops here, so Escape closes only this list and not a popover the dropdown sits in. *@
+                <input class="gdd-search" type="text" placeholder="Search…" autocomplete="off"
+                       role="combobox" aria-label="@Label" aria-autocomplete="list" aria-expanded="true"
+                       aria-controls="@PanelId" aria-activedescendant="@(highlightIdx >= 0 ? OptionId(highlightIdx) : null)"
+                       @oninput="OnSearchInput" @ref="searchInput" @onkeydown="OnKeyDown" @onkeydown:stopPropagation />
             </div>
-            <div class="gdd-list">
-                @if (ShowEmptyOption && HasSource)
+            @* tabindex -1: a list that scrolls is otherwise a Tab stop of its own in Chrome, and the arrows already
+               move through it from the search box. *@
+            <div class="gdd-list" id="@PanelId" role="listbox" aria-label="@Label" tabindex="-1">
+                @if (showAll)
                 {
-                    <div class="gdd-item @(string.IsNullOrEmpty(Value) ? "gdd-item-active" : "")"
+                    var allIdx = index++;
+                    var allOn = string.IsNullOrEmpty(Value);
+                    <div class="gdd-item @(allOn ? "gdd-item-active" : "") @(highlightIdx == allIdx ? "gdd-item-hl" : "")"
+                         id="@OptionId(allIdx)" role="option" aria-selected="@(allOn ? "true" : "false")"
                          @onclick="SelectEmpty">
                         @(EmptyLabel ?? Placeholder)
                     </div>
                 }
 
-                @{ var flatIdx = 0; }
                 @foreach (var grp in render.Groups)
                 {
-                    @if (!string.IsNullOrEmpty(grp.Label))
-                    {
-                        <div class="gdd-group">@grp.Label</div>
-                    }
-                    @foreach (var opt in grp.Options)
-                    {
-                        var idx = flatIdx++;
-                        <div class="gdd-item @(opt.Value == Value ? "gdd-item-active" : "") @(highlightIdx == idx ? "gdd-item-hl" : "")"
-                             title="@opt.Label" @onclick="() => Select(opt.Value)">
-                            @opt.Label
-                        </div>
-                    }
-                }
-
-                @if (render.Total == 0)
-                {
-                    <div class="gdd-empty">No results</div>
+                    var named = !string.IsNullOrEmpty(grp.Label);
+                    <div role="group" aria-label="@(named ? grp.Label : null)">
+                        @if (named)
+                        {
+                            <div class="gdd-group" aria-hidden="true">@grp.Label</div>
+                        }
+                        @foreach (var opt in grp.Options)
+                        {
+                            var idx = index++;
+                            var isOn = opt.Value == Value;
+                            <div class="gdd-item @(isOn ? "gdd-item-active" : "") @(highlightIdx == idx ? "gdd-item-hl" : "")"
+                                 id="@OptionId(idx)" role="option" aria-selected="@(isOn ? "true" : "false")"
+                                 title="@opt.Label" @onclick="() => Select(opt.Value)">
+                                @opt.Label
+                            </div>
+                        }
+                    </div>
                 }
             </div>
+            @if (render.Total == 0)
+            {
+                <div class="gdd-empty" role="status">No results</div>
+            }
             @if (render.Hidden > 0)
             {
                 <div class="bpk-more">@render.Hidden more. Type to narrow the list.</div>
@@ -78,10 +94,16 @@
     [Parameter] public List<DropdownOption>? Options { get; set; }
     [Parameter] public List<DropdownGroup>? Groups { get; set; }
 
+    /// <summary>What the field is, such as "Area path". Screen readers then hear the trigger as "Area path: value".</summary>
+    [Parameter] public string? Label { get; set; }
+
     private bool IsOpen;
     private string searchText = "";
+
+    // Counts the "All" row first when it is shown, then the rendered options in order.
     private int highlightIdx = -1;
     private ElementReference searchInput;
+    private ElementReference trigger;
 
     protected override bool IsPanelOpen => IsOpen;
 
@@ -90,6 +112,12 @@
     // Matches the pre-cap behaviour: an empty Options list still offers the "All" row, which
     // is what the type and assignee filters show before any work items have loaded.
     private bool HasSource => HasGroups || Options != null;
+
+    private bool ShowAllRow => ShowEmptyOption && HasSource;
+
+    private string TriggerText => string.IsNullOrEmpty(Value) ? Placeholder : GetDisplayText(Value);
+
+    private string OptionId(int index) => $"{PanelId}-{index}";
 
     /// <summary>What one render of the open panel shows, plus how much was left out.</summary>
     private sealed record RenderModel(List<DropdownGroup> Groups, int Total, int Hidden);
@@ -180,14 +208,21 @@
         return Task.CompletedTask;
     }
 
+    /// <summary>Closes from the keyboard or a choice. Focus goes back to the trigger, since the search box it was in is gone.</summary>
+    private async Task CloseToTriggerAsync()
+    {
+        IsOpen = false;
+        searchText = "";
+        highlightIdx = -1;
+        await FocusAsync(trigger);
+    }
+
     private Task SelectEmpty() => Select(EmptyValue ?? "");
 
     private async Task Select(string value)
     {
         Value = value;
-        IsOpen = false;
-        searchText = "";
-        highlightIdx = -1;
+        await CloseToTriggerAsync();
         await ValueChanged.InvokeAsync(value);
         await OnChange.InvokeAsync(new ChangeEventArgs { Value = value });
     }
@@ -200,16 +235,42 @@
 
     private async Task OnKeyDown(KeyboardEventArgs e)
     {
-        if (e.Key == "Escape") { await Toggle(); return; }
+        if (e.Key == "Escape")
+        {
+            await CloseToTriggerAsync();
+            return;
+        }
 
         // Only the rendered slice is navigable, which is also all the user can see.
-        var visible = BuildRender().Groups.SelectMany(g => g.Options).ToList();
-        if (e.Key == "ArrowDown") highlightIdx = Math.Min(highlightIdx + 1, visible.Count - 1);
-        else if (e.Key == "ArrowUp") highlightIdx = Math.Max(highlightIdx - 1, 0);
-        else if (e.Key == "Enter" && highlightIdx >= 0 && highlightIdx < visible.Count)
+        var values = NavigableValues();
+        if (e.Key == "Enter")
         {
-            await Select(visible[highlightIdx].Value);
+            if (highlightIdx >= 0 && highlightIdx < values.Count)
+            {
+                await Select(values[highlightIdx]);
+            }
+            return;
         }
+
+        var step = e.Key switch { "ArrowDown" => 1, "ArrowUp" => -1, _ => 0 };
+        if (step == 0 || values.Count == 0)
+        {
+            return;
+        }
+        highlightIdx = Math.Clamp(highlightIdx + step, 0, values.Count - 1);
+        await RevealAsync(OptionId(highlightIdx));
+    }
+
+    /// <summary>The values the arrow keys move through, in the order the rows are shown.</summary>
+    private List<string> NavigableValues()
+    {
+        var values = new List<string>();
+        if (ShowAllRow)
+        {
+            values.Add(EmptyValue ?? "");
+        }
+        values.AddRange(BuildRender().Groups.SelectMany(g => g.Options).Select(o => o.Value));
+        return values;
     }
 
     public class DropdownOption

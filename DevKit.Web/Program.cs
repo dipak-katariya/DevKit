@@ -1,4 +1,5 @@
 using DevKit.Web.Services;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -39,6 +40,8 @@ builder.Services.AddScoped<PageStateService>();
 builder.Services.AddScoped<BranchCacheService>();
 builder.Services.AddScoped<BranchCleanupService>();
 builder.Services.AddTfsServices();
+// Hosted mode already registers the clock for sign-in; the Workday Calculator reads it in either mode.
+builder.Services.TryAddSingleton(TimeProvider.System);
 
 await using var app = builder.Build();
 

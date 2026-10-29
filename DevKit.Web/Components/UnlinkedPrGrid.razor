@@ -3,9 +3,9 @@
 
 @if (!Bundle.HasRun)
 {
-    <div class="cm-blank">
-        <div class="cm-blank-icon"><Icon Inner="@Icons.GitBranch" CssClass="ic-xl" /></div>
-        <h3>Unlinked Pull Requests</h3>
+    <div class="blank-state">
+        <div class="blank-state-icon"><Icon Inner="@Icons.GitBranch" CssClass="ic-xl" /></div>
+        <h2>Unlinked Pull Requests</h2>
         <p>
             Find pull requests merged into each repository's <b>QA branch</b> that nobody tied to a
             Requirement, Change Request or Bug. The sheet cannot show these, because there is
@@ -15,9 +15,9 @@
 }
 else if (Bundle.PullRequests.Count == 0)
 {
-    <div class="cm-blank">
-        <div class="cm-blank-icon"><Icon Inner="@(Bundle.ReadFailures.Count > 0 ? Icons.AlertTriangle : Icons.CheckCircle)" CssClass="ic-xl" /></div>
-        <h3>@(Bundle.ReadFailures.Count > 0 ? "No unlinked pull requests found" : "Every pull request is linked")</h3>
+    <div class="blank-state">
+        <div class="blank-state-icon"><Icon Inner="@(Bundle.ReadFailures.Count > 0 ? Icons.AlertTriangle : Icons.CheckCircle)" CssClass="ic-xl" /></div>
+        <h2>@(Bundle.ReadFailures.Count > 0 ? "No unlinked pull requests found" : "Every pull request is linked")</h2>
         @if (Bundle.ReadFailures.Count > 0)
         {
             <p class="upr-hint upr-fail" title="@FailuresList">@FailuresSummary</p>
@@ -79,13 +79,15 @@ else
         {
             var repoOpen = !collapsedRepos.Contains(group.Key);
             <div class="proj-section">
-                <div class="proj-hdr" @onclick="() => ToggleRepo(group.Key)">
-                    <span class="proj-chevron">@(repoOpen ? "▼" : "▶")</span>
+                <button type="button" class="proj-hdr" aria-expanded="@(repoOpen ? "true" : "false")" @onclick="() => ToggleRepo(group.Key)">
+                    <span class="proj-chevron @(repoOpen ? "open" : "")" aria-hidden="true"><Icon Inner="@Icons.ChevronRight" /></span>
                     <span class="proj-name">@group.Key</span>
                     <span class="proj-branch-badge">→ @QaBranchFor(group.Key)</span>
-                    <span class="upr-count">@group.Count() PR(s)</span>
-                    <span class="upr-count">@group.Sum(p => p.Commits.Count) commit(s)</span>
-                </div>
+                    <span class="proj-counts">
+                        <span class="upr-count">@group.Count() PR(s)</span>
+                        <span class="upr-count">@group.Sum(p => p.Commits.Count) commit(s)</span>
+                    </span>
+                </button>
 
                 @if (repoOpen)
                 {
@@ -96,6 +98,7 @@ else
                         <div class="mr-row">
                             <div class="mr-hdr" @onclick="() => TogglePr(key)">
                                 <button class="cm-expander @(prOpen ? "open" : "")" disabled="@(pr.Commits.Count == 0)"
+                                        aria-expanded="@(prOpen ? "true" : "false")" aria-label="Commits of !@pr.PullRequestId"
                                         title="@(pr.Commits.Count == 0 ? NoCommitsText(pr) : "Show commits")"
                                         @onclick="() => TogglePr(key)" @onclick:stopPropagation>
                                     <Icon Inner="@Icons.ChevronRight" />
@@ -105,8 +108,8 @@ else
                                    @onclick:stopPropagation>!@pr.PullRequestId</a>
                                 <span class="mr-title" title="@pr.Title">@pr.Title</span>
                                 <div class="mr-meta">
-                                    <span class="mr-branch">@pr.SourceBranch → @pr.TargetBranch</span>
-                                    <span>@pr.CreatedBy</span>
+                                    <span class="mr-branch" title="@pr.SourceBranch → @pr.TargetBranch">@pr.SourceBranch → @pr.TargetBranch</span>
+                                    <span class="mr-author" title="Raised by @pr.CreatedBy">@pr.CreatedBy</span>
                                     <TimeStamp Value="@pr.CreationDate" Label="Raised" />
                                     @if (pr.CommitsError is not null)
                                     {

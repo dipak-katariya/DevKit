@@ -1,21 +1,9 @@
-@* The sheet at a glance, as one band under the filters: what the grid shows, how the work items split
-   by merge state (each chip filters the grid to its state), how far the code comparison has got, and
-   how the verdicts are reached. It replaces a row of cards and a paragraph, so the grid keeps the room. *@
+@* The sheet at a glance, as one band under the filters: how the work items split by merge state (each chip
+   filters the grid to its state), how far the code comparison has got, and how the verdicts are reached. It
+   replaces a row of cards and a paragraph, so the grid keeps the room. What the grid shows is counted in the
+   grid's own header (MergingCounts.razor), which keeps this band to one line at laptop widths. *@
 
 <div class="cm-ins">
-    <div class="cm-ins-seg" title="What the grid below is showing">
-        <span class="cm-ins-stat"><b>@VisibleRows.Count</b><span class="cm-ins-of">@OfScope</span> work items</span>
-        <span class="cm-ins-stat"><b class="cm-ins-acc">@prs</b> PRs</span>
-        <span class="cm-ins-stat"><b class="cm-ins-acc">@commits</b> commits</span>
-        <span class="cm-ins-stat"><b>@withPrs</b><span class="cm-ins-of">/@VisibleRows.Count</span> with PRs</span>
-        @if (Bundle.DiscoveryWarnings.Count > 0)
-        {
-            <DiscoveryGapsChip Bundle="@Bundle" />
-        }
-    </div>
-
-    <span class="cm-ins-div" aria-hidden="true"></span>
-
     @if (Bundle.TargetBranchName is not null)
     {
         <div class="cm-ins-seg">
@@ -192,9 +180,6 @@
     [Parameter, EditorRequired] public CodeMergingBundle Bundle { get; set; } = new();
     [Parameter, EditorRequired] public MergingSheetFilter Filter { get; set; } = new();
 
-    /// <summary>The rows the grid shows.</summary>
-    [Parameter, EditorRequired] public IReadOnlyList<RequirementMergingRow> VisibleRows { get; set; } = Array.Empty<RequirementMergingRow>();
-
     /// <summary>
     /// The rows every filter but the merge state lets through. The merge-state and code chips count these,
     /// so choosing one state leaves the others' numbers in view to switch to.
@@ -226,22 +211,16 @@
     };
 
     private Dictionary<MergeRollup, int> byState = new();
-    private int prs, commits, withPrs, scopePrs, comparedPrs, codeIssues, codeLost, mergedPrs, notMergedPrs, rolledBackCommits;
+    private int scopePrs, comparedPrs, codeIssues, codeLost, mergedPrs, notMergedPrs, rolledBackCommits;
     private (int Percent, string Tooltip)? mergedShare;
     private string barLabel = "";
     private bool infoOpen;
 
-    /// <summary>"/43" once a merge-state filter hides some of the rows, so the count says what it is out of.</summary>
-    private string OfScope => VisibleRows.Count != ScopeRows.Count ? $"/{ScopeRows.Count}" : "";
     private bool CodeIssuesActive => Filter.MergeState == MergingSheetFilter.CodeIssues;
     private string NowText => Progress.Current.Length > 0 ? $"Now: {Progress.Current}" : "Reading the branches…";
 
     protected override void OnParametersSet()
     {
-        prs = Filter.CountPrs(VisibleRows);
-        commits = Filter.CountCommits(VisibleRows);
-        withPrs = Filter.CountWithPrs(VisibleRows);
-
         byState = Filter.CountByRollup(ScopeRows);
         scopePrs = Filter.CountPrs(ScopeRows);
         comparedPrs = Filter.CountCodeCompared(ScopeRows);
@@ -258,8 +237,19 @@
                $"{merged} of the {withPullRequests} work items with pull requests are fully merged")
             : null;
 
-        var parts = StateChips.Where(c => CountOf(c.State) > 0).Select(c => $"{CountOf(c.State)} {c.Label.ToLowerInvariant()}");
-        barLabel = $"{ScopeRows.Count} work items: {string.Join(" · ", parts)}";
+        barLabel = Summarize(byState, ScopeRows.Count);
+    }
+
+    /// <summary>
+    /// The states in one line, such as "33 work items: 10 not merged · 22 no prs". The bar reads it to screen
+    /// readers, and the sheet announces it when Verify All finishes.
+    /// </summary>
+    public static string Summarize(IReadOnlyDictionary<MergeRollup, int> byState, int rows)
+    {
+        var parts = StateChips
+            .Where(c => byState.GetValueOrDefault(c.State) > 0)
+            .Select(c => $"{byState[c.State]} {c.Label.ToLowerInvariant()}");
+        return $"{rows} work items: {string.Join(" · ", parts)}";
     }
 
     private int CountOf(MergeRollup state) => byState.GetValueOrDefault(state);

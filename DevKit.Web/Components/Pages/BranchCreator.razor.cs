@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Components;
+using Microsoft.JSInterop;
 using DevKit.Web.Models;
 using DevKit.Web.Services;
 using static DevKit.Web.Services.CancellationSources;
@@ -38,6 +39,15 @@ public sealed partial class BranchCreator
     private bool resultOk { get => S.ResultOk; set => S.ResultOk = value; }
 
     private bool loadingExisting, loading, creating, checking, loadingBranches, unlinking;
+
+    // Why the last Load failed. Shown above the table: the result line lives in the form, which a failed load empties.
+    private string? loadError;
+
+    // Whether a Load finished on this visit, so an empty table can say "nothing here" rather than "press Load".
+    private bool workItemsLoaded;
+
+    // The work item whose title last had focus in the table, so Tab returns to it rather than to the first row.
+    private string? focusRowId;
 
     /// <summary>The stale link whose row is currently expanded into a remove/cancel confirm.</summary>
     private WorkItemBranchLink? unlinkCandidate;
@@ -230,6 +240,8 @@ public sealed partial class BranchCreator
             return;
         }
         loading = true; workItems.Clear(); filtered.Clear(); selectedItem = null; resultMsg = "";
+        loadError = null;
+        workItemsLoaded = false;
         StateHasChanged();
         try
         {
@@ -237,6 +249,7 @@ public sealed partial class BranchCreator
             var iterPath = !string.IsNullOrEmpty(selectedSprint) ? TfsApiService.ToWiqlPath(selectedSprint) : null;
             workItems = await TfsApi.LoadWorkItemsAsync(area.Project, areaPath, iterPath, page.Token);
             ApplyFilter();
+            workItemsLoaded = true;
         }
         catch (OperationCanceledException ex) when (page.Token.IsCancellationRequested)
         {
@@ -245,20 +258,73 @@ public sealed partial class BranchCreator
         catch (Exception ex)
         {
             Logger.LogError(ex, "Work-item load failed for area {Area}", area.Path);
-            resultMsg = $"<span style='color:var(--red);'>✕ Load failed: {Enc(TfsErrors.Describe(ex))}</span>";
-            resultOk = false;
+            loadError = $"Load failed: {TfsErrors.Describe(ex)}";
         }
         loading = false;
     }
 
+    // ─── Table keyboard ───
+    // The table is one Tab stop: the title Tab reaches is the one last focused, else the chosen work item, else the
+    // first row. app.js moves focus between the titles with the arrow keys, Home and End.
+    private string? TabRowId =>
+        filtered.Any(w => w.Id == focusRowId) ? focusRowId
+        : filtered.FirstOrDefault(w => w.Id == selectedItem?.Id)?.Id ?? filtered.FirstOrDefault()?.Id;
+
+    private static string RowButtonId(WorkItem item) => $"bcRow{item.Id}";
+
+    /// <summary>
+    /// What an empty table says: the filters hid everything, the load found nothing, TFS could not list the areas
+    /// (so asking for one would ask for something the list does not have), or nothing is loaded yet.
+    /// </summary>
+    private string EmptyTableText
+    {
+        get
+        {
+            if (workItems.Count > 0)
+            {
+                return "No items match the filter.";
+            }
+            if (workItemsLoaded)
+            {
+                return "No work items in this area and sprint.";
+            }
+            if (metadataError != null && areas.Count == 0)
+            {
+                return "No areas to choose from, so nothing can be loaded yet.";
+            }
+            return "Select an area above, then click Load.";
+        }
+    }
+
+    private string? AriaSort(string col) => WorkItemBadges.AriaSort(sortCol, col, sortAsc);
+
+    /// <summary>Puts focus on a work item's title in the table. A failure costs only the focus, so it is logged and the page carries on.</summary>
+    private async Task FocusRowAsync(WorkItem item)
+    {
+        focusRowId = item.Id;
+        try
+        {
+            await JS.InvokeVoidAsync("devKit.focusById", RowButtonId(item));
+        }
+        catch (JSDisconnectedException ex)
+        {
+            Logger.LogDebug(ex, "Focus for work item {Id} skipped because the page had closed", item.Id);
+        }
+        catch (JSException ex)
+        {
+            Logger.LogError(ex, "Could not focus work item {Id} in the table", item.Id);
+        }
+    }
+
     // ─── Filtering ───
-    private void OnSearch(ChangeEventArgs e) { searchQ = (e.Value?.ToString() ?? "").ToLowerInvariant(); ApplyFilter(); }
+    // Kept as typed: the box shows it again when the page is opened later, and the match ignores case.
+    private void OnSearch(ChangeEventArgs e) { searchQ = e.Value?.ToString() ?? ""; ApplyFilter(); }
     private void OnTypeFilter(ChangeEventArgs e) { typeFilter = e.Value?.ToString() ?? ""; ApplyFilter(); }
     private void OnAssigneeFilter(ChangeEventArgs e) { assigneeFilter = e.Value?.ToString() ?? ""; ApplyFilter(); }
     private void ApplyFilter()
     {
         filtered = workItems.Where(w =>
-            (string.IsNullOrEmpty(searchQ) || w.Id.Contains(searchQ) || w.Title.ToLowerInvariant().Contains(searchQ) || w.Assigned.ToLowerInvariant().Contains(searchQ))
+            (string.IsNullOrEmpty(searchQ) || w.Id.Contains(searchQ) || w.Title.Contains(searchQ, StringComparison.OrdinalIgnoreCase) || w.Assigned.Contains(searchQ, StringComparison.OrdinalIgnoreCase))
             && (string.IsNullOrEmpty(typeFilter) || w.Type == typeFilter)
             && (string.IsNullOrEmpty(assigneeFilter) || w.Assigned == assigneeFilter)
         ).ToList();
@@ -271,6 +337,7 @@ public sealed partial class BranchCreator
         {
             "id" => sortAsc ? filtered.OrderBy(w => ParseId(w.Id)).ToList() : filtered.OrderByDescending(w => ParseId(w.Id)).ToList(),
             "title" => sortAsc ? filtered.OrderBy(w => w.Title).ToList() : filtered.OrderByDescending(w => w.Title).ToList(),
+            "type" => sortAsc ? filtered.OrderBy(w => w.Type).ToList() : filtered.OrderByDescending(w => w.Type).ToList(),
             "state" => sortAsc ? filtered.OrderBy(w => w.State).ToList() : filtered.OrderByDescending(w => w.State).ToList(),
             "assigned" => sortAsc ? filtered.OrderBy(w => w.Assigned).ToList() : filtered.OrderByDescending(w => w.Assigned).ToList(),
             _ => filtered

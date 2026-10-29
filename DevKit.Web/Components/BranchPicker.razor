@@ -1,36 +1,48 @@
 @inherits ClickOutsideComponent
 
 @* Searchable branch dropdown. Only a bounded slice is rendered, so a repository with
-   thousands of refs cannot flood the DOM. *@
+   thousands of refs cannot flood the DOM. Type to narrow the list; Enter picks the first match.
+   Clear sits beside the trigger rather than inside it, since a button cannot hold another. *@
 
-<div class="gdd bpk @(IsOpen ? "gdd-open" : "") @CssClass" @ref="Root" style="@Style">
-    <div class="gdd-trigger @(Disabled ? "bpk-disabled" : "")" @onclick="Toggle" @onclick:stopPropagation>
-        <span class="gdd-value @(string.IsNullOrEmpty(Value) ? "gdd-placeholder" : "bpk-branch")">
-            @(string.IsNullOrEmpty(Value) ? Placeholder : Value)
-        </span>
-        @if (!string.IsNullOrEmpty(Value) && !Disabled)
-        {
-            <button class="bpk-clear" title="Clear" @onclick="Clear" @onclick:stopPropagation>✕</button>
-        }
-        <span class="gdd-arrow">▾</span>
-    </div>
+@{
+    var shownText = string.IsNullOrEmpty(Value) ? Placeholder : Value;
+    var clearable = !string.IsNullOrEmpty(Value) && !Disabled;
+}
+<div class="gdd bpk @(IsOpen ? "gdd-open" : "") @(clearable ? "bpk-clearable" : "") @CssClass" @ref="Root" style="@Style">
+    <button type="button" class="gdd-trigger" @ref="trigger" @onclick="Toggle" @onclick:stopPropagation
+            disabled="@Disabled" aria-haspopup="listbox" aria-expanded="@(IsOpen ? "true" : "false")"
+            aria-label="@(Label is null ? null : $"{Label}: {shownText}")">
+        <span class="gdd-value @(string.IsNullOrEmpty(Value) ? "gdd-placeholder" : "bpk-branch")" title="@(string.IsNullOrEmpty(Value) ? null : shownText)">@shownText</span>
+        <span class="gdd-arrow" aria-hidden="true">▾</span>
+    </button>
+    @if (clearable)
+    {
+        <button type="button" class="bpk-clear" title="Clear" aria-label="@(Label is null ? "Clear" : $"Clear {Label}")"
+                @onclick="Clear" @onclick:stopPropagation>✕</button>
+    }
 
     @if (IsOpen && !Disabled)
     {
         <div class="gdd-panel" @onclick:stopPropagation>
             <div class="gdd-search-wrap">
-                <input class="gdd-search" type="text" placeholder="Search branches…"
-                       @oninput="OnSearchInput" @ref="searchInput" @onkeydown="OnKeyDown" />
+                @* Keydown stops here, so Escape closes only this list and not the popover the picker sits in. *@
+                <input class="gdd-search" type="text" placeholder="Search branches…" autocomplete="off"
+                       role="combobox" aria-label="@Label" aria-autocomplete="list" aria-expanded="true" aria-controls="@PanelId"
+                       @oninput="OnSearchInput" @ref="searchInput" @onkeydown="OnKeyDown" @onkeydown:stopPropagation />
             </div>
+            @* A listbox only while it has branches, so the empty line below is read as a status, not a list item. It
+               does the scrolling, with tabindex -1, because a list that scrolls is otherwise a Tab stop of its own
+               in Chrome. *@
+            <div id="@PanelId" class="gdd-scroll" tabindex="-1" role="@(Visible().Count > 0 ? "listbox" : null)" aria-label="@Label">
             <div class="gdd-list">
                 @foreach (var b in Visible())
                 {
-                    <div class="gdd-item bpk-item @(b == Value ? "gdd-item-active" : "")"
-                         title="@b" @onclick="() => Select(b)">@b</div>
+                    <div class="gdd-item bpk-item @(b == Value ? "gdd-item-active" : "")" role="option"
+                         aria-selected="@(b == Value ? "true" : "false")" title="@b" @onclick="() => Select(b)">@b</div>
                 }
                 @if (Visible().Count == 0)
                 {
-                    <div class="gdd-empty">
+                    <div class="gdd-empty" role="status">
                         @if (Loading)
                         {
                             <span class="spin spin-sm"></span><span>Loading branches…</span>
@@ -41,6 +53,7 @@
                         }
                     </div>
                 }
+            </div>
             </div>
             @if (HiddenCount > 0)
             {
@@ -73,9 +86,13 @@
     /// </summary>
     [Parameter] public EventCallback OnOpened { get; set; }
 
+    /// <summary>What the field is, such as "QA branch". Screen readers then hear the trigger as "QA branch: value".</summary>
+    [Parameter] public string? Label { get; set; }
+
     private bool IsOpen;
     private string searchText = "";
     private ElementReference searchInput;
+    private ElementReference trigger;
 
     protected override bool IsPanelOpen => IsOpen;
 
@@ -114,23 +131,30 @@
     private async Task Select(string branch)
     {
         Value = branch;
-        IsOpen = false;
-        searchText = "";
+        await CloseToTriggerAsync();
         await ValueChanged.InvokeAsync(branch);
     }
 
     private async Task Clear()
     {
         Value = "";
-        IsOpen = false;
+        await CloseToTriggerAsync();
         await ValueChanged.InvokeAsync("");
+    }
+
+    /// <summary>Closes after a choice, a clear or Escape. Focus goes back to the trigger, since what held it is gone.</summary>
+    private async Task CloseToTriggerAsync()
+    {
+        IsOpen = false;
+        searchText = "";
+        await FocusAsync(trigger);
     }
 
     private void OnSearchInput(ChangeEventArgs e) => searchText = e.Value?.ToString() ?? "";
 
     private async Task OnKeyDown(KeyboardEventArgs e)
     {
-        if (e.Key == "Escape") { await Toggle(); return; }
+        if (e.Key == "Escape") { await CloseToTriggerAsync(); return; }
         if (e.Key != "Enter") return;
 
         var first = Visible().FirstOrDefault();

@@ -4,7 +4,7 @@ using Microsoft.JSInterop;
 namespace DevKit.Web.Components;
 
 /// <summary>
-/// Base for a component with a floating panel that a click anywhere outside it closes: the dropdowns, the
+/// Base for a component with a floating panel that a click, or focus, anywhere outside it closes: the dropdowns, the
 /// popover and the command search. It adds app.js's outside-click listener after the render that opens the
 /// panel and removes it after the render that closes it, or when the component is disposed, so an open panel
 /// has exactly one listener and a closed one has none.
@@ -14,6 +14,7 @@ public abstract class ClickOutsideComponent : ComponentBase, IAsyncDisposable
     private const string RegisterCall = "devKit.registerClickOutside";
     private const string UnregisterCall = "devKit.unregisterClickOutside";
     private const string FocusCall = "devKit.focusEl";
+    private const string RevealCall = "devKit.revealEl";
 
     private readonly ClickOutsideListener listener = new();
     private DotNetObjectReference<ClickOutsideComponent>? selfRef;
@@ -28,6 +29,12 @@ public abstract class ClickOutsideComponent : ComponentBase, IAsyncDisposable
 
     /// <summary>Whether the panel is on screen after the current render.</summary>
     protected abstract bool IsPanelOpen { get; }
+
+    /// <summary>
+    /// An id for the panel's list that no other panel on the page shares, so the trigger and the search box can point
+    /// screen readers at it and at its options.
+    /// </summary>
+    protected string PanelId { get; } = "pnl" + Guid.NewGuid().ToString("N")[..8];
 
     // Created per derived type, so each component keeps its own log category.
     private ILogger Log => log ??= LoggerFactory.CreateLogger(GetType());
@@ -55,7 +62,7 @@ public abstract class ClickOutsideComponent : ComponentBase, IAsyncDisposable
         await OnAfterRenderedAsync(firstRender);
     }
 
-    /// <summary>Called by app.js on a click outside, after its one-shot listener has removed itself.</summary>
+    /// <summary>Called by app.js on a click or focus outside, after its one-shot listener has removed itself.</summary>
     [JSInvokable]
     public Task CloseDropdown()
     {
@@ -65,6 +72,9 @@ public abstract class ClickOutsideComponent : ComponentBase, IAsyncDisposable
 
     /// <summary>Moves focus to an element of the panel, such as its search box.</summary>
     protected Task FocusAsync(ElementReference element) => InvokeJsAsync(FocusCall, element);
+
+    /// <summary>Scrolls the option the arrow keys reached into view; focus stays in the search box, so the browser does not.</summary>
+    protected Task RevealAsync(string elementId) => InvokeJsAsync(RevealCall, elementId);
 
     /// <summary>
     /// Calls a devKit function. A failure only costs the panel its focus or its outside click, so it is logged

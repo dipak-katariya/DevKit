@@ -41,6 +41,9 @@ public sealed partial class Settings : IDisposable
     // Why the pickers below are short; the lists that did load stay usable.
     private string? metadataError;
 
+    // The areas, sprints and repositories are being read, so an empty list means "not yet", not "not connected".
+    private bool listsLoading;
+
     protected override async Task OnInitializedAsync()
     {
         tfsUrl = SettingsSvc.FixedTfsUrl ?? SettingsSvc.Tfs.Url;
@@ -55,7 +58,9 @@ public sealed partial class Settings : IDisposable
 
         // Every visit refreshes the lists, so newly created areas and sprints show up; a refresh that fails keeps
         // the complete lists already loaded.
+        listsLoading = true;
         var load = await PageState.TfsData.ReloadAsync(page.Token);
+        listsLoading = false;
         if (!load.Cancelled)
         {
             metadataError = load.ErrorMessage;
@@ -188,7 +193,10 @@ public sealed partial class Settings : IDisposable
             // The lists belonged to the server just replaced, so every page of the circuit now reads the new one's.
             // A list that fails to load is shown in the notice: the settings are saved either way.
             PageState.TfsData.Invalidate();
+            listsLoading = true;
+            StateHasChanged();
             var load = await PageState.TfsData.EnsureLoadedAsync(page.Token);
+            listsLoading = false;
             if (load.Cancelled)
             {
                 return;

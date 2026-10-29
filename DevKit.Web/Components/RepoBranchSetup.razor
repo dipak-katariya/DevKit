@@ -13,7 +13,7 @@
             <span class="cm-bsetup-sum">
                 @if (Rows.Count == 0)
                 {
-                    <text>No repository selected</text>
+                    <span class="cm-bsetup-none">No repository selected</span>
                 }
                 @foreach (var row in Rows)
                 {
@@ -48,11 +48,11 @@
                     @row.Repo.Name
                     <em>@row.Repo.Project</em>
                 </span>
-                <BranchPicker Branches="@row.Branches" Value="@row.QaBranch"
+                <BranchPicker Branches="@row.Branches" Value="@row.QaBranch" Label="@($"QA branch of {row.Repo.Name}")"
                               ValueChanged="@(b => Set(row, qa: true, b))"
                               Disabled="@Loading"
                               Placeholder="@(Loading ? "loading…" : "All branches")" />
-                <BranchPicker Branches="@row.Branches" Value="@row.MergingBranch"
+                <BranchPicker Branches="@row.Branches" Value="@row.MergingBranch" Label="@($"Merging target of {row.Repo.Name}")"
                               ValueChanged="@(b => Set(row, qa: false, b))"
                               Disabled="@Loading"
                               Placeholder="@(Loading ? "loading…" : "Select target")" />

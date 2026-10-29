@@ -77,7 +77,25 @@
             commentLine = '//'; commentBlock = ['/\\*', '\\*/']; strChars = '\'"`';
         }
 
-        var i = 0, chars = h, out = '';
+        // Keywords, types, numbers and calls are marked in plain code only. Run over the whole result, they also
+        // matched inside the comment and string spans, and the keyword "class" broke the spans' own class="…".
+        var plainPattern = new RegExp(
+            (keywords ? '(\\b(?:' + keywords + ')\\b)' : '(?!)') + '|' +
+            (types ? '(\\b(?:' + types + ')\\b)' : '(?!)') + '|' +
+            '(\\b\\d+\\.?\\d*\\b)|(\\b[a-zA-Z_]\\w*)(?=\\s*\\()', 'g');
+        function tokenClass(kw, type, num) {
+            if (kw) return 'kw';
+            if (type) return 'type';
+            return num ? 'num' : 'fn';
+        }
+        function markPlain(text) {
+            return text.replace(plainPattern, function (m, kw, type, num) {
+                return '<span class="' + tokenClass(kw, type, num) + '">' + m + '</span>';
+            });
+        }
+
+        var i = 0, chars = h, out = '', plain = '';
+        function emit(span) { out += markPlain(plain) + span; plain = ''; }
         while (i < chars.length) {
             var rest = chars.substring(i);
             var matched = false;
@@ -88,14 +106,14 @@
                 if (bStart.test(rest)) {
                     var endMatch = rest.substring(2).search(bEnd);
                     var endPos = endMatch >= 0 ? endMatch + 2 + commentBlock[1].replace(/\\/g, '').length : rest.length;
-                    out += '<span class="cm">' + rest.substring(0, endPos) + '</span>';
+                    emit('<span class="cm">' + rest.substring(0, endPos) + '</span>');
                     i += endPos; matched = true;
                 }
             }
             if (!matched && commentLine) {
                 var clEsc = commentLine.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                 var clM = rest.match(new RegExp('^' + clEsc + '.*'));
-                if (clM) { out += '<span class="cm">' + clM[0] + '</span>'; i += clM[0].length; matched = true; }
+                if (clM) { emit('<span class="cm">' + clM[0] + '</span>'); i += clM[0].length; matched = true; }
             }
             if (!matched && strChars) {
                 for (var si = 0; si < strChars.length; si++) {
@@ -108,20 +126,15 @@
                             if (rest.substring(j, j + actualStart.length) === actualStart) { endIdx = j + actualStart.length; break; }
                         }
                         if (endIdx < 0) endIdx = rest.length;
-                        out += '<span class="str">' + rest.substring(0, endIdx) + '</span>';
+                        emit('<span class="str">' + rest.substring(0, endIdx) + '</span>');
                         i += endIdx; matched = true; break;
                     }
                 }
             }
-            if (!matched) { out += rest.charAt(0); i++; }
+            if (!matched) { plain += rest.charAt(0); i++; }
         }
-        h = out;
-
-        if (keywords) h = h.replace(new RegExp('\\b(' + keywords + ')\\b', 'g'), function (m) { return '<span class="kw">' + m + '</span>'; });
-        if (types) h = h.replace(new RegExp('\\b(' + types + ')\\b', 'g'), function (m) { return '<span class="type">' + m + '</span>'; });
-        h = h.replace(/\b(\d+\.?\d*)\b/g, '<span class="num">$1</span>');
-        h = h.replace(/\b([a-zA-Z_]\w*)\s*\(/g, '<span class="fn">$1</span>(');
-        return h;
+        emit('');
+        return out;
     }
 
     // ════════════════════════════════

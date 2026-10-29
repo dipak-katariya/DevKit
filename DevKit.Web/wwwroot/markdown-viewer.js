@@ -152,12 +152,13 @@
         var plain = preview.innerText || preview.textContent || '';
 
         function done() {
+            setText('mdAnnounce', 'Copied the preview as formatted text.');
             var label = btn.querySelector('span');
             if (!label) return;
             var orig = label.textContent;
             label.textContent = 'Copied';
             btn.classList.add('copied');
-            setTimeout(function () { label.textContent = orig; btn.classList.remove('copied'); }, 2000);
+            setTimeout(function () { label.textContent = orig; btn.classList.remove('copied'); setText('mdAnnounce', ''); }, 2000);
         }
         function fallback() {
             var tmp = document.createElement('div');
@@ -224,29 +225,44 @@
                 if (editorPane) { editorPane.style.flex = ''; editorPane.style.width = ''; }
                 if (previewPane) previewPane.style.flex = '';
                 document.querySelectorAll('.mdv-mode').forEach(function (b) {
-                    b.classList.toggle('active', b.getAttribute('data-mode') === mode);
+                    var on = b.getAttribute('data-mode') === mode;
+                    b.classList.toggle('active', on);
+                    b.setAttribute('aria-pressed', on ? 'true' : 'false');
                 });
+                if (resizer) resizer.setAttribute('aria-valuenow', '50');
                 if (mode !== 'editor') updatePreview();
             });
         });
 
-        // Draggable resizer (split mode)
+        // Draggable resizer (split mode). The arrow keys move it too, in steps of RESIZE_STEP percent.
+        var RESIZE_STEP = 5;
+        function setEditorWidth(pct) {
+            var editorPane = document.getElementById('mdEditorPane');
+            var previewPane = document.getElementById('mdPreviewPane');
+            if (!editorPane) return;
+            pct = Math.min(Math.max(pct, 15), 85);
+            editorPane.style.flex = 'none';
+            editorPane.style.width = pct + '%';
+            if (previewPane) previewPane.style.flex = '1';
+            if (resizer) resizer.setAttribute('aria-valuenow', String(Math.round(pct)));
+        }
         if (resizer) {
+            resizer.addEventListener('keydown', function (e) {
+                var steps = { ArrowLeft: -RESIZE_STEP, ArrowRight: RESIZE_STEP };
+                if (!steps[e.key]) return;
+                e.preventDefault();
+                setEditorWidth(Number(resizer.getAttribute('aria-valuenow') || 50) + steps[e.key]);
+            });
             resizer.addEventListener('mousedown', function (e) {
                 e.preventDefault();
                 var content = document.getElementById('mdContent');
-                var editorPane = document.getElementById('mdEditorPane');
-                var previewPane = document.getElementById('mdPreviewPane');
                 resizer.classList.add('dragging');
                 document.body.style.cursor = 'col-resize';
                 document.body.style.userSelect = 'none';
                 function move(ev) {
-                    if (!content || !editorPane) return;
+                    if (!content) return;
                     var rect = content.getBoundingClientRect();
-                    var pct = Math.min(Math.max(((ev.clientX - rect.left) / rect.width) * 100, 15), 85);
-                    editorPane.style.flex = 'none';
-                    editorPane.style.width = pct + '%';
-                    if (previewPane) previewPane.style.flex = '1';
+                    setEditorWidth(((ev.clientX - rect.left) / rect.width) * 100);
                 }
                 function up() {
                     resizer.classList.remove('dragging');
@@ -273,12 +289,31 @@
             });
         }
 
-        // Export
+        // Export. The list opens on its first choice, so the arrow keys work at once; Escape, a choice or Tab leaving
+        // the list closes it.
+        var exportBtn = document.getElementById('mdExportBtn');
+        function setExportOpen(open, refocus) {
+            exportMenu.classList.toggle('open', open);
+            if (exportBtn) exportBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+            if (open) {
+                var first = exportMenu.querySelector('.mdv-menu-item');
+                if (first) first.focus();
+            } else if (refocus && exportBtn) {
+                exportBtn.focus();
+            }
+        }
         if (exportMenu) {
-            bindClick('mdExportBtn', function (e) { e.stopPropagation(); exportMenu.classList.toggle('open'); });
-            bindClick('mdExportMd', function () { mdDownload(editor.value, 'document.md', 'text/markdown'); exportMenu.classList.remove('open'); });
-            bindClick('mdExportHtml', function () { exportHtml(); exportMenu.classList.remove('open'); });
-            bindClick('mdExportPdf', function () { exportPdf(); exportMenu.classList.remove('open'); });
+            bindClick('mdExportBtn', function (e) { e.stopPropagation(); setExportOpen(!exportMenu.classList.contains('open'), false); });
+            bindClick('mdExportMd', function () { mdDownload(editor.value, 'document.md', 'text/markdown'); setExportOpen(false, true); });
+            bindClick('mdExportHtml', function () { exportHtml(); setExportOpen(false, true); });
+            bindClick('mdExportPdf', function () { exportPdf(); setExportOpen(false, true); });
+            exportMenu.addEventListener('keydown', function (e) {
+                if (e.key === 'Escape') { e.preventDefault(); setExportOpen(false, true); }
+            });
+            exportMenu.addEventListener('focusout', function (e) {
+                var dropdown = document.getElementById('mdExportDropdown');
+                if (dropdown && e.relatedTarget && !dropdown.contains(e.relatedTarget)) setExportOpen(false, false);
+            });
         }
 
         // Copy as text
@@ -290,7 +325,11 @@
             exportMenuCloserBound = true;
             document.addEventListener('click', function (e) {
                 var menu = document.getElementById('mdExportMenu');
-                if (menu && !(e.target.closest && e.target.closest('#mdExportDropdown'))) menu.classList.remove('open');
+                if (menu && !(e.target.closest && e.target.closest('#mdExportDropdown'))) {
+                    menu.classList.remove('open');
+                    var btn = document.getElementById('mdExportBtn');
+                    if (btn) btn.setAttribute('aria-expanded', 'false');
+                }
             });
         }
 

@@ -1,0 +1,102 @@
+@inject IJSRuntime JS
+@inject ILogger<ModalDialog> Logger
+@implements IAsyncDisposable
+@implements IHandleEvent
+
+@* A dialog over the page. It takes focus when it opens, keeps Tab inside, closes on Escape or a click outside it,
+   and hands focus back to what opened it when it closes (devKit.openDialog and closeDialog in app.js). *@
+
+<div class="modal-overlay" @onclick="OverlayClickedAsync">
+    <div class="modal @CssClass" @ref="panel" role="dialog" aria-modal="true" aria-labelledby="@titleId" tabindex="-1"
+         @onmousedown="() => pressedInside = true" @onclick="() => pressedInside = false" @onclick:stopPropagation
+         @onkeydown="OnKeyDownAsync">
+        <h3 id="@titleId">@Title</h3>
+        <div class="modal-body @BodyClass">@ChildContent</div>
+        @if (Actions is not null)
+        {
+            <div class="modal-actions">@Actions</div>
+        }
+    </div>
+</div>
+
+@code {
+    private const string OpenCall = "devKit.openDialog";
+    private const string CloseCall = "devKit.closeDialog";
+
+    // Names the dialog through its heading, and tells app.js which dialog is closing.
+    private readonly string titleId = "dlg-" + Guid.NewGuid().ToString("N")[..8];
+
+    private ElementReference panel;
+    private bool opened;
+
+    // A press that starts inside the dialog and is let go over the page around it (selecting text in a field, say)
+    // still clicks the overlay, and closing then threw away what was typed. Only a press that starts outside closes it.
+    private bool pressedInside;
+
+    /// <summary>The heading, which also names the dialog.</summary>
+    [Parameter, EditorRequired] public RenderFragment Title { get; set; } = default!;
+
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>The buttons along the bottom; they stay in view while a long body scrolls.</summary>
+    [Parameter] public RenderFragment? Actions { get; set; }
+
+    /// <summary>Asked to close: Escape or a click outside the dialog. The owner removes it.</summary>
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    /// <summary>Extra classes on the dialog; they set its width.</summary>
+    [Parameter] public string? CssClass { get; set; }
+
+    [Parameter] public string? BodyClass { get; set; }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+        opened = await CallAsync(OpenCall, panel, titleId);
+    }
+
+    private Task OverlayClickedAsync()
+    {
+        if (pressedInside)
+        {
+            pressedInside = false;
+            return Task.CompletedTask;
+        }
+        return OnClose.InvokeAsync();
+    }
+
+    // Its own events change nothing it draws (closing is for the owner to render), so they skip the re-render that
+    // would otherwise redraw the whole body on every press inside it.
+    Task IHandleEvent.HandleEventAsync(EventCallbackWorkItem item, object? arg) => item.InvokeAsync(arg);
+
+    private Task OnKeyDownAsync(KeyboardEventArgs e) => e.Key == "Escape" ? OnClose.InvokeAsync() : Task.CompletedTask;
+
+    public async ValueTask DisposeAsync()
+    {
+        if (opened)
+        {
+            await CallAsync(CloseCall, titleId);
+        }
+    }
+
+    private async Task<bool> CallAsync(string identifier, params object[] args)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync(identifier, args);
+            return true;
+        }
+        catch (JSDisconnectedException ex)
+        {
+            Logger.LogDebug(ex, "Dialog call {Call} was not made because the page has closed", identifier);
+        }
+        catch (JSException ex)
+        {
+            Logger.LogError(ex, "Dialog call {Call} failed in the browser", identifier);
+        }
+        return false;
+    }
+}

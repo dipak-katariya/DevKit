@@ -1,3 +1,4 @@
+using DevKit.Web.Components;
 using DevKit.Web.Models;
 using Xunit;
 
@@ -181,6 +182,19 @@ public class MergingSheetFilterTests
         Assert.Equal(1, counts[MergeRollup.NotMerged]);
         Assert.Equal(1, counts[MergeRollup.NoPullRequests]);
         Assert.False(counts.ContainsKey(MergeRollup.Partial));
+    }
+
+    [Fact]
+    public void The_state_summary_names_only_states_with_rows_in_the_strip_order()
+    {
+        var counts = new Dictionary<MergeRollup, int>
+        {
+            [MergeRollup.NoPullRequests] = 22,
+            [MergeRollup.Merged] = 0,
+            [MergeRollup.NotMerged] = 10
+        };
+
+        Assert.Equal("32 work items: 10 not merged · 22 no prs", MergingInsights.Summarize(counts, 32));
     }
 
     [Fact]

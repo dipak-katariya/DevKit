@@ -3,6 +3,7 @@
 <tr class="cm-row @(Row.IsExpanded ? "open" : "")" @onclick="ToggleRow">
     <td class="cm-c-exp">
         <button class="cm-expander @(Row.IsExpanded ? "open" : "")" disabled="@(VisiblePrCount == 0)"
+                aria-expanded="@(Row.IsExpanded ? "true" : "false")" aria-label="Pull requests of @Row.WorkItemId"
                 title="@(VisiblePrCount == 0 ? "No pull requests" : "Show pull requests")"
                 @onclick="ToggleRow" @onclick:stopPropagation>
             <Icon Inner="@Icons.ChevronRight" />
@@ -141,6 +142,7 @@
                                 @onclick="() => OnTogglePr.InvokeAsync(key)">
                                 <td class="cm-c-exp">
                                     <button class="cm-expander @(isOpen ? "open" : "")" disabled="@(!HasDetail(pr))"
+                                            aria-expanded="@(isOpen ? "true" : "false")" aria-label="Commits and code of !@pr.PullRequestId"
                                             title="@(HasDetail(pr) ? "Show commits and code" : PrCommitsTooltip(pr))"
                                             @onclick="() => OnTogglePr.InvokeAsync(key)" @onclick:stopPropagation>
                                         <Icon Inner="@Icons.ChevronRight" />

@@ -180,30 +180,6 @@ public sealed class ClickOutsideComponentTests
 
     private ClickOutsideComponent ListenerOwner() => RegisteredReference().Value;
 
-    private sealed class RecordingJsRuntime : IJSRuntime
-    {
-        public List<(string Identifier, object?[] Args)> Calls { get; } = new();
-
-        /// <summary>A call that fails the way a broken interop call does.</summary>
-        public string? FailOn { get; set; }
-
-        /// <summary>What <see cref="FailOn"/> throws: a broken call by default, or a page that has closed.</summary>
-        public Func<string, Exception> Failure { get; set; } = identifier => new JSException($"{identifier} failed in the browser");
-
-        public int Count(string identifier) => Calls.Count(c => c.Identifier == identifier);
-
-        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args)
-        {
-            Calls.Add((identifier, args ?? Array.Empty<object?>()));
-            return identifier == FailOn
-                ? ValueTask.FromException<TValue>(Failure(identifier))
-                : ValueTask.FromResult(default(TValue)!);
-        }
-
-        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken, object?[]? args) =>
-            InvokeAsync<TValue>(identifier, args);
-    }
-
     private sealed class RecordingLoggerFactory : ILoggerFactory
     {
         public RecordingLogger<ClickOutsideComponent> Logger { get; } = new();
