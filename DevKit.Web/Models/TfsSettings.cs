@@ -1,9 +1,10 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace DevKit.Web.Models;
 
 /// <summary>How DevKit signs in to TFS. Stored by name, so the settings file reads as what was chosen.</summary>
-[JsonConverter(typeof(JsonStringEnumConverter<TfsAuthMode>))]
+[JsonConverter(typeof(TolerantEnumConverter<TfsAuthMode>))]
 public enum TfsAuthMode
 {
     /// <summary>A personal access token, sent as HTTP Basic auth. A file without the setting means this.</summary>
@@ -21,4 +22,8 @@ public class TfsSettings
     public string ApiVersion { get; set; } = "5.0";
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(Url) && (Auth == TfsAuthMode.Windows || !string.IsNullOrWhiteSpace(Pat));
+
+    /// <summary>Fields this build does not know, written back as they were (see UserSettings).</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownFields { get; set; }
 }

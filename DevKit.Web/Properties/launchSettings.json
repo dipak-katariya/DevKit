@@ -16,9 +16,19 @@
       "launchBrowser": false,
       "applicationUrl": "http://*:5850",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_ENVIRONMENT": "Production",
         "DevKit__Mode": "Hosted",
         "DEVKIT_NO_BROWSER": "1"
+      }
+    },
+    "test-5854": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": false,
+      "applicationUrl": "http://localhost:5854",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "DEVKIT_SETTINGS_PATH": "%LOCALAPPDATA%\\DevKit-Test\\usersettings.json"
       }
     }
   }

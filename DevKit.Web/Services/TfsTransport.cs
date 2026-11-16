@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 
@@ -6,20 +7,31 @@ namespace DevKit.Web.Services;
 /// <summary>
 /// The one process-wide limit on concurrent TFS calls: the Code Merging Sheet, Code Compare and the
 /// parallel reads of Sprint Insights all share it. TFS throttles aggressively and a large sprint would otherwise
-/// open hundreds of parallel calls; a second user loading a page shares the same slots by design.
+/// open hundreds of parallel calls; a second user loading a page shares the same slots by design, and in shared mode
+/// each person holds at most <see cref="MaxParallelRequestsPerPerson"/> of them.
 /// </summary>
 public sealed class TfsGate : IDisposable
 {
     /// <summary>Concurrent TFS calls allowed across the whole process.</summary>
     public const int MaxParallelRequests = 5;
 
+    /// <summary>
+    /// Of those, how many one person's pages may hold at once in shared mode, so one person's large sheets never keep
+    /// everyone else's pages waiting. Local mode has one person, who keeps every slot.
+    /// </summary>
+    public const int MaxParallelRequestsPerPerson = 3;
+
     private static readonly HttpRequestOptionsKey<TimeSpan> HeldOption = new("DevKit.TfsGate.Held");
+    private static readonly HttpRequestOptionsKey<string> PersonOption = new("DevKit.TfsGate.Person");
 
     private readonly SemaphoreSlim _slots;
+    private readonly int _perPerson;
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _people = new(StringComparer.Ordinal);
 
-    internal TfsGate(int slots)
+    internal TfsGate(int slots, int perPerson = MaxParallelRequestsPerPerson)
     {
         _slots = new SemaphoreSlim(slots, slots);
+        _perPerson = perPerson;
     }
 
     /// <summary>The gate every TFS request shares. DI hands out this same instance, never a new one.</summary>
@@ -28,12 +40,47 @@ public sealed class TfsGate : IDisposable
     /// <summary>Slots free right now.</summary>
     internal int Available => _slots.CurrentCount;
 
-    /// <summary>Waits for a slot. Disposing the result gives the slot back, once, however often it is disposed.</summary>
-    public async Task<IDisposable> EnterAsync(CancellationToken ct)
+    /// <summary>
+    /// Waits for a slot, and first, for a request of <paramref name="person"/> (shared mode), for one of theirs. Disposing
+    /// the result gives the slots back, once, however often it is disposed.
+    /// </summary>
+    public async Task<IDisposable> EnterAsync(CancellationToken ct, string? person = null)
     {
-        await _slots.WaitAsync(ct).ConfigureAwait(false);
-        return new Slot(_slots);
+        var theirs = person is null ? null : _people.GetOrAdd(person, _ => new SemaphoreSlim(_perPerson, _perPerson));
+        if (theirs is not null)
+        {
+            await theirs.WaitAsync(ct).ConfigureAwait(false);
+        }
+
+        var entered = false;
+        try
+        {
+            await _slots.WaitAsync(ct).ConfigureAwait(false);
+            entered = true;
+            return new Slot(_slots, theirs);
+        }
+        finally
+        {
+            // A wait cancelled for the shared slot gives the person's own back.
+            if (!entered)
+            {
+                theirs?.Release();
+            }
+        }
     }
+
+    /// <summary>Says whose request this is, so the transport counts it against that person's share; null leaves it unshared.</summary>
+    internal static void ForPerson(HttpRequestMessage request, string? person)
+    {
+        if (person is not null)
+        {
+            request.Options.Set(PersonOption, person);
+        }
+    }
+
+    /// <summary>Whose request this is (<see cref="ForPerson"/>); null when nobody's.</summary>
+    internal static string? PersonOf(HttpRequestMessage request) =>
+        request.Options.TryGetValue(PersonOption, out var person) ? person : null;
 
     /// <summary>
     /// Says the sender already holds a slot for this request, so the transport must not queue it again: a
@@ -48,18 +95,34 @@ public sealed class TfsGate : IDisposable
     internal static bool IsHeld(HttpRequestMessage request, out TimeSpan queued) =>
         request.Options.TryGetValue(HeldOption, out queued);
 
-    public void Dispose() => _slots.Dispose();
+    public void Dispose()
+    {
+        _slots.Dispose();
+        foreach (var person in _people.Values)
+        {
+            person.Dispose();
+        }
+    }
 
     private sealed class Slot : IDisposable
     {
-        private SemaphoreSlim? _owner;
+        private SemaphoreSlim? _shared;
+        private readonly SemaphoreSlim? _person;
 
-        public Slot(SemaphoreSlim owner)
+        public Slot(SemaphoreSlim shared, SemaphoreSlim? person)
         {
-            _owner = owner;
+            _shared = shared;
+            _person = person;
         }
 
-        public void Dispose() => Interlocked.Exchange(ref _owner, null)?.Release();
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _shared, null) is { } shared)
+            {
+                shared.Release();
+                _person?.Release();
+            }
+        }
     }
 }
 
@@ -99,7 +162,7 @@ public sealed class TfsTransportHandler : DelegatingHandler
         var exchange = new Exchange(request);
         try
         {
-            using var slot = exchange.Held ? null : await _gate.EnterAsync(cancellationToken).ConfigureAwait(false);
+            using var slot = exchange.Held ? null : await _gate.EnterAsync(cancellationToken, TfsGate.PersonOf(request)).ConfigureAwait(false);
             exchange.SlotGranted();
             using var deadline = new Deadline(_timeout, cancellationToken);
             try

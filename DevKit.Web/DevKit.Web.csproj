@@ -3,8 +3,26 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!--
+      The runtime a self-contained package carries (scripts\devkit-deploy.bat). Windows Update never patches a runtime
+      inside a package, so it is set to Microsoft's latest security release instead of the one the installed SDK knows,
+      and the package's own DevKit.Web.exe refuses to write its package.txt on an older one (PackageManifest.cs). Raise it
+      with each .NET 10 security release; nuget.org has its runtime packs the same day.
+    -->
+    <DevKitPatchedRuntime>10.0.14</DevKitPatchedRuntime>
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="DevKit.Tests" />
+    <AssemblyMetadata Include="DevKitPatchedRuntime" Value="$(DevKitPatchedRuntime)" />
+  </ItemGroup>
+
+  <!--
+    Only a build for a runtime identifier uses these (dotnet restore -r names it in RuntimeIdentifiers): a self-contained
+    package then takes the runtime packs of DevKitPatchedRuntime. A build that runs on the machine's own .NET (dotnet run,
+    the tests) is left as it is. The SDK lists these frameworks once per target framework; only the net10.0 entries are
+    read, as DevKit targets net10.0 alone.
+  -->
+  <ItemGroup Condition="('$(RuntimeIdentifier)' != '' or '$(RuntimeIdentifiers)' != '') and '$(TargetFramework)' == 'net10.0'">
+    <KnownFrameworkReference Update="Microsoft.NETCore.App;Microsoft.AspNetCore.App" LatestRuntimeFrameworkVersion="$(DevKitPatchedRuntime)" />
   </ItemGroup>
 </Project>

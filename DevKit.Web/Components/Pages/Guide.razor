@@ -1,0 +1,374 @@
+@page "/guide"
+@inject SettingsService Settings
+@inject IJSRuntime JS
+@inject ILogger<Guide> Logger
+@implements IAsyncDisposable
+
+<div class="guide">
+    <nav class="guide-toc" aria-label="Guide contents" @ref="toc">
+        <p class="guide-toc-h">Start here</p>
+        <a href="guide#start">Get started</a>
+        <a href="guide#pick">Which tool do I need?</a>
+        <a href="guide#@GuideContent.Settings.Id"><Icon Inner="@GuideContent.Settings.Tool.Icon" /> @GuideContent.Settings.Tool.Name</a>
+        <p class="guide-toc-h">Sprint work</p>
+        @foreach (var tool in GuideContent.SprintWork)
+        {
+            <a href="guide#@tool.Id"><Icon Inner="@tool.Tool.Icon" /> @tool.Tool.Name</a>
+        }
+        <p class="guide-toc-h">Your day</p>
+        @foreach (var tool in GuideContent.YourDay)
+        {
+            <a href="guide#@tool.Id"><Icon Inner="@tool.Tool.Icon" /> @tool.Tool.Name</a>
+        }
+    </nav>
+
+    <div class="guide-main">
+        <header class="guide-hero">
+            <h1>DevKit Guide</h1>
+            <p>What each tool is for, how to use it, and what DevKit does for you while you work.</p>
+            <button type="button" class="btn-ghost" @onclick="ShowTourAgain">Take the tour again</button>
+        </header>
+
+        <section id="start" class="guide-group" aria-labelledby="g-start">
+            <h2 id="g-start">Get started</h2>
+            <ol class="guide-start">
+                <li><b>Sign in</b><span>Open the DevKit link. On shared DevKit, Windows signs you in by itself and you stay signed in for 30 days.</span></li>
+                <li><b>Connect TFS once</b><span>Add the server, your team and your defaults in <a href="settings">Settings</a>, so every tool opens ready to use.</span></li>
+                <li><b>Open a tool</b><span>From the <a href="./">Dashboard</a>, the sidebar, or press <kbd class="guide-kbd">Ctrl K</kbd> on any page and type its name.</span></li>
+            </ol>
+        </section>
+
+        <section id="pick" class="guide-group" aria-labelledby="g-pick">
+            <h2 id="g-pick">Which tool do I need?</h2>
+            <div class="guide-pick">
+                @foreach (var need in GuideContent.Needs)
+                {
+                    <a href="guide#@need.SectionId">
+                        <span>@need.Need</span>
+                        <span class="guide-pick-tool"><Icon Inner="@need.Tool.Icon" /> @need.Label</span>
+                    </a>
+                }
+            </div>
+        </section>
+
+        <div class="guide-group" id="setup-group">
+            <h2>Set up once</h2>
+            @ToolSection(GuideContent.Settings, SettingsFigure, false)
+        </div>
+
+        <div class="guide-group">
+            <h2>Sprint work</h2>
+            <p class="guide-lead">Four tools, in the order the team uses them through a sprint.</p>
+            @ToolSection(GuideContent.BranchCreator, BranchFigure, false)
+            @InsightsSection
+            @ToolSection(GuideContent.CodeMerging, MergingFigure, true)
+            @ToolSection(GuideContent.BranchCleanup, CleanupFigure, false)
+        </div>
+
+        <div class="guide-group">
+            <h2>Your day</h2>
+            <p class="guide-lead">Small tools for every day. They work without a TFS connection.</p>
+            <div class="gd-pair">
+                @DayTool(GuideContent.Workday, WorkdayFigure)
+                @DayTool(GuideContent.Markdown, MarkdownFigure)
+            </div>
+        </div>
+
+        <footer class="guide-foot">
+            <p>Something looks wrong, or a list stays empty? Check <a href="settings">Settings</a> first: every sprint tool needs your
+                TFS connection, team and area. The connection label at the top right says Connected once DevKit reaches TFS.</p>
+        </footer>
+    </div>
+</div>
+
+@code {
+    private const int MaxTeamInput = 40;
+    private const int MaxSprintInput = 60;
+    private const int MaxTitleInput = 160;
+    private const int MaxIdDigits = 9;
+
+    private string team = GuideContent.BranchExample.Team;
+    private string sprint = GuideContent.BranchExample.Sprint;
+    private string workItemId = GuideContent.BranchExample.Id;
+    private string title = GuideContent.BranchExample.Title;
+
+    private const string WatchTocCall = "devKit.guideToc.watch";
+    private const string UnwatchTocCall = "devKit.guideToc.unwatch";
+
+    private ElementReference toc;
+    private bool watchingToc;
+
+    private string BuiltName => BranchNaming.Build(team, sprint, workItemId, title);
+
+    // The page names a work item by its id; anything but digits typed into the box is left out, as TFS ids are numbers.
+    private string WorkItemId
+    {
+        get => workItemId;
+        set => workItemId = new string((value ?? "").Where(char.IsAsciiDigit).Take(MaxIdDigits).ToArray());
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            watchingToc = await CallAsync(WatchTocCall, toc);
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (watchingToc)
+        {
+            await CallAsync(UnwatchTocCall);
+        }
+    }
+
+    // Marking the section being read is a help, not something the page depends on: if the browser call fails, the
+    // contents still work as plain links, so the failure is logged and the page carries on.
+    private async Task<bool> CallAsync(string identifier, params object[] args)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync(identifier, args);
+            return true;
+        }
+        catch (JSDisconnectedException ex)
+        {
+            Logger.LogDebug(ex, "Guide call {Call} was not made because the page has closed", identifier);
+        }
+        catch (JSException ex)
+        {
+            Logger.LogError(ex, "Guide call {Call} failed in the browser", identifier);
+        }
+        return false;
+    }
+
+    // MainLayout shows the tour while this is false, so turning it off brings the tour back on this page.
+    private void ShowTourAgain() => Settings.GuideTourSeen = false;
+
+    // Relative to the base address; the Dashboard's own path, "/", is the base itself.
+    private static string Href(string path) => path == "/" ? "./" : path.TrimStart('/');
+
+    private static string ToneClass(GuideTone tone) => tone switch
+    {
+        GuideTone.Good => "t-good",
+        GuideTone.Care => "t-care",
+        GuideTone.Bad => "t-bad",
+        _ => "t-plain"
+    };
+
+    private static RenderFragment Head(GuideTool tool) => @<div class="gt-head">
+        <h3 id="g-@tool.Id"><Icon Inner="@tool.Tool.Icon" /> @tool.Tool.Name</h3>
+        <a class="gt-open" href="@Href(tool.Tool.Path)" aria-label="Open @tool.Tool.Name">Open<span class="gt-open-name">@tool.Tool.Name</span><Icon Inner="@Icons.ArrowRight" /></a>
+    </div>;
+
+    private static RenderFragment Intro(GuideTool tool) => @<div class="gt-intro">
+        <p class="gt-lead">@tool.Tool.Description</p>
+        <p class="gt-when">When: @GuideContent.PhaseLabel(tool.Phase)</p>
+        <p class="gt-why">@tool.Why</p>
+    </div>;
+
+    private static RenderFragment Steps(GuideTool tool) => @<div class="gt-list">
+        <h4>How to use it</h4>
+        <ol class="gt-steps">
+            @foreach (var step in tool.Steps)
+            {
+                <li><b>@step.Title</b> @step.Text</li>
+            }
+        </ol>
+    </div>;
+
+    private static RenderFragment Automatic(GuideTool tool) => @<div class="gt-list gt-auto">
+        <h4>What DevKit does for you</h4>
+        <ul>
+            @foreach (var line in tool.Automatic)
+            {
+                <li><Icon Inner="@Icons.Check" /> <span>@line</span></li>
+            }
+        </ul>
+    </div>;
+
+    private static RenderFragment Notes(GuideTool tool) => @<div class="gt-notes-wrap">
+        @foreach (var group in tool.Notes)
+        {
+            <div class="gt-notes">
+                <h4>@group.Label</h4>
+                <ul>
+                    @foreach (var chip in group.Chips)
+                    {
+                        <li class="@ToneClass(chip.Tone)">
+                            @if (chip.Code)
+                            {
+                                <code>@chip.Text</code>
+                            }
+                            else
+                            {
+                                @chip.Text
+                            }
+                        </li>
+                    }
+                </ul>
+            </div>
+        }
+    </div>;
+
+    // What the tool is for and how to use it on one side; a picture of its screen, with what DevKit does for you, on the
+    // other, so the two columns run about as long. Flip puts the picture first on wide screens.
+    private static RenderFragment ToolSection(GuideTool tool, RenderFragment figure, bool flip) => @<section class="gt @(flip ? "flip" : "")" id="@tool.Id" aria-labelledby="g-@tool.Id">
+        @Head(tool)
+        <div class="gt-body">
+            <div class="gt-text">
+                @Intro(tool)
+                @Steps(tool)
+                @Notes(tool)
+            </div>
+            <div class="gt-figure">
+                @figure
+                @Automatic(tool)
+            </div>
+        </div>
+    </section>;
+
+    private static RenderFragment DayTool(GuideTool tool, RenderFragment figure) => @<section class="gd" id="@tool.Id" aria-labelledby="g-@tool.Id">
+        @Head(tool)
+        @Intro(tool)
+        @figure
+        @Steps(tool)
+        @Automatic(tool)
+        @Notes(tool)
+    </section>;
+
+    private static RenderFragment InsightsSection => @<section class="gt gt-wide" id="@GuideContent.Insights.Id" aria-labelledby="g-@GuideContent.Insights.Id">
+        @Head(GuideContent.Insights)
+        @Intro(GuideContent.Insights)
+        <div class="gt-cols">
+            @Steps(GuideContent.Insights)
+            @Automatic(GuideContent.Insights)
+        </div>
+        <div class="gi-tabs" data-ui>
+            <table>
+                <caption>The six tabs, from planning at the start of the sprint to checks near the end</caption>
+                <thead>
+                    <tr><th scope="col">Tab</th><th scope="col">When</th><th scope="col">What it shows</th><th scope="col">What DevKit does for you</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var tab in GuideContent.InsightsTabs)
+                    {
+                        <tr>
+                            <th scope="row"><Icon Inner="@tab.Icon" /> @tab.Name</th>
+                            <td class="gi-when">@GuideContent.PhaseLabel(tab.Phase)</td>
+                            <td>@tab.Text</td>
+                            <td>@tab.Automatic</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </section>;
+
+    private static RenderFragment SettingsFigure => @<figure>
+        <div class="ui" data-ui aria-hidden="true">
+            <div class="ui-title">TFS / Azure DevOps Connection <span class="ui-state t-good">● Connected</span></div>
+            <div class="ui-field"><span>Server URL</span><div class="ui-input">http://tfs-server:8080/tfs/DefaultCollection</div></div>
+            <div class="ui-row">
+                <div class="ui-field"><span>Team Name</span><div class="ui-input">@GuideContent.BranchExample.Team</div></div>
+                <div class="ui-field"><span>Default Sprint</span><div class="ui-input">Current sprint</div></div>
+            </div>
+            <div class="ui-field"><span>Default Area Path</span><div class="ui-input">Product\@GuideContent.BranchExample.Team</div></div>
+            <div class="ui-actions"><span class="ui-btn primary">Save &amp; Connect</span><span class="ui-btn">Test Connection</span></div>
+        </div>
+        <figcaption>Settings: the connection first, then your team and the defaults every tool starts from.</figcaption>
+    </figure>;
+
+    private RenderFragment BranchFigure => @<figure class="gb">
+        <div class="ui" data-ui>
+            <div class="ui-title">Try it: change any field</div>
+            <div class="ui-row">
+                <label class="ui-field"><span>Team Name</span><input class="ui-input" @bind="team" @bind:event="oninput" maxlength="@MaxTeamInput" aria-describedby="gb-name gb-len" /></label>
+                <label class="ui-field"><span>Sprint</span><input class="ui-input" @bind="sprint" @bind:event="oninput" maxlength="@MaxSprintInput" aria-describedby="gb-name gb-len" /></label>
+            </div>
+            <div class="ui-row gb-item">
+                <label class="ui-field gb-id"><span>Work item</span><input class="ui-input" @bind="WorkItemId" @bind:event="oninput" inputmode="numeric" maxlength="@MaxIdDigits" aria-describedby="gb-name gb-len" /></label>
+                <label class="ui-field"><span>Title</span><input class="ui-input" @bind="title" @bind:event="oninput" maxlength="@MaxTitleInput" aria-describedby="gb-name gb-len" /></label>
+            </div>
+            <div class="gb-out">
+                <span class="gb-out-label">Branch Name</span>
+                @if (workItemId.Length == 0)
+                {
+                    <div class="gb-name gb-wait" id="gb-name">Type a work item number to see the name.</div>
+                }
+                else if (BranchNaming.Parse(BuiltName) is { } parts)
+                {
+                    <div class="gb-name" id="gb-name" @key="BuiltName">
+                        <span class="gn-team">@parts.Team</span><span class="gn-sep">/</span><span class="gn-sprint">@parts.Sprint</span><span class="gn-sep">/</span><span class="gn-item">@parts.WorkItemId@(parts.Title.Length > 0 ? "_" + parts.Title : "")</span>
+                    </div>
+                }
+                else
+                {
+                    <div class="gb-name" id="gb-name" @key="BuiltName">@BuiltName</div>
+                }
+                <div class="gb-key">
+                    <span class="gn-team" aria-hidden="true">team</span><span class="gn-sprint" aria-hidden="true">sprint</span><span class="gn-item" aria-hidden="true">work item id and title</span>
+                    <span class="gb-len" id="gb-len">@(workItemId.Length == 0 ? 0 : BuiltName.Length) of @BranchNaming.MaxLength characters</span>
+                </div>
+                <span class="gb-out-label">PR Name Suggestion</span>
+                <div class="gb-pr">@BranchNaming.TeamSegment(team) : @workItemId : @title</div>
+            </div>
+        </div>
+        <figcaption>Built by the same code Branch Creator uses, so what you see here is the name you get.</figcaption>
+    </figure>;
+
+    private static RenderFragment MergingFigure => @<figure>
+        <div class="ui" data-ui aria-hidden="true">
+            <div class="ui-title">#@GuideContent.BranchExample.Id @GuideContent.BranchExample.Title <span class="ui-state t-care">Partially merged</span></div>
+            <p class="ui-sub">Requirement · 2 pull requests · compared with the merging branch</p>
+            <ul class="ui-files">
+                @foreach (var file in GuideContent.MergingFiles)
+                {
+                    <li><code>@file.Path</code><span class="ui-state @ToneClass(file.Tone)">@file.State</span></li>
+                }
+            </ul>
+        </div>
+        <figcaption>After Compare Code, every file of a pull request says whether its code reached the merging branch.</figcaption>
+    </figure>;
+
+    private static RenderFragment CleanupFigure => @<figure>
+        <div class="ui" data-ui aria-hidden="true">
+            <div class="ui-title">Branches <span class="ui-sub">2 selected</span></div>
+            <ul class="ui-branches">
+                <li class="on"><span class="ui-box"><Icon Inner="@Icons.Check" /></span><code>PHOENIX/PI2026_3_Sprint_4/47110_export_report</code><span class="ui-state t-good">Linked</span></li>
+                <li class="on"><span class="ui-box"><Icon Inner="@Icons.Check" /></span><code>PHOENIX/PI2026_3_Sprint_4/47052_retry_upload</code><span class="ui-state t-care">Unattached</span></li>
+                <li class="locked"><span class="ui-box"></span><code>PHOENIX/PI2026_4_Sprint_1/47901_audit_filters</code><span class="ui-state t-bad">🔒 Active pull request</span></li>
+                <li class="locked"><span class="ui-box"></span><code>release/26.3</code><span class="ui-state t-bad">🔒 Protected</span></li>
+                <li class="locked"><span class="ui-box"></span><code>main</code><span class="ui-state t-bad">🔒 Protected</span></li>
+            </ul>
+            <div class="ui-actions"><span class="ui-btn danger">Delete selected (2)</span></div>
+        </div>
+        <figcaption>Only the branches you tick are deleted, and the 🔒 ones can never be.</figcaption>
+    </figure>;
+
+    private static RenderFragment WorkdayFigure => @<figure>
+        <div class="ui ui-day" data-ui aria-hidden="true">
+            <div class="ui-seg"><span class="on">Full Day (8h 30m)</span><span>Half Day</span><span>Movement</span></div>
+            <div class="ui-row">
+                <div class="ui-input ui-times">09:12<br />13:30<br />14:05</div>
+                <dl class="ui-result">
+                    <div><dt>Worked</dt><dd>6h 13m</dd></div>
+                    <div><dt>Remaining</dt><dd>2h 17m</dd></div>
+                    <div><dt>Leave at</dt><dd>6:17 PM</dd></div>
+                </dl>
+            </div>
+        </div>
+        <figcaption>At 4:00 PM, after three swipes.</figcaption>
+    </figure>;
+
+    private static RenderFragment MarkdownFigure => @<figure>
+        <div class="ui ui-day ui-md" data-ui aria-hidden="true">
+            <pre># Release notes
+- Login is faster
+- **New** export button</pre>
+            <div class="ui-md-out"><b>Release notes</b><ul><li>Login is faster</li><li><strong>New</strong> export button</li></ul></div>
+        </div>
+        <figcaption>Split view: what you type on the left, the result on the right.</figcaption>
+    </figure>;
+}

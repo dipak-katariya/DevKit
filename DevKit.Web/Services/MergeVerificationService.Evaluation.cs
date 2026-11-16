@@ -107,7 +107,7 @@ public partial class MergeVerificationService
     private async Task<bool?> DiffBehindCountZeroAsync(MergingPullRequest pr, string sha, string branch, CancellationToken ct)
     {
         var url = _req.ProjectApi(pr.Project,
-            $"git/repositories/{pr.RepositoryId}/diffs/commits?baseVersion={sha}&baseVersionType=commit" +
+            $"git/repositories/{Uri.EscapeDataString(pr.RepositoryId)}/diffs/commits?baseVersion={Uri.EscapeDataString(sha)}&baseVersionType=commit" +
             $"&targetVersion={Uri.EscapeDataString(branch)}&targetVersionType=branch&$top=1&api-version={_req.Ver}");
         try
         {

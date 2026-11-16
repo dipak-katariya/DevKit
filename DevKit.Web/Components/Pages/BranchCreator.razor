@@ -352,10 +352,21 @@
 
                         <!-- Result: a live region that is always there, so the outcome of Check or Create is read out -->
                         <div role="status">
-                            @if (!string.IsNullOrEmpty(resultMsg))
+                            @if (result is { } shown)
                             {
                                 <div class="bc-result @(resultOk ? "ok" : "bad")">
-                                    @((MarkupString)resultMsg)
+                                    @if (shown.Created)
+                                    {
+                                        <div class="bc-msg-h">✅ Branch created.</div>
+                                    }
+                                    @if (shown.Message.Count > 0)
+                                    {
+                                        <span class="bc-msg @shown.Tone">@ResultTexts(shown.Message)</span>
+                                    }
+                                    @foreach (var row in shown.Rows)
+                                    {
+                                        <div class="modal-row"><span class="label">@row.Label</span><span class="@(row.ValueClass.Length > 0 ? row.ValueClass : null)">@ResultTexts(row.Value)</span></div>
+                                    }
                                 </div>
                             }
                         </div>
@@ -365,3 +376,18 @@
         </div>
     </div>
 </div>
+
+@code {
+    // Text only: Razor encodes every run, whatever a branch name or a TFS message holds.
+    private static RenderFragment ResultTexts(IReadOnlyList<ResultText> texts) => @<text>@foreach (var text in texts)
+        {
+            if (text.IsCode)
+            {
+                <code>@text.Text</code>
+            }
+            else
+            {
+                @text.Text
+            }
+        }</text>;
+}

@@ -196,7 +196,7 @@ public partial class CodeMergingService
     private async Task<LinkCheck> CheckWorkItemLinkAsync(MergingPullRequest pr, CancellationToken ct)
     {
         var url = _req.ProjectApi(pr.Project,
-            $"git/repositories/{pr.RepositoryId}/pullRequests/{pr.PullRequestId}/workitems?api-version={_req.Ver}");
+            $"git/repositories/{Uri.EscapeDataString(pr.RepositoryId)}/pullRequests/{pr.PullRequestId}/workitems?api-version={_req.Ver}");
         try
         {
             var data = await _req.GetJsonAsync(url, ct);

@@ -79,9 +79,35 @@ public sealed partial class Settings : IDisposable
         SyncMostUsedFromSettings();
     }
 
-    // ─── Export and import ───
+    // ─── Save, export and import ───
     private string transferMsg = "";
     private bool transferOk;
+    private bool confirming;
+
+    /// <summary>
+    /// Every change is already saved as it is made; this waits until the settings are kept, and says so. Local mode names
+    /// the settings file; shared mode does not say where it keeps them.
+    /// </summary>
+    private async Task SaveSettings()
+    {
+        confirming = true;
+        try
+        {
+            if (!await SettingsSvc.SaveAndConfirmAsync())
+            {
+                ShowTransfer(SettingsSvc.LastSaveError ?? "Settings could not be saved. Reload the page and try again.", ok: false);
+                return;
+            }
+
+            ShowTransfer(Session.IsShared
+                ? "Settings saved."
+                : $"Settings saved in {SettingsSvc.SettingsFilePath}.", ok: true);
+        }
+        finally
+        {
+            confirming = false;
+        }
+    }
 
     /// <summary>Hands the settings file to the browser to save; it holds no TFS connection or token.</summary>
     private async Task ExportSettings()

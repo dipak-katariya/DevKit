@@ -1,0 +1,301 @@
+/* ─── GUIDE PAGE ───
+   Contents on the left, the page on the right. Each tool is set as its own spread: its name, then what it is for and
+   how to use it beside a picture of its own screen. Surfaces are told apart by a step in tone, not by lines or
+   shadows; space does the grouping. Spacing steps: 4, 8, 12, 16, 24, 32, 48, 72, 112. */
+.guide{
+  --nudge:3px;
+  --g-title:2.5rem;--g-group:1.75rem;--g-tool:1.375rem;--g-body:1rem;--g-note:.8125rem;
+  flex:1;align-self:flex-start;display:grid;grid-template-columns:184px minmax(0,1fr);gap:48px;
+  width:100%;max-width:1280px;margin:0 auto;padding-bottom:72px;
+}
+
+.guide-toc{
+  position:sticky;top:0;align-self:start;display:flex;flex-direction:column;gap:2px;
+  max-height:calc(100vh - var(--topbar-h) - 40px);overflow-y:auto;padding:6px 0;
+}
+.guide-toc-h{margin:24px 0 6px 10px;font-size:var(--g-note);font-weight:600;color:var(--muted);}
+.guide-toc-h:first-child{margin-top:0;}
+.guide-toc a{
+  display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:8px;font-size:var(--g-note);
+  color:var(--muted2);text-decoration:none;transition:var(--tr-ui);
+}
+.guide-toc a .ic{width:15px;height:15px;flex:none;}
+.guide-toc a:hover{color:var(--text);background:var(--surface);}
+.guide-toc a.on{color:var(--text);background:var(--surface2);}
+.guide-toc a:active{transform:scale(var(--press));}
+.guide-toc a:focus-visible{outline:2px solid var(--accent2);outline-offset:1px;}
+
+.shell:has(.guide){scroll-behavior:smooth;}
+.guide-main{display:flex;flex-direction:column;gap:112px;min-width:0;}
+.guide-main a:not([class]){color:var(--accent-ink);text-underline-offset:3px;}
+.guide-main section,.guide-group{scroll-margin-top:24px;min-width:0;}
+
+.guide-hero{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:12px 24px;padding-top:12px;}
+.guide-hero h1{
+  grid-column:1;font-family:var(--display);font-size:var(--g-title);font-weight:650;line-height:1.05;letter-spacing:-.03em;
+}
+.guide-hero p{grid-column:1;max-width:56ch;font-size:1.0625rem;line-height:1.55;color:var(--text);}
+.guide-hero .btn-ghost{grid-column:2;grid-row:1;align-self:center;}
+
+.guide-group{display:flex;flex-direction:column;gap:24px;}
+.guide-group>h2{font-family:var(--display);font-size:var(--g-group);font-weight:620;line-height:1.15;letter-spacing:-.02em;}
+.guide-lead{margin-top:-12px;font-size:var(--g-body);line-height:1.55;color:var(--muted2);max-width:62ch;}
+
+/* Get started: three steps across, each a short instruction; the list numbers them */
+.guide-start{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:32px;padding-left:1.25em;}
+.guide-start li{padding-left:6px;font-size:var(--g-body);line-height:1.55;color:var(--muted2);}
+.guide-start li::marker{color:var(--accent-ink);font-weight:700;}
+.guide-start b{display:block;margin-bottom:4px;font-size:1.0625rem;font-weight:600;color:var(--text);}
+.guide-kbd{padding:1px 6px;border-radius:5px;background:var(--surface2);font-family:var(--mono);font-size:var(--fs-meta);font-weight:600;color:var(--text);white-space:nowrap;} /* taste-skill-ignore: a keyboard key */
+
+/* Which tool do I need: rows in a slightly raised field, the tool on the right */
+.guide-pick{display:flex;flex-direction:column;gap:2px;border-radius:var(--r2);overflow:hidden;}
+.guide-pick a{
+  display:flex;justify-content:space-between;align-items:center;gap:16px;padding:12px 16px;
+  font-size:var(--g-body);color:var(--text);text-decoration:none;background:var(--surface);transition:var(--tr-ui);
+}
+.guide-pick a:hover{background:var(--surface2);}
+.guide-pick a:active{background:var(--surface3);}
+.guide-pick a:focus-visible{outline:2px solid var(--accent2);outline-offset:-2px;}
+.guide-pick-tool{display:flex;align-items:center;gap:8px;flex:none;color:var(--accent-ink);font-weight:600;white-space:nowrap;transition:transform 200ms var(--ease-out);}
+@media (hover:hover) and (pointer:fine){
+  .guide-pick a:hover .guide-pick-tool{transform:translateX(var(--nudge));}
+}
+.guide-pick-tool .ic{width:16px;height:16px;}
+
+/* One tool */
+.gt{display:flex;flex-direction:column;gap:24px;padding-top:24px;}
+.guide-group>.gt+.gt{margin-top:72px;}
+.gt-head{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;}
+.gt-head h3{
+  display:flex;align-items:center;gap:12px;font-family:var(--display);font-size:var(--g-tool);font-weight:620;letter-spacing:-.015em;
+}
+.gt-head h3 .ic{width:22px;height:22px;color:var(--accent2);}
+.gt-open{
+  display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:var(--pill);font-size:var(--g-note);font-weight:600;
+  color:#fff;background:var(--accent);text-decoration:none;transition:var(--tr-ui);
+}
+.gt-open .ic{width:14px;height:14px;}
+.gt-open:hover{background:var(--accent2);}
+.gt-open:active{transform:scale(var(--press));}
+.gt-open:focus-visible{outline:2px solid var(--accent2);outline-offset:3px;}
+
+.gt-body{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:48px;align-items:start;}
+.gt.flip .gt-figure{order:-1;}
+.gt-text{display:flex;flex-direction:column;gap:32px;min-width:0;}
+.gt-figure{display:flex;flex-direction:column;gap:32px;min-width:0;}
+
+.gt-intro{display:flex;flex-direction:column;gap:8px;}
+.gt-lead{font-size:1.0625rem;line-height:1.5;font-weight:500;color:var(--text);max-width:60ch;}
+.gt-when{font-size:var(--g-note);color:var(--accent-ink);}
+.gt-why{margin-top:8px;font-size:var(--g-body);line-height:1.6;color:var(--text);max-width:64ch;}
+
+.gt-list h4,.gt-notes h4{margin-bottom:12px;font-size:var(--g-body);font-weight:650;color:var(--text);}
+.gt-steps{padding-left:1.4em;display:flex;flex-direction:column;gap:12px;}
+.gt-steps li{padding-left:6px;font-size:var(--g-body);line-height:1.55;color:var(--muted2);}
+.gt-steps li::marker{color:var(--accent-ink);font-weight:700;font-variant-numeric:tabular-nums;}
+.gt-steps b{display:block;margin-bottom:2px;color:var(--text);font-weight:600;}
+.gt-auto ul{list-style:none;display:flex;flex-direction:column;gap:10px;}
+.gt-auto li{display:flex;gap:10px;font-size:var(--g-body);line-height:1.55;color:var(--text);}
+.gt-auto li .ic{width:16px;height:16px;flex:none;margin-top:3px;color:var(--green);}
+.gt-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:48px;}
+
+.gt-notes-wrap{display:flex;flex-direction:column;gap:24px;}
+.gt-notes-wrap:empty{display:none;}
+.gt-notes ul{list-style:none;display:flex;flex-direction:column;gap:6px;}
+/* A list of branch names reads as one line of names. */
+.gt-notes ul:has(code){flex-direction:row;flex-wrap:wrap;gap:6px 16px;}
+.gt-notes li{font-size:var(--g-note);line-height:1.5;color:var(--muted2);}
+.gt-notes li.t-care{color:var(--amber-ink);}
+.gt-notes li.t-bad{color:var(--red-ink);}
+.gt-notes code{font-family:var(--mono);font-size:var(--g-note);color:var(--red-ink);}
+
+/* Pictures of the tools' own screens. They borrow the app's look: a raised panel, fields sunk into it. */
+.guide figure{display:flex;flex-direction:column;gap:12px;margin:0;}
+.guide figcaption{font-size:var(--g-note);line-height:1.5;color:var(--muted2);max-width:52ch;}
+.ui{
+  display:flex;flex-direction:column;gap:14px;padding:20px;border-radius:var(--r);background:var(--surface);
+  font-size:var(--g-note);color:var(--text);
+}
+.ui-title{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;font-size:var(--g-body);font-weight:600;}
+.ui-sub{font-size:var(--g-note);font-weight:400;color:var(--muted2);margin-top:-8px;}
+.ui-title .ui-sub{margin-top:0;}
+.ui-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;}
+.ui-field{display:flex;flex-direction:column;gap:6px;min-width:0;}
+.ui-field>span{font-size:.75rem;font-weight:600;color:var(--muted2);}
+.ui-input{ /* taste-skill-ignore: the app's own sunken field, inside a picture of its screen */
+  min-width:0;width:100%;padding:8px 10px;border-radius:9px;border:0;background:var(--bg-elev);box-shadow:var(--well); /* taste-skill-ignore: the app's own sunken field */
+  color:var(--text);font:inherit;font-size:var(--g-note);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+input.ui-input{transition:var(--tr-ui);}
+input.ui-input:focus{outline:none;box-shadow:var(--well),0 0 0 2px var(--accent-line);} /* taste-skill-ignore: the app's own focus ring */
+.ui-actions{display:flex;gap:8px;flex-wrap:wrap;}
+.ui-btn{padding:7px 13px;border-radius:9px;font-weight:600;background:var(--surface3);color:var(--text);}
+.ui-btn.primary{background:var(--accent);color:#fff;}
+.ui-btn.danger{background:rgba(248,113,113,.16);color:var(--red-ink);}
+.ui-state{flex:none;padding:2px 9px;border-radius:var(--pill);font-size:.75rem;font-weight:600;white-space:nowrap;background:var(--surface3);color:var(--muted2);}
+.ui-state.t-good{background:rgba(52,211,153,.13);color:var(--green-ink);}
+.ui-state.t-care{background:rgba(251,191,36,.13);color:var(--amber-ink);}
+.ui-state.t-bad{background:rgba(248,113,113,.13);color:var(--red-ink);}
+.ui code{font-family:var(--mono);font-size:.75rem;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+/* Branch Creator: the fields drive the name below them */
+.gb-item{grid-template-columns:96px minmax(0,1fr);}
+.gb-out{display:flex;flex-direction:column;gap:8px;padding:14px;border-radius:12px;background:var(--bg-elev);}
+.gb-out-label{font-size:.75rem;font-weight:600;color:var(--muted2);}
+.gb-out-label+.gb-name,.gb-out-label+.gb-pr{margin-top:-2px;}
+.gb-name{font-family:var(--mono);font-size:.875rem;line-height:1.6;word-break:break-all;} /* taste-skill-ignore: a branch name is code */
+.gb-name{animation:gb-settle 160ms var(--ease-out);}
+@keyframes gb-settle{from{opacity:.55;}}
+.gb-wait{font-family:var(--sans);font-size:var(--g-note);color:var(--muted2);}
+.gb-name .gn-sep{color:var(--muted);padding:0 1px;}
+.gn-team{color:var(--purple-ink);}
+.gn-sprint{color:var(--amber-ink);}
+.gn-item{color:var(--accent-ink);}
+.gb-key{display:flex;flex-wrap:wrap;gap:4px 14px;margin-bottom:8px;font-size:.75rem;}
+.gb-len{margin-left:auto;color:var(--muted);font-variant-numeric:tabular-nums;}
+.gb-pr{font-size:var(--g-note);color:var(--text);word-break:break-word;}
+
+/* Code Merging Sheet: one row per file */
+.ui-files,.ui-branches{list-style:none;display:flex;flex-direction:column;gap:2px;border-radius:12px;overflow:hidden;}
+.ui-files li,.ui-branches li{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 12px;background:var(--surface2);}
+
+/* Branch Cleanup: ticked rows lit, locked rows dimmed */
+.ui-branches li{justify-content:flex-start;}
+.ui-branches .ui-state{margin-left:auto;}
+.ui-box{display:grid;place-items:center;flex:none;width:16px;height:16px;border-radius:5px;background:var(--surface3);}
+.ui-box .ic{width:12px;height:12px;color:#fff;}
+.ui-branches li.on{background:var(--accent-soft);}
+.ui-branches li.on .ui-box{background:var(--accent);}
+.ui-branches li.locked code{color:var(--muted2);}
+
+/* Sprint Insights: the six tabs as one table */
+.gi-tabs{border-radius:var(--r);background:var(--surface);overflow-x:auto;}
+.gi-tabs table{width:100%;border-collapse:collapse;font-size:var(--g-note);line-height:1.5;}
+.gi-tabs caption{caption-side:top;text-align:left;padding:16px 20px 4px;font-size:var(--g-body);font-weight:650;color:var(--text);}
+.gi-tabs th,.gi-tabs td{padding:12px 20px;text-align:left;vertical-align:top;}
+.gi-tabs thead th{font-size:.75rem;font-weight:600;color:var(--muted2);}
+.gi-tabs tbody tr:nth-child(odd){background:var(--surface2);}
+.gi-tabs tbody th{white-space:nowrap;font-weight:600;color:var(--text);}
+.gi-tabs tbody th .ic{display:inline-block;width:15px;height:15px;margin-right:8px;vertical-align:-2px;color:var(--accent2);}
+.gi-tabs td{color:var(--muted2);}
+.gi-tabs td:last-child{color:var(--text);}
+.gi-tabs .gi-when{white-space:nowrap;color:var(--accent-ink);}
+
+/* Your day: two tools side by side, each a short column */
+.gd-pair{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:48px;}
+.gd{display:flex;flex-direction:column;gap:24px;min-width:0;}
+/* The pair is narrow: its buttons say Open, and the heading beside them names the tool. */
+.gd .gt-open-name{display:none;}
+.ui-day{gap:12px;}
+.ui-seg{display:flex;gap:2px;padding:3px;border-radius:10px;background:var(--bg-elev);width:max-content;max-width:100%;}
+.ui-seg span{padding:5px 10px;border-radius:8px;color:var(--muted2);white-space:nowrap;}
+.ui-seg span.on{background:var(--surface3);color:var(--text);font-weight:600;}
+.ui-times{white-space:normal;font-variant-numeric:tabular-nums;line-height:1.7;}
+.ui-result{display:flex;flex-direction:column;gap:6px;}
+.ui-result div{display:flex;justify-content:space-between;gap:12px;}
+.ui-result dt{color:var(--muted2);}
+.ui-result dd{font-weight:650;font-variant-numeric:tabular-nums;}
+.ui-md{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;}
+.ui-md pre{margin:0;padding:10px;border-radius:9px;background:var(--bg-elev);box-shadow:var(--well);font-family:var(--mono);font-size:.75rem;line-height:1.6;white-space:pre-wrap;} /* taste-skill-ignore: Markdown source is code */
+.ui-md-out{padding:10px 4px;line-height:1.6;}
+.ui-md-out b{display:block;font-size:var(--g-body);margin-bottom:4px;}
+.ui-md-out ul{padding-left:1.2em;}
+
+.guide-foot p{max-width:70ch;font-size:var(--g-body);line-height:1.6;color:var(--muted2);}
+
+@media (max-width:1180px){
+  .gt-body,.gt-cols{gap:32px;}
+}
+@media (max-width:1060px){
+  /* One column: the picture comes straight after the intro, before the steps it illustrates. */
+  .gt-body{display:flex;flex-direction:column;align-items:stretch;gap:32px;}
+  .gt-text,.gt-figure{display:contents;}
+  .gt-intro{order:1;}
+  .gt-figure>figure{order:2;max-width:620px;}
+  .gt-text>.gt-list{order:3;}
+  .gt-figure>.gt-auto{order:4;}
+  .gt-notes-wrap{order:5;}
+  .gd-pair{grid-template-columns:minmax(0,1fr);gap:72px;}
+}
+@media (max-width:900px){
+  .guide{grid-template-columns:minmax(0,1fr);gap:24px;}
+  .guide-toc{
+    flex-direction:row;gap:6px;max-height:none;overflow-x:auto;overflow-y:visible;padding:10px 0;z-index:3;
+    top:-22px;background:var(--bg-elev);
+  }
+  .guide-toc-h{display:none;}
+  .guide-toc a{flex:none;white-space:nowrap;background:var(--surface);border-radius:var(--pill);padding:6px 12px;}
+  .guide-main{gap:88px;}
+  .guide-main section,.guide-group{scroll-margin-top:72px;}
+  .gt-cols{grid-template-columns:minmax(0,1fr);}
+}
+@media (max-width:700px){
+  .guide-start{grid-template-columns:minmax(0,1fr);gap:20px;}
+  .gi-tabs thead{display:none;}
+  .gi-tabs tr{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;padding:14px 16px;}
+  .gi-tabs th,.gi-tabs td{padding:0;}
+  .gi-tabs td:not(.gi-when){grid-column:1 / -1;}
+}
+@media (max-width:600px){
+  .guide{--g-title:2rem;--g-group:1.5rem;--g-tool:1.25rem;}
+  .guide-toc{top:-14px;}
+  .guide-main{gap:72px;}
+  .guide-hero{grid-template-columns:minmax(0,1fr);}
+  .guide-hero .btn-ghost{grid-column:1;grid-row:auto;justify-self:start;}
+  .guide-pick a{flex-direction:column;align-items:flex-start;gap:4px;}
+  .ui{padding:16px;}
+  .gb-item{grid-template-columns:minmax(0,1fr);}
+  .ui-md{grid-template-columns:minmax(0,1fr);}
+  /* A thumb needs 44px: links and buttons grow to it, and the builder's fields also take 16px text, below which
+     phones zoom the page when a field is tapped. */
+  .guide-toc a,.gt-open,.guide-hero .btn-ghost,.tour-actions>*{min-height:44px;}
+  .gt-open,.guide-hero .btn-ghost{padding-inline:18px;}
+  input.ui-input{min-height:44px;font-size:1rem;}
+  .tb-guide-label{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;}
+}
+
+/* ─── HEADER: the Guide button beside the connection label ─── */
+.tb-btn.tb-guide{width:auto;gap:6px;padding:0 12px;font-size:var(--fs-meta);font-weight:600;text-decoration:none;}
+.tb-btn.tb-guide.on{background:var(--accent-soft);color:var(--accent-ink);}
+@media (max-width:600px){.tb-btn.tb-guide{width:34px;padding:0;}}
+
+/* ─── FIRST-VISIT TOUR ───
+   The screen dims around the part a step talks about: the hole's huge outer spread darkens everything else, so the
+   part stays lit, while the veil above the page takes every click. app.js (devKit.tour) places the hole and the note
+   by transform. With nothing to point at (tour-free), the hole shrinks to a point behind the note, which sits in the
+   middle, or at the bottom on a phone.
+   The tour fades in once; from step to step the hole and the note glide to the next part. app.js adds tour-ready
+   after the first place and takes it off while the window resizes, so opening and resizing never glide. */
+.tour{position:fixed;inset:0;z-index:900;animation:tour-in 220ms var(--ease-out);}
+@keyframes tour-in{from{opacity:0;}}
+.tour-veil{position:absolute;inset:0;}
+.tour-hole{ /* taste-skill-ignore: the tour floats over the page */
+  position:fixed;left:0;top:0;border-radius:12px;pointer-events:none;
+  box-shadow:0 0 0 2px var(--accent),0 0 0 200vmax rgba(4,4,8,.72); /* taste-skill-ignore: the tour floats over the page */
+}
+.tour-free .tour-hole{box-shadow:0 0 0 200vmax rgba(4,4,8,.72);} /* taste-skill-ignore: the tour floats over the page */
+.tour-card{ /* taste-skill-ignore: the tour floats over the page */
+  position:fixed;left:0;top:0;width:min(340px,calc(100vw - 32px));display:flex;flex-direction:column;gap:10px;padding:20px;
+  border-radius:var(--r);background:var(--surface2);box-shadow:var(--elev-3);outline:none; /* taste-skill-ignore: the tour floats over the page */
+}
+.tour-free .tour-card{width:min(400px,calc(100vw - 32px));}
+.tour-ready .tour-hole{transition:transform 280ms var(--ease-in-out),width 280ms var(--ease-in-out),height 280ms var(--ease-in-out);}
+.tour-ready .tour-card{transition:transform 280ms var(--ease-in-out);}
+.tour-step{display:flex;flex-direction:column;gap:10px;}
+.tour-count{font-size:var(--fs-meta);color:var(--accent-ink);font-variant-numeric:tabular-nums;}
+.tour-card h2{font-family:var(--display);font-size:1.1875rem;font-weight:620;letter-spacing:-.01em;line-height:1.25;}
+.tour-text{font-size:.875rem;line-height:1.55;color:var(--text);}
+/* Each step's words come in with a short fade while the note moves, so the change of text is seen. */
+.tour-card h2,.tour-text{animation:tour-text 200ms var(--ease-out);}
+@keyframes tour-text{from{opacity:0;}}
+.tour-actions{display:flex;gap:8px;align-items:center;margin-top:6px;}
+.tour-actions>*{flex:none;width:auto;white-space:nowrap;}
+.tour-skip{margin-right:auto;}
+
+/* Reduce motion: nothing travels. Fades stay, as they move nothing. */
+@media (prefers-reduced-motion:reduce){
+  .guide{--nudge:0px;}
+  .shell:has(.guide){scroll-behavior:auto;}
+  .tour-ready .tour-hole,.tour-ready .tour-card{transition:none;}
+}

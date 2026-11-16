@@ -8,7 +8,7 @@ namespace DevKit.Web.Services;
 
 /// <summary>
 /// Where <see cref="SettingsService"/> keeps the settings text: the per-user file in local mode, or in shared mode
-/// the signed-in person's own browser (<see cref="ClientSettingsStore"/>).
+/// the DevKit server's settings folder, for the signed-in person alone (<see cref="PersonSettingsStore"/>).
 /// </summary>
 internal interface ISettingsStore
 {
@@ -17,6 +17,12 @@ internal interface ISettingsStore
 
     /// <summary>How the PAT is kept inside the stored text.</summary>
     PatAtRest Pat => PatAtRest.Dpapi;
+
+    /// <summary>
+    /// Who the settings belong to, as a tag that names nobody, in shared mode once known; null for the settings file,
+    /// whose one person needs no share of anything.
+    /// </summary>
+    string? Person => null;
 
     /// <summary>What a person is told when a save failed; null for the settings file's own message.</summary>
     string? SaveFailedMessage => null;
@@ -27,6 +33,12 @@ internal interface ISettingsStore
     /// <summary>What a person is told when the stored text could not be read now, so nothing is saved over it; null for the settings file's own message.</summary>
     string? ReadFailedMessage => null;
 
+    /// <summary>
+    /// What a person is told when the stored text opened but is not settings this build can read (a later DevKit's),
+    /// so nothing is saved over it; null to set it aside and restore the backup, as for a damaged settings file.
+    /// </summary>
+    string? UnparsableMessage => null;
+
     /// <summary>The stored text, or null when there is none yet.</summary>
     string? ReadText();
 
@@ -35,6 +47,13 @@ internal interface ISettingsStore
 
     /// <summary>Replaces the stored text; the version replaced becomes the backup where one is kept.</summary>
     void Write(string text);
+
+    /// <summary>
+    /// Saves <paramref name="text"/>, which was <paramref name="previousText"/> before this change (null when not known).
+    /// A store others can save to meanwhile keeps their changes and adds only what changed here; the settings file,
+    /// which only this DevKit writes, is replaced.
+    /// </summary>
+    void Write(string text, string? previousText) => Write(text);
 
     /// <summary>Removes the previous version kept by the last save; nothing happens when there is none.</summary>
     void DeleteBackup();

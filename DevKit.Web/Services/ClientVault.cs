@@ -1,10 +1,8 @@
 using System.Buffers.Text;
 using System.Diagnostics.CodeAnalysis;
 using System.IO.Compression;
-using System.Net.Mime;
 using System.Security.Cryptography;
 using System.Text;
-using Microsoft.AspNetCore.Mvc;
 
 namespace DevKit.Web.Services;
 
@@ -30,27 +28,25 @@ internal sealed class PersonKey
 internal sealed record OpenedSettings(string Text, PersonKey Key);
 
 /// <summary>
-/// Shared mode keeps each person's settings, PAT included, only on their own PC. They are sealed here with AES-256-GCM
-/// under a key of the person's own, bound to their Windows account, and kept by their browser in cookies of this
-/// machine's DNS domain. Their key goes with them, locked by the domain to the account DevKit runs as, so every DevKit
-/// server in the domain running as that account opens them, and DevKit can move to another server with nothing copied
-/// and nobody entering anything again. The server keeps no key and no settings. The cookies go only to
-/// <see cref="Address"/>, so other sites in the domain never receive them, and are HttpOnly, so a page's scripts only
-/// carry the sealed text between the circuit and this address. A browser that reaches DevKit by a name outside the
-/// domain (an IP address, the short machine name) keeps them for that name alone.
+/// Seals each person's settings, PAT included, for shared mode: AES-256-GCM under a key of the person's own, bound to
+/// their Windows account, and that key locked by the domain to the account DevKit runs as. The sealed text is kept on
+/// the DevKit server (<see cref="PersonVault"/>), and opens only on a DevKit running as that account, for that person.
+/// <para>
+/// Sealing keeps the settings secret, but does not show who sealed them: anyone can lock a key to the account DevKit
+/// runs as, as anyone can encrypt to a public key. So sealed text is only trusted where DevKit alone can write it, the
+/// server's settings folder. Earlier versions kept it in each person's browser, in cookies of this machine's DNS domain
+/// that go only to <see cref="Address"/>; those are never read, only cleared (<see cref="ClientVaultEndpoints"/>).
+/// </para>
 /// </summary>
 internal sealed class ClientVault
 {
     public const string Address = "/devkit-vault";
 
-    // A cookie's name and value may hold 4,096 bytes: each piece stays well below that, and all of them below Kestrel's
-    // 32 KB of request headers.
+    // Earlier versions kept the sealed text in cookies of at most this many pieces, each well below a cookie's 4,096
+    // bytes; sealed settings stay within what those held.
     internal const int PieceChars = 3_800;
     internal const int MaxPieces = 6;
     internal const int MaxSealedChars = PieceChars * MaxPieces;
-
-    /// <summary>How long a browser keeps the cookies after a page last read or wrote them; browsers keep none longer.</summary>
-    internal static readonly TimeSpan CookieLifetime = TimeSpan.FromDays(400);
 
     private const string FormatVersion = "v2";
     private const char PartSeparator = '.';
@@ -84,7 +80,7 @@ internal sealed class ClientVault
         return new PersonKey(value, Base64Url.EncodeToString(_keyLock.Lock(value)));
     }
 
-    /// <summary>The settings text sealed for <paramref name="user"/> under their <paramref name="key"/>. Throws <see cref="IOException"/> when it is too large for a browser to keep.</summary>
+    /// <summary>The settings text sealed for <paramref name="user"/> under their <paramref name="key"/>. Throws <see cref="IOException"/> when it is larger than settings ever are.</summary>
     public string Seal(SignedInUser user, PersonKey key, string text)
     {
         ArgumentNullException.ThrowIfNull(user);
@@ -101,7 +97,7 @@ internal sealed class ClientVault
         var sealedText = string.Join(PartSeparator, FormatVersion, _keyLock.Account, key.Locked, Base64Url.EncodeToString(sealedBytes));
         if (sealedText.Length > MaxSealedChars)
         {
-            throw new IOException($"The settings are too large for a browser to keep: {sealedText.Length} characters sealed, at most {MaxSealedChars}.");
+            throw new IOException($"The settings are too large to keep: {sealedText.Length} characters sealed, at most {MaxSealedChars}.");
         }
 
         return sealedText;
@@ -118,13 +114,13 @@ internal sealed class ClientVault
         ArgumentNullException.ThrowIfNull(user);
         if (!TrySplit(sealedText, out var parts))
         {
-            throw new CryptographicException("The settings kept in the browser are not in the form DevKit seals them in.");
+            throw new CryptographicException("The settings are not in the form DevKit seals them in.");
         }
 
         if (parts.Account != _keyLock.Account)
         {
             throw new CryptographicException(
-                $"The settings kept in the browser were sealed by DevKit running as another Windows account ({parts.Account}); this DevKit runs as {_keyLock.Account}.");
+                $"The settings were sealed by DevKit running as another Windows account ({parts.Account}); this DevKit runs as {_keyLock.Account}.");
         }
 
         var key = new PersonKey(_keyLock.Unlock(Base64Url.DecodeFromChars(parts.LockedKey)), parts.LockedKey);
@@ -144,44 +140,19 @@ internal sealed class ClientVault
         return new OpenedSettings(Decompress(plain), key);
     }
 
-    /// <summary>Whether <paramref name="sealedText"/> has the shape <see cref="Seal"/> gives it on a DevKit running as this account; checked before a browser keeps it.</summary>
-    public bool IsWellFormed([NotNullWhen(true)] string? sealedText) =>
-        sealedText is { Length: <= MaxSealedChars }
-        && TrySplit(sealedText, out var parts)
-        && parts.Account == _keyLock.Account;
+    /// <summary>Whether <paramref name="text"/> has the shape <see cref="Seal"/> gives sealed settings, on any DevKit.</summary>
+    internal static bool HasSealedShape([NotNullWhen(true)] string? text) =>
+        text is { Length: > 0 and <= MaxSealedChars } && TrySplit(text, out _);
 
-    /// <summary>The sealed settings the browser sent for <paramref name="user"/>, or null when it keeps none.</summary>
-    public static string? ReadFrom(IRequestCookieCollection cookies, SignedInUser user)
-    {
-        ArgumentNullException.ThrowIfNull(cookies);
-        var name = CookieNameFor(user);
-        var sealedText = new StringBuilder();
-        for (var piece = 0; piece < MaxPieces && cookies.TryGetValue(name + piece, out var value); piece++)
-        {
-            sealedText.Append(value);
-        }
-
-        return sealedText.Length == 0 ? null : sealedText.ToString();
-    }
-
-    /// <summary>
-    /// Has the browser keep <paramref name="sealedText"/> for <paramref name="user"/> for another
-    /// <see cref="CookieLifetime"/>, in as many cookies as it takes, and drop pieces left from longer settings.
-    /// </summary>
-    public void WriteTo(HttpContext context, SignedInUser user, string sealedText)
+    /// <summary>Has the browser drop every cookie an earlier DevKit kept <paramref name="user"/>'s settings in.</summary>
+    public void Clear(HttpContext context, SignedInUser user)
     {
         ArgumentNullException.ThrowIfNull(context);
-        ArgumentNullException.ThrowIfNull(sealedText);
         var name = CookieNameFor(user);
         var options = CookieOptionsFor(context);
         for (var piece = 0; piece < MaxPieces; piece++)
         {
-            var start = piece * PieceChars;
-            if (start < sealedText.Length)
-            {
-                context.Response.Cookies.Append(name + piece, sealedText.Substring(start, Math.Min(PieceChars, sealedText.Length - start)), options);
-            }
-            else if (context.Request.Cookies.ContainsKey(name + piece))
+            if (context.Request.Cookies.ContainsKey(name + piece))
             {
                 context.Response.Cookies.Delete(name + piece, options);
             }
@@ -196,10 +167,13 @@ internal sealed class ClientVault
         _domain.Length > 0 && host.EndsWith("." + _domain, StringComparison.OrdinalIgnoreCase) ? _domain : null;
 
     /// <summary>The first part of each cookie's name, followed by its piece number: a hash, so no name or identifier shows.</summary>
-    internal static string CookieNameFor(SignedInUser user)
+    internal static string CookieNameFor(SignedInUser user) => CookiePrefix + PersonTag(user) + "-";
+
+    /// <summary>What names a person's settings wherever they are kept: 16 hex digits of a hash, so no name or identifier shows.</summary>
+    internal static string PersonTag(SignedInUser user)
     {
         ArgumentNullException.ThrowIfNull(user);
-        return CookiePrefix + Convert.ToHexString(user.IdHash(), 0, CookieUserHashBytes).ToLowerInvariant() + "-";
+        return Convert.ToHexString(user.IdHash(), 0, CookieUserHashBytes).ToLowerInvariant();
     }
 
     private CookieOptions CookieOptionsFor(HttpContext context) => new()
@@ -209,7 +183,6 @@ internal sealed class ClientVault
         HttpOnly = true,
         Secure = context.Request.IsHttps,
         SameSite = SameSiteMode.Strict,
-        MaxAge = CookieLifetime,
         IsEssential = true
     };
 
@@ -253,7 +226,7 @@ internal sealed class ClientVault
         {
             if (text.Length + read > MaxTextBytes)
             {
-                throw new CryptographicException($"The settings kept in the browser open to more than {MaxTextBytes} bytes.");
+                throw new CryptographicException($"The sealed settings open to more than {MaxTextBytes} bytes.");
             }
 
             text.Write(buffer, 0, read);
@@ -263,58 +236,30 @@ internal sealed class ClientVault
     }
 }
 
-/// <summary>The address a page's script reads and writes the signed-in person's sealed settings through (<see cref="ClientVault"/>).</summary>
+/// <summary>
+/// The address a page has the browser drop the settings an earlier DevKit kept in its cookies through. They are never
+/// read: a cookie cannot show that DevKit sealed it, since anyone can seal settings that open as someone else's.
+/// </summary>
 internal static class ClientVaultEndpoints
 {
-    // Room for the JSON around the sealed text.
-    private const int RequestOverheadBytes = 1_024;
-
     public static void MapClientVaultEndpoints(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
-        app.MapGet(ClientVault.Address, Read);
-        app.MapPost(ClientVault.Address, Write)
-            .WithMetadata(new RequestSizeLimitAttribute(ClientVault.MaxSealedChars + RequestOverheadBytes));
+        app.MapDelete(ClientVault.Address, Clear);
     }
 
-    /// <summary>The sealed settings this browser keeps for the person signed in, which it then keeps for another <see cref="ClientVault.CookieLifetime"/>.</summary>
-    internal static IResult Read(HttpContext context, ClientVault vault, OwnerAccount owner)
+    /// <summary>Has this browser drop the settings an earlier DevKit kept in its cookies for the person signed in.</summary>
+    internal static IResult Clear(HttpContext context, ClientVault vault, OwnerAccount owner)
     {
         ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(vault);
         if (SignedInUser.From(context.User, owner.Id) is not { } user)
         {
             return Results.Unauthorized();
         }
 
         context.Response.Headers.CacheControl = "no-store";
-        if (ClientVault.ReadFrom(context.Request.Cookies, user) is not { } sealedText)
-        {
-            return Results.NoContent();
-        }
-
-        vault.WriteTo(context, user, sealedText);
-        return Results.Text(sealedText, MediaTypeNames.Text.Plain);
-    }
-
-    /// <summary>Has this browser keep sealed settings for the person signed in; anything but text this server sealed is refused.</summary>
-    internal static IResult Write(HttpContext context, ClientVault vault, OwnerAccount owner, [FromBody] VaultWrite body)
-    {
-        ArgumentNullException.ThrowIfNull(context);
-        if (SignedInUser.From(context.User, owner.Id) is not { } user)
-        {
-            return Results.Unauthorized();
-        }
-
-        context.Response.Headers.CacheControl = "no-store";
-        if (!vault.IsWellFormed(body.Sealed))
-        {
-            return Results.BadRequest();
-        }
-
-        vault.WriteTo(context, user, body.Sealed);
+        vault.Clear(context, user);
         return Results.NoContent();
     }
 }
-
-/// <summary>What a page posts to <see cref="ClientVault.Address"/>.</summary>
-internal sealed record VaultWrite(string? Sealed);

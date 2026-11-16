@@ -101,6 +101,11 @@ public static class Icons
         "<path class='g-back g-up' d='M12 12V3A9 9 0 0 1 19.79 16.5Z'/><circle cx='12' cy='12' r='9'/>" +
         "<path d='M12 7v5l3.5 2'/>";
 
+    /// <summary>An open book, for the Guide.</summary>
+    public const string Guide =
+        "<path class='g-back' d='M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2z'/>" +
+        "<path d='M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2z'/><path d='M22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z'/>";
+
     /// <summary>A page carrying the Markdown mark (M and a down arrow).</summary>
     public const string ToolMarkdown =
         "<path class='g-back' d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'/>" +

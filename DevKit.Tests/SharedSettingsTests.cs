@@ -11,23 +11,23 @@ using Xunit;
 namespace DevKit.Tests;
 
 /// <summary>
-/// Shared mode keeps each person's settings and PAT only in their own browser, sealed for their Windows account under
-/// a key of their own. They come back on every later page and from every DevKit server running as the same account,
-/// with nothing copied to it, so DevKit can move to another server with nobody entering anything again. The server
-/// keeps nothing, nothing the browser keeps is readable, and a domain that does not answer never costs anyone their
+/// Shared mode keeps each person's settings and PAT on the DevKit server, in its settings folder, sealed for their
+/// Windows account under a key of their own. They come back on every later page, in every browser, after every
+/// redeploy, and on every DevKit server running as the same account that has the folder, with no key copied. Nothing
+/// kept is readable, nothing is kept in the browser, and a domain that does not answer never costs anyone their
 /// settings.
 /// </summary>
 [SupportedOSPlatform("windows")]
-public sealed class ClientSettingsTests : SharedSettingsScratch
+public sealed class SharedSettingsTests : SharedSettingsScratch
 {
     [Fact]
-    public async Task Settings_come_back_on_every_later_page_in_the_same_browser()
+    public async Task Settings_come_back_on_every_later_page_in_any_browser()
     {
         var alice = await SignedInAsync(Alice);
         Assert.True(alice.SaveTfs(FixedUrl, AlicePat));
         alice.TeamName = "TEAM-A";
 
-        var later = await SignedInAsync(Alice);
+        var later = await SignedInAsync(Alice, new FakeBrowserStorage());
 
         Assert.Equal(AlicePat, later.Tfs.Pat);
         Assert.Equal("TEAM-A", later.TeamName);
@@ -36,7 +36,7 @@ public sealed class ClientSettingsTests : SharedSettingsScratch
     }
 
     [Fact]
-    public async Task Settings_come_back_from_another_DevKit_server_running_as_the_same_account_with_nothing_copied()
+    public async Task Settings_come_back_on_another_DevKit_server_running_as_the_same_account_with_no_key_copied()
     {
         var alice = await SignedInAsync(Alice);
         alice.SaveTfs(FixedUrl, AlicePat);
@@ -53,14 +53,14 @@ public sealed class ClientSettingsTests : SharedSettingsScratch
     public async Task A_server_running_as_another_account_starts_on_defaults_and_keeps_them_until_a_save_here()
     {
         (await SignedInAsync(Alice)).SaveTfs(FixedUrl, AlicePat);
-        var kept = Browser.Vault;
+        var kept = KeptFor(Alice);
         var otherAccount = OtherServer(AnotherAccount);
 
         var alice = await SignedInAsync(Alice, vault: otherAccount);
 
         Assert.Equal("", alice.Tfs.Pat);
         Assert.Contains("another Windows account", alice.LoadProblem, StringComparison.Ordinal);
-        Assert.Equal(kept, Browser.Vault);
+        Assert.Equal(kept, KeptFor(Alice));
         Assert.Equal(AlicePat, (await SignedInAsync(Alice)).Tfs.Pat);
 
         Assert.True(alice.SaveTfs(FixedUrl, BobPat));
@@ -73,7 +73,7 @@ public sealed class ClientSettingsTests : SharedSettingsScratch
         var saved = await SignedInAsync(Alice);
         saved.SaveTfs(FixedUrl, AlicePat);
         saved.TeamName = "TEAM-A";
-        var kept = Browser.Vault;
+        var kept = KeptFor(Alice);
         KeyLock.Unavailable = true;
 
         var page = OpenPage(Alice);
@@ -82,7 +82,7 @@ public sealed class ClientSettingsTests : SharedSettingsScratch
 
         Assert.Equal(page.Store.ReadFailedMessage, page.Settings.LoadProblem);
         Assert.Equal(page.Store.ReadFailedMessage, page.Settings.LastSaveError);
-        Assert.Equal(kept, Browser.Vault);
+        Assert.Equal(kept, KeptFor(Alice));
 
         KeyLock.Unavailable = false;
         var later = await SignedInAsync(Alice);
@@ -99,7 +99,7 @@ public sealed class ClientSettingsTests : SharedSettingsScratch
         alice.TeamName = "TEAM-A";
 
         Assert.NotNull(alice.LastSaveError);
-        Assert.Null(Browser.Vault);
+        Assert.Null(KeptFor(Alice));
     }
 
     [Fact]
@@ -107,20 +107,21 @@ public sealed class ClientSettingsTests : SharedSettingsScratch
     {
         var alice = await SignedInAsync(Alice);
         alice.TeamName = "TEAM-A";
-        var aliceKey = LockedKey(Browser.Vault);
+        var aliceKey = LockedKey(KeptFor(Alice));
         alice.TeamName = "TEAM-B";
         (await SignedInAsync(Alice)).TeamName = "TEAM-C";
-        var bobsBrowser = new FakeBrowserStorage();
-        (await SignedInAsync(Bob, bobsBrowser)).TeamName = "TEAM-B";
+        (await SignedInAsync(Bob)).TeamName = "TEAM-B";
 
-        Assert.Equal(aliceKey, LockedKey(Browser.Vault));
-        Assert.NotEqual(aliceKey, LockedKey(bobsBrowser.Vault));
+        Assert.Equal(aliceKey, LockedKey(KeptFor(Alice)));
+        Assert.NotEqual(aliceKey, LockedKey(KeptFor(Bob)));
     }
 
     [Fact]
     public async Task Another_accounts_settings_do_not_open_as_this_account()
     {
         (await SignedInAsync(Alice)).SaveTfs(FixedUrl, AlicePat);
+        // Alice's file in Bob's place, as someone with access to the folder might put it.
+        Keep(Bob, KeptFor(Alice)!);
 
         var bob = await SignedInAsync(Bob);
 
@@ -130,18 +131,25 @@ public sealed class ClientSettingsTests : SharedSettingsScratch
     }
 
     [Fact]
-    public async Task Nothing_readable_is_kept_in_the_browser_and_nothing_on_the_server()
+    public async Task Nothing_readable_is_kept_on_the_server_and_nothing_in_the_browser()
     {
         var alice = await SignedInAsync(Alice);
         alice.SaveTfs(FixedUrl, AlicePat);
         alice.TeamName = "TEAM-A";
 
-        Assert.Matches("^v2\\.[0-9a-f]{8}\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$", Browser.Vault);
-        foreach (var secret in new[] { AlicePat, "TEAM-A", "tfs.example.test", Alice.Name, Alice.Id })
+        Assert.Matches("^v2\\.[0-9a-f]{8}\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$", KeptFor(Alice));
+        foreach (var file in Directory.GetFiles(ServerPath))
         {
-            Assert.DoesNotContain(secret, Browser.Vault, StringComparison.Ordinal);
+            var text = await File.ReadAllTextAsync(file);
+            foreach (var secret in new[] { AlicePat, "TEAM-A", "tfs.example.test", Alice.Name, Alice.Id, "alice" })
+            {
+                Assert.DoesNotContain(secret, text, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain(secret, Path.GetFileName(file), StringComparison.OrdinalIgnoreCase);
+            }
         }
 
+        Assert.Null(Browser.Vault);
+        Assert.Empty(Browser.Items);
         Assert.False(Directory.Exists(UsersPath));
     }
 
@@ -150,7 +158,7 @@ public sealed class ClientSettingsTests : SharedSettingsScratch
     {
         (await SignedInAsync(Alice)).SaveTfs(FixedUrl, AlicePat);
 
-        var stored = JsonSerializer.Deserialize<UserSettings>(Vault.Open(Alice, Browser.Vault!).Text)!;
+        var stored = JsonSerializer.Deserialize<UserSettings>(Vault.Open(Alice, KeptFor(Alice)!).Text)!;
 
         Assert.Equal(AlicePat, stored.Tfs.Pat);
     }
@@ -176,31 +184,32 @@ public sealed class ClientSettingsTests : SharedSettingsScratch
     }
 
     [Fact]
-    public async Task A_save_the_browser_does_not_keep_is_reported()
+    public async Task A_save_to_a_settings_folder_opened_to_others_is_refused_and_reported()
     {
         var page = OpenPage(Alice);
         await page.Session.StartAsync();
-        Browser.RefusesVault = true;
+        PersonVaultTests.OpenToEveryone(ServerPath);
 
         page.Settings.TeamName = "TEAM-A";
 
-        Assert.False(await page.Store.LastWriteAsync());
+        Assert.False(await page.Settings.SaveAndConfirmAsync());
         Assert.Equal(page.Store.SaveFailedMessage, page.Settings.LastSaveError);
-        Assert.Null(Browser.Vault);
+        Server.Secure();
+        Assert.Null(KeptFor(Alice));
     }
 
     [Fact]
-    public async Task Settings_too_large_for_a_browser_are_not_saved_and_say_so()
+    public async Task Settings_larger_than_settings_ever_are_not_saved_and_say_so()
     {
         var alice = await SignedInAsync(Alice);
         alice.TeamName = "TEAM-A";
-        var kept = Browser.Vault;
+        var kept = KeptFor(Alice);
 
-        // Random text barely compresses, so this seals to more than a browser keeps.
+        // Random text barely compresses, so this seals to more than the limit.
         alice.TeamName = Convert.ToBase64String(RandomNumberGenerator.GetBytes(ClientVault.MaxSealedChars));
 
         Assert.NotNull(alice.LastSaveError);
-        Assert.Equal(kept, Browser.Vault);
+        Assert.Equal(kept, KeptFor(Alice));
     }
 
     [Fact]
@@ -258,6 +267,73 @@ public sealed class ClientSettingsTests : SharedSettingsScratch
 
         var sent = Assert.Single(tfs.Sent);
         Assert.Equal("Basic " + Convert.ToBase64String(Encoding.ASCII.GetBytes(":" + AlicePat)), sent.Authorization);
+    }
+
+    [Fact]
+    public async Task A_page_opened_earlier_never_undoes_what_another_page_saved_meanwhile()
+    {
+        var openedEarlier = await SignedInAsync(Alice);
+        var other = await SignedInAsync(Alice);
+        Assert.True(other.SaveTfs(FixedUrl, AlicePat));
+        other.TeamName = "TEAM-A";
+
+        openedEarlier.DashboardView = DashboardView.List;
+
+        var later = await SignedInAsync(Alice);
+        Assert.Equal("TEAM-A", later.TeamName);
+        Assert.Equal(AlicePat, later.Tfs.Pat);
+        Assert.Equal(DashboardView.List, later.DashboardView);
+        Assert.Null(openedEarlier.LastSaveError);
+    }
+
+    [Fact]
+    public async Task The_first_saves_of_two_pages_are_both_kept()
+    {
+        var first = await SignedInAsync(Alice);
+        var second = await SignedInAsync(Alice);
+
+        first.TeamName = "TEAM-A";
+        second.DashboardView = DashboardView.List;
+
+        var later = await SignedInAsync(Alice);
+        Assert.Equal("TEAM-A", later.TeamName);
+        Assert.Equal(DashboardView.List, later.DashboardView);
+        Assert.Null(later.LoadProblem);
+    }
+
+    [Fact]
+    public async Task A_choice_a_later_DevKit_saved_stays_through_saves_here()
+    {
+        (await SignedInAsync(Alice)).TeamName = "TEAM-A";
+        var opened = Vault.Open(Alice, KeptFor(Alice)!);
+        Keep(Alice, Vault.Seal(Alice, opened.Key,
+            opened.Text.Replace("\"DashboardView\": \"Grid\"", "\"DashboardView\": \"Tiles\"", StringComparison.Ordinal)));
+
+        var alice = await SignedInAsync(Alice);
+        alice.TeamName = "TEAM-B";
+
+        Assert.Null(alice.LoadProblem);
+        Assert.Equal(DashboardView.Grid, alice.DashboardView);
+        var kept = Vault.Open(Alice, KeptFor(Alice)!).Text;
+        Assert.Contains("\"DashboardView\": \"Tiles\"", kept, StringComparison.Ordinal);
+        Assert.Contains("TEAM-B", kept, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Settings_this_DevKit_cannot_read_are_kept_and_nothing_is_saved_over_them()
+    {
+        (await SignedInAsync(Alice)).TeamName = "TEAM-A";
+        var key = Vault.Open(Alice, KeptFor(Alice)!).Key;
+        Keep(Alice, Vault.Seal(Alice, key, """["settings in a later form"]"""));
+        var kept = KeptFor(Alice);
+        var page = OpenPage(Alice);
+        await page.Session.StartAsync();
+
+        page.Settings.TeamName = "TEAM-B";
+
+        Assert.Equal(page.Store.UnparsableMessage, page.Settings.LoadProblem);
+        Assert.Equal(page.Store.UnparsableMessage, page.Settings.LastSaveError);
+        Assert.Equal(kept, KeptFor(Alice));
     }
 
     /// <summary>The locked key the sealed text carries.</summary>

@@ -45,11 +45,28 @@ public static class TfsConnectionForm
             : Candidate.Refused(url, "Enter the Personal Access Token again: the stored one belongs to a different server URL.");
     }
 
-    /// <summary>The server to try with the Windows account DevKit runs as. No token is involved.</summary>
-    public static Candidate ChooseWindowsSignIn(string? urlInput) =>
-        TryValidateUrl(urlInput, out var url, out var error)
-            ? new Candidate(url, "", "", TfsAuthMode.Windows)
-            : Candidate.Refused(url, error);
+    /// <summary>What the form says when Windows sign-in is asked for over plain http to another machine.</summary>
+    public const string WindowsSignInNeedsHttps =
+        "Windows sign-in needs an https server address: over plain http, your Windows sign-in could be passed on to another server. Use the https address, or a Personal Access Token.";
+
+    /// <summary>
+    /// The server to try with the Windows account DevKit runs as. No token is involved, but the Windows sign-in itself
+    /// is: over plain http to another machine it could be relayed, so such an address is refused.
+    /// </summary>
+    public static Candidate ChooseWindowsSignIn(string? urlInput)
+    {
+        if (!TryValidateUrl(urlInput, out var url, out var error))
+        {
+            return Candidate.Refused(url, error);
+        }
+
+        return IsPlainHttpToAnotherMachine(url)
+            ? Candidate.Refused(url, WindowsSignInNeedsHttps)
+            : new Candidate(url, "", "", TfsAuthMode.Windows);
+    }
+
+    private static bool IsPlainHttpToAnotherMachine(string url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttp && !uri.IsLoopback;
 
     public static bool TryValidateUrl(string? raw, out string normalized, out string error)
     {
@@ -73,7 +90,7 @@ public static class TfsConnectionForm
     // password, but its exchange can be relayed, and everything read from TFS is readable too.
     public static string InsecureUrlWarning(string url, TfsAuthMode auth = TfsAuthMode.Pat)
     {
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttp || uri.IsLoopback)
+        if (!IsPlainHttpToAnotherMachine(url))
         {
             return "";
         }

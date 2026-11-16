@@ -51,6 +51,7 @@ public partial class SettingsService
 
         if (text is null)
         {
+            StartedEmpty = true;
             return;
         }
 
@@ -61,6 +62,15 @@ public partial class SettingsService
                 SaveDroppingOldPat();
             }
 
+            return;
+        }
+
+        if (_store.UnparsableMessage is { } keepThem)
+        {
+            // Settings that opened but are not in a form this build reads (a later DevKit's) are the person's own:
+            // saving defaults over them would lose them.
+            _saveBlockedReason = keepThem;
+            LoadProblem = keepThem;
             return;
         }
 

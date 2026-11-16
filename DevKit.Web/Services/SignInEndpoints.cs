@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Security.Claims;
 using DevKit.Web.Components;
@@ -20,16 +21,33 @@ internal static class SignInEndpoints
         app.MapGet(SignInPath, (HttpContext context, SignInFlow flow, [FromQuery(Name = ReturnUrlParameter)] string? returnUrl) =>
                 flow.ShowPage(context, returnUrl))
             .AllowAnonymous();
-        app.MapGet(SignInFlow.WindowsPath, (HttpContext context, SignInFlow flow, [FromQuery(Name = ReturnUrlParameter)] string? returnUrl) =>
-                flow.SignInWithWindowsAsync(context, returnUrl))
-            .AllowAnonymous()
-            .RequireRateLimiting(HostedAccess.WindowsSignInRateLimitPolicy);
+        MapWindowsSignIn(app, SignInFlow.WindowsPath, WindowsSignInStart.Chosen);
+        MapWindowsSignIn(app, SignInFlow.AutomaticPath, WindowsSignInStart.Automatic);
         app.MapPost(SignInFlow.PasswordPath, (HttpContext context, SignInFlow flow, [FromForm] PasswordSignInForm form) =>
                 flow.SignInWithPasswordAsync(context, form))
             .AllowAnonymous()
             .RequireRateLimiting(HostedAccess.PasswordSignInRateLimitPolicy);
         app.MapPost(SignInFlow.SignOutPath, (HttpContext context, SignInFlow flow) => flow.SignOutAsync(context));
     }
+
+    private static void MapWindowsSignIn(WebApplication app, string path, WindowsSignInStart start) =>
+        app.MapGet(path, (HttpContext context, SignInFlow flow, [FromQuery(Name = ReturnUrlParameter)] string? returnUrl) =>
+                flow.SignInWithWindowsAsync(context, returnUrl, start))
+            .AllowAnonymous()
+            .RequireRateLimiting(HostedAccess.WindowsSignInRateLimitPolicy);
+}
+
+/// <summary>Who started a Windows single sign-on, which decides what the sign-in page says when the browser does not answer.</summary>
+internal enum WindowsSignInStart
+{
+    /// <summary>The person pressed "Sign in with your Windows account", so the page says it did not work.</summary>
+    Chosen,
+
+    /// <summary>
+    /// DevKit, for a page that needs a sign-in: a browser that signs in with Windows by itself goes straight on to the
+    /// page, and any other just gets the sign-in page, with no error, as nobody asked for anything yet.
+    /// </summary>
+    Automatic
 }
 
 /// <summary>What the "sign in as someone else" form posts.</summary>
@@ -50,6 +68,10 @@ internal sealed class PasswordSignInForm
 internal sealed class SignInFlow
 {
     public const string WindowsPath = "/signin/windows";
+
+    /// <summary>Where a page that needs a sign-in sends the browser: Windows sign-in, tried without a click.</summary>
+    public const string AutomaticPath = "/signin/automatic";
+
     public const string PasswordPath = "/signin/password";
     public const string SignOutPath = "/signout";
 
@@ -63,23 +85,38 @@ internal sealed class SignInFlow
     private const string RefusedSignOutEvent = "refused sign-out";
     private const string RefusedSessionEvent = "refused session";
     private const string NoSingleSignOnMessage = "This browser did not sign in with your Windows account.";
+    private const string NotAllowedMessage =
+        "Your Windows account is not one of those allowed to use this DevKit. Ask whoever runs it to add you.";
     private const string NoPasswordOverHttpMessage =
         "A password cannot be typed here: this page is not served over https, so it would cross the network unencrypted.";
+
+    // What the sign-in page says when the browser does not answer Windows sign-in, by who started it.
+    private static readonly Dictionary<WindowsSignInStart, string> NoAnswerMessages = new()
+    {
+        [WindowsSignInStart.Chosen] = NoSingleSignOnMessage,
+        [WindowsSignInStart.Automatic] = ""
+    };
+
+    // A copied cookie used from another address is refused on every request it makes, but audited once in this long.
+    internal static readonly TimeSpan RefusedSessionAuditGap = TimeSpan.FromMinutes(10);
 
     private readonly DevKitHostingOptions _options;
     private readonly IAntiforgery _antiforgery;
     private readonly SessionRegistry _sessions;
     private readonly WindowsSignIn _windows;
     private readonly SignInAudit _audit;
+    private readonly TimeProvider _clock;
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _refusedAudited = new(StringComparer.Ordinal);
 
     public SignInFlow(
-        DevKitHostingOptions options, IAntiforgery antiforgery, SessionRegistry sessions, WindowsSignIn windows, SignInAudit audit)
+        DevKitHostingOptions options, IAntiforgery antiforgery, SessionRegistry sessions, WindowsSignIn windows, SignInAudit audit, TimeProvider clock)
     {
         _options = options;
         _antiforgery = antiforgery;
         _sessions = sessions;
         _windows = windows;
         _audit = audit;
+        _clock = clock;
     }
 
     /// <summary>The sign-in page, or straight on to the page asked for when this browser is already signed in.</summary>
@@ -91,11 +128,13 @@ internal sealed class SignInFlow
     /// <summary>
     /// Single sign-on. The first request challenges the browser, which answers with the Windows account it is signed in
     /// as (automatically on the domain, or after asking), over the next two requests. A browser that does not answer
-    /// sees the sign-in page again, with the reason, in the body of that challenge.
+    /// sees the sign-in page in the body of that challenge, which says why only when the person asked for this
+    /// (<paramref name="start"/>). An answer Windows refuses is always said, and audited.
     /// </summary>
-    public async Task SignInWithWindowsAsync(HttpContext context, string? returnUrl)
+    public async Task SignInWithWindowsAsync(HttpContext context, string? returnUrl, WindowsSignInStart start)
     {
         var step = _windows.ContinueSingleSignOn(context);
+        var error = NoAnswerMessages[start];
         switch (step.State)
         {
             case SingleSignOnState.Completed when step.User is { } user:
@@ -107,10 +146,15 @@ internal sealed class SignInFlow
                 return;
             case SingleSignOnState.Failed:
                 await _audit.RecordAsync(context, FailedEvent, WindowsMethod, "", step.Error);
+                error = NoSingleSignOnMessage;
+                break;
+            case SingleSignOnState.NotAllowed:
+                await _audit.RecordAsync(context, FailedEvent, WindowsMethod, step.User?.Name ?? "", step.Error);
+                error = NotAllowedMessage;
                 break;
         }
 
-        await Page(context, returnUrl, NoSingleSignOnMessage, "", StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+        await Page(context, returnUrl, error, "", StatusCodes.Status401Unauthorized).ExecuteAsync(context);
     }
 
     /// <summary>
@@ -172,9 +216,28 @@ internal sealed class SignInFlow
             return;
         }
 
-        await _audit.RecordAsync(context.HttpContext, RefusedSessionEvent, principal.FindFirstValue(SessionClaims.Method) ?? "",
-            principal.Identity?.Name ?? "", $"signed in from {principal.FindFirstValue(SessionClaims.Address)}, used from another address");
+        if (IsFirstRefusalInAWhile(principal.FindFirstValue(SessionClaims.Id) ?? ""))
+        {
+            await _audit.RecordAsync(context.HttpContext, RefusedSessionEvent, principal.FindFirstValue(SessionClaims.Method) ?? "",
+                principal.Identity?.Name ?? "", $"signed in from {principal.FindFirstValue(SessionClaims.Address)}, used from another address");
+        }
+
         await RefuseSessionAsync(context);
+    }
+
+    /// <summary>
+    /// Whether a session used from another address goes to the audit log now: once per <see cref="RefusedSessionAuditGap"/>,
+    /// so a copied cookie sent over and over cannot fill the disk. Sessions audited longer ago are forgotten.
+    /// </summary>
+    internal bool IsFirstRefusalInAWhile(string sessionId)
+    {
+        var now = _clock.GetUtcNow();
+        foreach (var passed in _refusedAudited.Where(pair => now - pair.Value >= RefusedSessionAuditGap).Select(pair => pair.Key).ToList())
+        {
+            _refusedAudited.TryRemove(passed, out _);
+        }
+
+        return _refusedAudited.TryAdd(sessionId, now);
     }
 
     /// <summary>
@@ -228,6 +291,65 @@ internal sealed class SignInFlow
     }
 }
 
+/// <summary>
+/// The frame of DevKit's pages that are not part of the app: the sign-in page and the locked page of a local DevKit,
+/// one raised card on the room in app.css and signin.css, and the page shown while DevKit is updated
+/// (<see cref="MaintenancePage"/>), which has a stylesheet of its own.
+/// </summary>
+internal static class CardPage
+{
+    /// <summary>The stylesheet beside app.css, the body's class and the colour of the browser's own bar of one kind of page.</summary>
+    internal sealed record Frame(string Stylesheet, string BodyClass, string? ThemeColor = null)
+    {
+        // What a page of this kind loads. They are public files of the repository, so serving them to someone not signed
+        // in gives nothing away.
+        private readonly PathString[] _assets = { new("/app.css"), new("/" + Stylesheet), new("/favicon.svg") };
+
+        /// <summary>Whether <paramref name="request"/> asks for one of the files a page of this kind loads.</summary>
+        public bool Serves(HttpRequest request) =>
+            (HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method)) && _assets.Contains(request.Path);
+    }
+
+    private static readonly Frame Card = new("signin.css", "signin-page");
+
+    public static bool IsAsset(HttpRequest request) => Card.Serves(request);
+
+    /// <param name="title">The tab's title, already HTML.</param>
+    /// <param name="card">What the card shows below the DevKit brand, already HTML.</param>
+    public static string Render(string title, string card) =>
+        Document(title, Card, $$"""
+        <main class="signin-card">
+          <div class="signin-brand"><span class="profile-avatar">DK</span><span>DevKit</span></div>
+        {{card}}
+        </main>
+        """);
+
+    /// <param name="title">The tab's title, already HTML.</param>
+    /// <param name="frame">The kind of page.</param>
+    /// <param name="body">What the body holds, already HTML.</param>
+    public static string Document(string title, Frame frame, string body)
+    {
+        ArgumentNullException.ThrowIfNull(frame);
+        var themeColor = frame.ThemeColor is null ? "" : $"""{Environment.NewLine}<meta name="theme-color" content="{frame.ThemeColor}" />""";
+        return $$"""
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1" />{{themeColor}}
+            <title>{{title}}</title>
+            <link rel="icon" type="image/svg+xml" href="/favicon.svg?v={{App.AssetVersion}}" />
+            <link rel="stylesheet" href="/app.css?v={{App.AssetVersion}}" />
+            <link rel="stylesheet" href="/{{frame.Stylesheet}}?v={{App.AssetVersion}}" />
+            </head>
+            <body class="{{frame.BodyClass}}">
+            {{body}}
+            </body>
+            </html>
+            """;
+    }
+}
+
 /// <summary>The sign-in page's HTML. Everything taken from the request or the configuration is HTML-encoded.</summary>
 internal static class SignInPage
 {
@@ -248,20 +370,7 @@ internal static class SignInPage
         var error = model.Error.Length == 0 ? "" : $"""<p class="signin-error" role="alert">{WebUtility.HtmlEncode(model.Error)}</p>""";
         var password = model.AcceptsPassword ? PasswordForm(model, domain) : NoPasswordNotice;
 
-        return $$"""
-            <!DOCTYPE html>
-            <html lang="en">
-            <head>
-            <meta charset="utf-8" />
-            <meta name="viewport" content="width=device-width, initial-scale=1" />
-            <title>Sign in · DevKit</title>
-            <link rel="icon" type="image/svg+xml" href="/favicon.svg?v={{App.AssetVersion}}" />
-            <link rel="stylesheet" href="/app.css?v={{App.AssetVersion}}" />
-            <link rel="stylesheet" href="/signin.css?v={{App.AssetVersion}}" />
-            </head>
-            <body class="signin-page">
-            <main class="signin-card">
-              <div class="signin-brand"><span class="profile-avatar">DK</span><span>DevKit</span></div>
+        return CardPage.Render("Sign in · DevKit", $$"""
               <h1>Sign in</h1>
               <p class="signin-lead">DevKit works in TFS as you, so it needs to know who you are.</p>
               {{error}}
@@ -270,13 +379,10 @@ internal static class SignInPage
               <div class="signin-divider"><span>or sign in as someone else</span></div>
             {{password}}
               <footer class="signin-footer">
-                After you sign in, your TFS token and settings are kept encrypted in this browser on your PC, for your Windows account only, and never on the DevKit server.
+                After you sign in, your TFS token and settings are kept encrypted on the DevKit server for your Windows account. Other people who sign in cannot open them; whoever runs DevKit on the server could.
                 Sign-ins, sign-outs and failed attempts are recorded as user@machine in the server's audit log.
               </footer>
-            </main>
-            </body>
-            </html>
-            """;
+            """);
     }
 
     private static string PasswordForm(Model model, string domain) =>

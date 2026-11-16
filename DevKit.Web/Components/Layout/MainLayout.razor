@@ -58,6 +58,11 @@
                         <span class="conn-label">@(Settings.IsConfigured ? "Connected" : "Not configured")</span>
                     </div>
                 }
+                <a class="tb-btn tb-guide @(OnGuide ? "on" : "")" href="guide" title="How DevKit works, page by page"
+                   aria-current="@(OnGuide ? "page" : null)">
+                    <Icon Inner="@Icons.Guide" />
+                    <span class="tb-guide-label">Guide</span>
+                </a>
                 @if (Session.User is { } user)
                 {
                     @* A plain form: the browser posts it and follows the redirect to the sign-in page. *@
@@ -103,10 +108,14 @@
             }
         </main>
     </div>
+    @if (ShowTour)
+    {
+        <GuideTour ShowSignOut="@(Session.User is not null)" OnDone="EndTour" />
+    }
 </div>
 
 @code {
-    private static readonly string[] NoSetupPaths = { "", "/markdown", "/workday", "/settings" };
+    private static readonly string[] NoSetupPaths = { "", "/markdown", "/workday", "/settings", "/guide" };
 
     // tools.css makes the sidebar a drawer at 900px and narrower. Wider than this it is back in the page, so a
     // drawer still open then (a tablet turned, a window widened) is closed, or the inert page would stay locked.
@@ -145,8 +154,23 @@
             ? $"TFS · {Uri.UnescapeDataString(server.Segments[^1].TrimEnd('/'))}"
             : "TFS";
 
+    private bool OnGuide =>
+        new Uri(Nav.Uri).AbsolutePath.TrimEnd('/').Equals(ToolCatalog.Guide.Path, StringComparison.OrdinalIgnoreCase);
+
+    // Not while the settings could not be read: the tour could not be marked as seen, so it would come back on every page.
+    private bool ShowTour => Session.IsReady && Settings.LoadProblem is null && !Settings.GuideTourSeen;
+
+    private void EndTour(bool openGuide)
+    {
+        Settings.GuideTourSeen = true;
+        if (openGuide)
+        {
+            Nav.NavigateTo(ToolCatalog.Guide.Path);
+        }
+    }
+
     private string SetupHint => Session.IsShared
-        ? "Connect DevKit to TFS: enter your personal access token once in Settings. It is kept encrypted in this browser on your PC, for you only."
+        ? "Connect DevKit to TFS: enter your personal access token once in Settings. It is kept encrypted on the DevKit server, for you only."
         : "Connect DevKit to TFS in Settings: sign in with your Windows account or a personal access token.";
 
     protected override void OnInitialized()

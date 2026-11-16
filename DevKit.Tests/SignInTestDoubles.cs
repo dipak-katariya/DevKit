@@ -17,53 +17,54 @@ internal sealed class ManualClock : TimeProvider
 }
 
 /// <summary>
-/// A browser behind the JS calls DevKit makes: the localStorage ProtectedLocalStorage uses, and the sealed settings it
-/// keeps in DevKit's cookies, as /devkit-vault reads and keeps them for the person signed in. Several pages can share
-/// one, as the pages of one browser do.
+/// A browser behind the JS calls DevKit makes: the localStorage ProtectedLocalStorage uses, and the sealed settings an
+/// earlier DevKit kept in its cookies, which earlier-settings.js only clears. Several pages can share one, as the pages of one browser do.
 /// </summary>
-internal sealed class FakeBrowserStorage : IJSRuntime
+internal sealed class FakeBrowserStorage : IJSRuntime, IJSObjectReference
 {
     public Dictionary<string, string> Items { get; } = new(StringComparer.Ordinal);
 
-    /// <summary>The sealed settings this browser keeps; null when it keeps none.</summary>
+    /// <summary>The sealed settings an earlier DevKit kept in this browser's cookies; null when it keeps none.</summary>
     public string? Vault { get; set; }
 
-    /// <summary>When set, the browser does not keep settings, as one that refuses DevKit's cookies.</summary>
-    public bool RefusesVault { get; set; }
-
-    /// <summary>How many saves the browser kept.</summary>
-    public int VaultSaves { get; private set; }
+    /// <summary>How many times DevKit had the browser clear the settings its cookies keep.</summary>
+    public int VaultClears { get; private set; }
 
     public ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args) =>
         InvokeAsync<TValue>(identifier, CancellationToken.None, args);
 
     public ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken, object?[]? args)
     {
+        object? answer;
         switch (identifier)
         {
             case "localStorage.getItem":
-                return new ValueTask<TValue>((TValue)(object?)(Items.TryGetValue(Key(args), out var value) ? value : null)!);
+                answer = Items.TryGetValue(Key(args), out var value) ? value : null;
+                break;
             case "localStorage.setItem":
                 Items[Key(args)] = (string)args![1]!;
-                return new ValueTask<TValue>(default(TValue)!);
+                answer = null;
+                break;
             case "localStorage.removeItem":
                 Items.Remove(Key(args));
-                return new ValueTask<TValue>(default(TValue)!);
-            case ClientSettingsStore.LoadFunction:
-                return new ValueTask<TValue>((TValue)(object?)Vault!);
-            case ClientSettingsStore.SaveFunction:
-                if (RefusesVault)
-                {
-                    throw new JSException("This browser did not keep the settings (HTTP 400).");
-                }
-
-                Vault = (string)args![0]!;
-                VaultSaves++;
-                return new ValueTask<TValue>(default(TValue)!);
+                answer = null;
+                break;
+            case "import":
+                answer = this;
+                break;
+            case "clearBrowser":
+                Vault = null;
+                VaultClears++;
+                answer = null;
+                break;
             default:
                 throw new InvalidOperationException($"Unexpected browser call {identifier}.");
         }
+
+        return new ValueTask<TValue>((TValue)answer!);
     }
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     private static string Key(object?[]? args) => (string)args![0]!;
 }

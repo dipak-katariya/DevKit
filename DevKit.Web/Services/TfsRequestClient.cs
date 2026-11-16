@@ -151,6 +151,7 @@ public sealed class TfsRequestClient
         HttpRequestMessage req, SignIn signIn, HttpCompletionOption completion, CancellationToken ct)
     {
         req.Headers.Authorization = signIn.Header;
+        TfsGate.ForPerson(req, _settings.Person);
 
         // Always bypass HTTP/proxy caches so reads reflect TFS immediately. TFS can sit behind
         // a proxy that serves stale GETs, and every WIQL POST hits the same URL (only the body
@@ -210,7 +211,7 @@ public sealed class TfsRequestClient
         // and kept until the last byte. The request is marked so the transport does not queue it again,
         // with the time waited here, which the transport's log line would otherwise show as none.
         var queuing = Stopwatch.GetTimestamp();
-        using var slot = await _gate.EnterAsync(ct);
+        using var slot = await _gate.EnterAsync(ct, _settings.Person);
         var queued = Stopwatch.GetElapsedTime(queuing);
 
         // The transport's own timeout ends once the headers arrive when the body is streamed, and a body

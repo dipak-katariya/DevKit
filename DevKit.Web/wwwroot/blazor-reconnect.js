@@ -36,13 +36,16 @@
 
     function modal() { return document.getElementById('components-reconnect-modal'); }
 
-    // Re-probing every few seconds would otherwise rewrite the class on each tick, so only
-    // touch the DOM when the state actually changes.
-    function setModalState(cls) {
+    // A forced toggle leaves a class that is already right alone, so re-probing every few
+    // seconds touches the DOM only when the state actually changes. "updating" swaps the text
+    // for the one shown while DevKit's maintenance page answers.
+    function setModalState(cls, updating) {
         var el = modal();
-        if (!el || el.className === (cls || '')) return;
-        el.classList.remove('components-reconnect-show', 'components-reconnect-failed', 'components-reconnect-rejected');
-        if (cls) el.classList.add(cls);
+        if (!el) return;
+        ['components-reconnect-show', 'components-reconnect-failed', 'components-reconnect-rejected'].forEach(function (name) {
+            el.classList.toggle(name, name === cls);
+        });
+        el.classList.toggle('devkit-updating', !!updating);
     }
 
     function clearTimers() {
@@ -57,20 +60,26 @@
         setTimeout(function () { location.reload(); }, RELOAD_GRACE_MS);
     }
 
-    // True when the server answers at all. The abort keeps a hung socket from holding the
-    // probe open past its own interval.
-    function serverReachable() {
+    // 'up' when DevKit answers, 'updating' when the maintenance page that holds its port during
+    // an update does (it answers everything with 503), else 'down'. The abort keeps a hung
+    // socket from holding the probe open past its own interval.
+    function serverState() {
         var controller = new AbortController();
         var abort = setTimeout(function () { controller.abort(); }, PROBE_TIMEOUT_MS);
         return fetch(HEALTH_URL, { method: 'GET', cache: 'no-store', signal: controller.signal })
-            .then(function (res) { clearTimeout(abort); return res.ok; })
-            .catch(function () { clearTimeout(abort); return false; });
+            .then(function (res) {
+                clearTimeout(abort);
+                if (res.ok) return 'up';
+                return res.status === 503 ? 'updating' : 'down';
+            })
+            .catch(function () { clearTimeout(abort); return 'down'; });
     }
 
     function evaluate() {
         if (!connectionDown) return;
-        serverReachable().then(function (up) {
+        serverState().then(function (state) {
             if (!connectionDown) return;
+            var up = state === 'up';
 
             // The server went away and came back, so the process restarted and the circuit
             // this tab still holds no longer exists on the other side. Reloading is the only
@@ -81,7 +90,7 @@
 
             // While the server still answers, the circuit is merely resuming and the retry
             // policy will rejoin on its own. Showing the overlay here would be a false alarm.
-            setModalState(up ? null : 'components-reconnect-show');
+            setModalState(up ? null : 'components-reconnect-show', state === 'updating');
             probeTimer = setTimeout(evaluate, PROBE_INTERVAL_MS);
         });
     }

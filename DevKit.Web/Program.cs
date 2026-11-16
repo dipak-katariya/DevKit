@@ -1,7 +1,22 @@
 using DevKit.Web.Services;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
+// "Run Latest DevKit.bat" starts the same program to switch packages, with the page that answers meanwhile.
+if (MaintenanceMode.IsRequested(args))
+{
+    Environment.ExitCode = await MaintenanceMode.RunAsync(args);
+    return;
+}
+
+// devkit-deploy.bat has a new package's own program list and hash its files, last.
+if (PackageManifest.IsRequested(args))
+{
+    Environment.ExitCode = PackageManifest.Run(args);
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(args);
+DevKitAccess.HideServerName(builder.WebHost);
 
 // scripts\devkit-host.bat runs the Release build from its build output in Production. Outside Development, ASP.NET Core
 // only serves the framework's blazor.web.js and the scoped CSS from a published folder, so without this the page shows
@@ -14,14 +29,19 @@ builder.WebHost.UseStaticWebAssets();
 // 3 minutes, which is what made a tab left open on a long-running sheet die and need a manual
 // refresh. Keepalives are frequent enough to survive an idle proxy, the client timeout is
 // generous enough to ride out a long TFS call, and a disconnected circuit is retained long
-// enough for the browser to rejoin it with its state intact.
-const int maxSignalRMessageBytes = 5 * 1024 * 1024;
+// enough for the browser to rejoin it with its state intact. Fewer are kept than before, and in shared mode each
+// person has at most PersonCircuits.MaxPerPerson, so kept circuits cannot fill the server's memory.
+//
+// This limit is on what a browser sends, not on render batches, which go the other way. The largest is the settings
+// copy an earlier DevKit kept in the browser's local storage, read once as it moves to the server; a settings import
+// streams in pieces well below it.
+const int maxSignalRMessageBytes = 256 * 1024;
 
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents(options =>
     {
         options.DisconnectedCircuitRetentionPeriod = TimeSpan.FromMinutes(30);
-        options.DisconnectedCircuitMaxRetained = 200;
+        options.DisconnectedCircuitMaxRetained = 100;
         options.JSInteropDefaultCallTimeout = TimeSpan.FromMinutes(5);
     })
     .AddHubOptions(options =>
@@ -29,7 +49,6 @@ builder.Services.AddRazorComponents()
         options.KeepAliveInterval = TimeSpan.FromSeconds(10);
         options.ClientTimeoutInterval = TimeSpan.FromMinutes(3);
         options.HandshakeTimeout = TimeSpan.FromSeconds(30);
-        // A fully loaded merging sheet is a large render batch.
         options.MaximumReceiveMessageSize = maxSignalRMessageBytes;
     });
 
@@ -42,8 +61,21 @@ builder.Services.AddScoped<BranchCleanupService>();
 builder.Services.AddTfsServices();
 // Hosted mode already registers the clock for sign-in; the Workday Calculator reads it in either mode.
 builder.Services.TryAddSingleton(TimeProvider.System);
+// During an update the maintenance page holds DevKit's port until the DevKit its switch started is about to listen.
+var handoverPort = PortHandover.ConfiguredPort();
+var handoverRun = PortHandover.ConfiguredRun();
+if (handoverPort is { } port)
+{
+    PortHandover.AddTakeOver(builder.Services, port, handoverRun);
+}
 
 await using var app = builder.Build();
+
+// And it makes way in turn, finishing the requests it is serving, when the next switch asks.
+if (handoverPort is { } heldPort && handoverRun is { } run)
+{
+    PortHandover.MakeWayWhenAsked(app, heldPort, run);
+}
 
 // An unhandled error gets a plain page; the exception itself goes to the log. Shared DevKit uses this even in
 // Development, so nobody on the network ever sees a stack trace.
@@ -56,39 +88,7 @@ if (!app.Environment.IsDevelopment() || access.AlwaysHidesErrorDetails)
     }));
 }
 
-// Security response headers. The CSP allows inline styles (the UI uses many style="…"
-// attributes) but no inline/eval scripts, which neutralizes injected-markup script vectors.
-// Set via OnStarting so these are authoritative over framework-emitted defaults (the Blazor
-// endpoint otherwise adds its own frame-ancestors directive, producing a duplicate header).
-const string contentSecurityPolicy =
-    "default-src 'self'; " +
-    "script-src 'self'; " +
-    "style-src 'self' 'unsafe-inline'; " +
-    "img-src 'self' data: http: https:; " +
-    "font-src 'self'; " +
-    "connect-src 'self' ws: wss:; " +
-    "frame-ancestors 'none'; " +
-    "base-uri 'self'; " +
-    "form-action 'self'";
-
-app.Use(async (context, next) =>
-{
-    context.Response.OnStarting(() =>
-    {
-        var headers = context.Response.Headers;
-        headers["X-Content-Type-Options"] = "nosniff";
-        headers["X-Frame-Options"] = "DENY";
-        headers["Referrer-Policy"] = access.ReferrerPolicy;
-        headers["Content-Security-Policy"] = contentSecurityPolicy;
-        // No other site's window can reach DevKit's, no other site may embed its files, and pages get no camera,
-        // microphone or location.
-        headers["Cross-Origin-Opener-Policy"] = "same-origin";
-        headers["Cross-Origin-Resource-Policy"] = "same-origin";
-        headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()";
-        return Task.CompletedTask;
-    });
-    await next();
-});
+DevKitAccess.UseSecurityHeaders(app, access.ReferrerPolicy);
 
 // Before everything else that answers a request, static files included.
 access.UseGate(app);

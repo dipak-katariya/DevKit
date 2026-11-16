@@ -5,6 +5,7 @@
 @inject BranchCacheService BranchCache
 @inject IJSRuntime JS
 @inject ILogger<Settings> Logger
+@inject UserSession Session
 
 @* One column of raised sections. Every choice is saved as it is made, except the TFS connection: that one is checked
    with TFS first and saved only when TFS accepts it. *@
@@ -12,8 +13,15 @@
     <h1 class="sr-only">Settings</h1>
     <div class="st-col">
     <div class="st-bar">
-        <p class="st-where" title="@SettingsSvc.SettingsFilePath">Saved in <code>@SettingsSvc.SettingsFilePath</code></p>
+        @if (!Session.IsShared)
+        {
+            <p class="st-where" title="@SettingsSvc.SettingsFilePath">Saved in <code>@SettingsSvc.SettingsFilePath</code></p>
+        }
         <div class="st-bar-tools">
+            <button type="button" class="btn-sm btn-sm-active" @onclick="SaveSettings" disabled="@confirming"
+                    title="Changes are saved as you make them. Click to check that they are saved.">
+                <span aria-hidden="true">💾</span> @(confirming ? "Saving..." : "Save settings")
+            </button>
             <button type="button" class="btn-sm" @onclick="ExportSettings"
                     title="Download your settings as a file. The TFS connection and token are not included."><span aria-hidden="true">📤</span> Export</button>
             @* The file input stays in the Tab order, hidden only from sight, so Import works from the keyboard too. *@
@@ -95,20 +103,19 @@
                     <div class="notice @(statusOk ? "ok" : "bad")">@statusMsg</div>
                 }
             </div>
-            <p class="st-hint">
-                @if (SettingsSvc.FixedTfsUrl is not null)
-                {
-                    <text>They are encrypted for your Windows account and kept only here, never on the DevKit server. They stay when DevKit is updated or moves to another server; in another browser or on another PC, enter them once there.</text>
-                }
-                else if (SettingsSvc.Tfs.Auth == TfsAuthMode.Windows)
-                {
-                    <text>Only your Windows account can open it, and it holds no token: DevKit signs in to TFS as your Windows account.</text>
-                }
-                else
-                {
-                    <text>Only your Windows account can open it, and the PAT inside is encrypted for this server.</text>
-                }
-            </p>
+            @if (SettingsSvc.FixedTfsUrl is null)
+            {
+                <p class="st-hint">
+                    @if (SettingsSvc.Tfs.Auth == TfsAuthMode.Windows)
+                    {
+                        <text>Only your Windows account can open it, and it holds no token: DevKit signs in to TFS as your Windows account.</text>
+                    }
+                    else
+                    {
+                        <text>Only your Windows account can open it, and the PAT inside is encrypted for this server.</text>
+                    }
+                </p>
+            }
         </div>
     </section>
 

@@ -22,6 +22,9 @@ public static class ToolCatalog
     public static readonly ToolEntry Settings =
         new("Settings", "/settings", "TFS connection, default selections and branch defaults.", Icons.ToolSettings);
 
+    public static readonly ToolEntry Guide =
+        new("Guide", "/guide", "How DevKit works, page by page, in pictures.", Icons.Guide);
+
     /// <summary>
     /// Listed in the order the team works through them, not alphabetically. The sidebar, the dashboard and the
     /// command search all read this order from here.
@@ -53,11 +56,12 @@ public static class ToolCatalog
         return tool is null ? "DevKit" : $"{tool.Name} · DevKit";
     }
 
-    /// <summary>Every searchable destination: dashboard, tools, then settings.</summary>
+    /// <summary>Every searchable destination: dashboard, tools, settings, then the guide.</summary>
     public static IEnumerable<ToolEntry> All()
     {
         yield return Dashboard;
         foreach (var tool in Tools) yield return tool;
         yield return Settings;
+        yield return Guide;
     }
 }

@@ -1,0 +1,162 @@
+/* The page shared DevKit shows while it is updated (MaintenancePage in MaintenanceMode.cs), on app.css's tokens. The whole
+   screen is the DK badge's blue, and the news is set at poster size in the badge's two inks: white over near-black.
+   Everything smaller is near-black, which reads at 5.5:1 on the blue; white does not at text sizes. Three sizes: the
+   statement, the lead and the rest. Only this page loads it. */
+
+:root{
+  --mt-field:var(--accent);
+  --mt-ink:var(--room);
+  --mt-pale:#fff;
+  --mt-margin:clamp(16px,3vw,48px);
+  /* "being updated" is about 6.3em wide, so its line takes about nine tenths of the screen. A screen too short for that
+     and the text below gives the statement what is left after its top margin (11vh), the margins, and the bar, the gap
+     and the lead or status (about 240px together), over its two lines. */
+  --mt-leading:.9;
+  --mt-room:calc((89dvh - 240px - 2 * var(--mt-margin)) / (2 * var(--mt-leading)));
+  --mt-statement:clamp(3rem,min(13.4vw,var(--mt-room)),25rem);
+  /* In rem, so the text follows the size a person set in the browser. */
+  --mt-lead:1.25rem;
+  --mt-meta:1rem;
+  /* How far a line travels as it comes in, in its own size, so the statement and the small text move alike. */
+  --mt-rise:.14em;
+  --mt-band:6px;
+}
+
+/* The page scrolls when the screen is too short for it, as on a phone held sideways; app.css fixes the app's height. */
+html{height:auto;min-height:100%;overflow:auto;background:var(--mt-field);}
+body.mt-page{height:auto;min-height:100%;overflow:visible;background:var(--mt-field);color:var(--mt-ink);}
+.mt-page ::selection{background:var(--mt-ink);color:var(--mt-pale);}
+/* A short screen scrolls the page; app.css's faint white thumb is lost on the blue, so it takes the text's near-black. */
+::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--mt-ink) 40%,transparent);}
+::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--mt-ink) 60%,transparent);}
+@supports not selector(::-webkit-scrollbar){
+  *{scrollbar-color:color-mix(in srgb,var(--mt-ink) 40%,transparent) transparent;}
+}
+
+.mt{display:flex;flex-direction:column;min-height:100dvh;padding:var(--mt-margin);}
+
+.mt-bar{display:flex;align-items:center;justify-content:space-between;gap:16px;}
+.mt-actions{display:flex;align-items:center;gap:8px;}
+.mt-brand{display:flex;align-items:center;gap:10px;font-size:var(--mt-meta);font-weight:600;}
+/* The badge in negative: its letters cut through to the blue. */
+.mt-badge{
+  display:grid;place-items:center;width:32px;height:32px;border-radius:25%;
+  background:var(--mt-ink);color:var(--mt-field);
+  font-family:var(--display);font-size:13px;font-weight:700;letter-spacing:-.01em;
+}
+/* The one action, a plain link to this same address: DevKit opens if it is ready, the page comes back if not. */
+.mt-check{
+  display:inline-flex;align-items:center;min-height:44px;padding:0 22px;border-radius:var(--pill);white-space:nowrap;
+  background:var(--mt-ink);color:var(--mt-pale);font-size:var(--mt-meta);font-weight:600;text-decoration:none;
+  transition:var(--tr-ui);
+}
+/* Stops or starts the browser's own checks: a quiet text link beside the button. It comes first in the bar, so a screen
+   reader reaches it before the next check starts the page again. */
+.mt-toggle{
+  display:inline-flex;align-items:center;min-height:44px;padding:0 8px;white-space:nowrap;
+  color:var(--mt-ink);font-size:var(--mt-meta);font-weight:600;
+  text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:4px;
+}
+/* Only a pointer that hovers lights them; a tap on a phone would leave them lit. */
+@media (hover:hover) and (pointer:fine){
+  .mt-check:hover{background:var(--surface3);}
+  .mt-toggle:hover{text-decoration-thickness:2px;}
+}
+/* It gives a little under the press, as DevKit's buttons do; reduced motion keeps it still (--press in app.css). */
+.mt-check:active{transform:scale(var(--press));}
+/* The ring comes at once: focus from the keyboard is never animated. */
+.mt-page :is(.mt-check,.mt-toggle):focus-visible{outline:2px solid var(--mt-pale);outline-offset:3px;}
+.mt-page .mt-toggle:focus-visible{border-radius:6px;}
+
+/* The statement leads from the top; the lead and the status share the bottom edge, with the blue between. */
+.mt-main{
+  flex:1;display:grid;column-gap:48px;
+  grid-template-columns:minmax(0,1fr) auto;
+  grid-template-rows:auto minmax(48px,1fr) auto;
+  grid-template-areas:"title title" ". ." "lead status";
+}
+.mt-title{
+  grid-area:title;margin-top:clamp(40px,11vh,160px);
+  font-family:var(--display);font-size:var(--mt-statement);font-weight:700;line-height:var(--mt-leading);letter-spacing:-.04em;
+}
+.mt-title span{display:block;}
+.mt-title span:first-child{color:var(--mt-pale);}
+.mt-lead{grid-area:lead;align-self:end;max-width:34ch;font-size:var(--mt-lead);line-height:1.45;text-wrap:pretty;}
+.mt-status{
+  grid-area:status;align-self:end;justify-self:end;max-width:36ch;text-align:right;text-wrap:balance;
+  font-size:var(--mt-meta);line-height:1.5;font-variant-numeric:tabular-nums;
+}
+.mt-status span{display:block;}
+
+/* Counts down to the browser's next check without a script. The page sets --retry on .mt to the seconds it sends as
+   Refresh, and the count starts again with every load, as the check does. Each new number fades up into place, in step
+   with the count. */
+@property --mt-left{syntax:'<integer>';inherits:false;initial-value:0;}
+.mt-next::before{content:"Next check in ";}
+.mt-next::after{
+  display:inline-block;
+  counter-reset:mt-left var(--mt-left);
+  content:counter(mt-left) " s";
+  animation:mt-countdown calc(var(--retry) * 1s) steps(var(--retry),end) forwards,mt-tick 1s var(--ease-out) var(--retry);
+}
+@keyframes mt-countdown{
+  from{--mt-left:var(--retry);}
+  to{--mt-left:0;}
+}
+@keyframes mt-tick{
+  from{opacity:.35;transform:translateY(var(--mt-rise));}
+  30%{opacity:1;transform:none;}
+}
+
+/* The same wait as a band along the bottom edge: it fills the width at an even pace, as time passes, and starts again
+   with each check. */
+.mt::after{
+  content:"";position:fixed;left:0;right:0;bottom:0;height:var(--mt-band);pointer-events:none;
+  background:var(--mt-ink);transform:scaleX(0);transform-origin:left;
+  animation:mt-fill calc(var(--retry) * 1s) linear forwards;
+}
+@keyframes mt-fill{
+  to{transform:scaleX(1);}
+}
+/* Once a person stops the checks there is nothing to wait for, so the band goes; the status says the checks are off. */
+.mt-stopped::after{display:none;}
+
+/* A page a person opened comes in once: the statement line by line, then the lead and the status. The browser's own
+   checks leave out mt-enter (MaintenancePage.Load), so the page does not come in again every few seconds. The bar and
+   Check now stay still and work at once. */
+.mt-enter .mt-title span,.mt-enter .mt-lead,.mt-enter .mt-status{animation:mt-in .64s var(--ease-out) both;}
+.mt-enter .mt-title span + span{animation-delay:.08s;}
+.mt-enter .mt-lead{animation-duration:.48s;animation-delay:.2s;}
+.mt-enter .mt-status{animation-duration:.48s;animation-delay:.26s;}
+@keyframes mt-in{
+  from{opacity:0;transform:translateY(var(--mt-rise));}
+}
+
+/* Reduced motion keeps every fade and drops every movement: nothing rises, and the number alone counts down. */
+@media (prefers-reduced-motion:reduce){
+  :root{--mt-rise:0px;}
+  .mt::after{display:none;}
+}
+
+/* A phone gets its own composition: the statement across the screen, the rest stacked at the bottom on one edge. */
+@media (max-width:640px){
+  :root{--mt-statement:min(13.6vw,var(--mt-room));--mt-lead:1.125rem;}
+  .mt-main{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(32px,1fr) auto auto;grid-template-areas:"title" "." "lead" "status";}
+  .mt-title{margin-top:clamp(32px,12vh,120px);}
+  .mt-status{justify-self:start;text-align:left;margin-top:20px;}
+}
+/* A small phone keeps both links whole on one line: the badge stands for the name, which the statement says anyway. */
+@media (max-width:400px){
+  .mt-name{display:none;}
+  .mt-bar{gap:12px;}
+  .mt-toggle{padding:0 4px;}
+  .mt-check{padding:0 18px;}
+}
+
+/* Windows high contrast draws no backgrounds, so the badge and the button keep an edge. It also lays a plate as tall as
+   the font behind each line of text, and at the statement's tight spacing the second line's plate covers the bottom of
+   the first; spacing as tall as the font keeps both lines whole. */
+@media (forced-colors:active){
+  :root{--mt-leading:1.35;}
+  .mt-badge,.mt-check{border:1px solid CanvasText;} /* taste-skill-ignore */
+}

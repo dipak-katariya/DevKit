@@ -35,7 +35,7 @@ public sealed partial class BranchCreator
     private string assigneeFilter { get => S.AssigneeFilter; set => S.AssigneeFilter = value; }
     private string sortCol { get => S.SortCol; set => S.SortCol = value; }
     private bool sortAsc { get => S.SortAsc; set => S.SortAsc = value; }
-    private string resultMsg { get => S.ResultMsg; set => S.ResultMsg = value; }
+    private BranchResult? result { get => S.Result; set => S.Result = value; }
     private bool resultOk { get => S.ResultOk; set => S.ResultOk = value; }
 
     private bool loadingExisting, loading, creating, checking, loadingBranches, unlinking;
@@ -167,7 +167,7 @@ public sealed partial class BranchCreator
 
         // Clearing the last result belongs to the deliberate change, not to SelectRepo itself,
         // which also runs for the startup default and must not blank a message it did not cause.
-        resultMsg = "";
+        result = null;
         return SelectRepo(repo);
     }
 
@@ -239,7 +239,7 @@ public sealed partial class BranchCreator
         {
             return;
         }
-        loading = true; workItems.Clear(); filtered.Clear(); selectedItem = null; resultMsg = "";
+        loading = true; workItems.Clear(); filtered.Clear(); selectedItem = null; result = null;
         loadError = null;
         workItemsLoaded = false;
         StateHasChanged();
@@ -396,6 +396,4 @@ public sealed partial class BranchCreator
     }
 
     private static int ParseId(string id) => int.TryParse(id, out var n) ? n : 0;
-
-    private static string Enc(string s) => System.Net.WebUtility.HtmlEncode(s);
 }

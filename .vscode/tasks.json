@@ -1,0 +1,13 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build DevKit.Web",
+            "type": "process",
+            "command": "dotnet",
+            "args": ["build", "${workspaceFolder}/DevKit.Web/DevKit.Web.csproj", "-c", "Debug", "/property:GenerateFullPaths=true", "/consoleloggerparameters:NoSummary"],
+            "group": "build",
+            "problemMatcher": "$msCompile"
+        }
+    ]
+}

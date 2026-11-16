@@ -69,7 +69,7 @@ public partial class CodeMergingService
     private async Task<List<MergingCommit>> FetchCommitsAsync(MergingPullRequest pr, CancellationToken ct)
     {
         var url = _req.ProjectApi(pr.Project,
-            $"git/repositories/{pr.RepositoryId}/pullRequests/{pr.PullRequestId}/commits?api-version={_req.Ver}");
+            $"git/repositories/{Uri.EscapeDataString(pr.RepositoryId)}/pullRequests/{pr.PullRequestId}/commits?api-version={_req.Ver}");
         var data = await _req.GetJsonAsync(url, ct);
         return TfsJson.Values(data)
             .Select(c => ParseCommit(c, pr))

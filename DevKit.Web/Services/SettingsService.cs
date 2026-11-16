@@ -6,8 +6,8 @@ namespace DevKit.Web.Services;
 
 /// <summary>
 /// The user's settings, held in memory and kept with the PAT encrypted at rest: in a per-user usersettings.json (see
-/// <see cref="SettingsFile"/>) in local mode, with the PAT encrypted for its server, or in shared mode in the signed-in
-/// person's own browser, sealed as a whole (see <see cref="ClientSettingsStore"/>). Every change is saved as it is
+/// <see cref="SettingsFile"/>) in local mode, with the PAT encrypted for its server, or in shared mode on the DevKit
+/// server, sealed as a whole for the signed-in person alone (see <see cref="PersonSettingsStore"/>). Every change is saved as it is
 /// made, and a save that fails is reported through <see cref="LastSaveError"/> rather than lost. Repository branch
 /// settings live in SettingsService.Repos.cs; the stored shape is <see cref="UserSettings"/>.
 /// </summary>
@@ -21,7 +21,7 @@ public partial class SettingsService
     private const string WindowsSignInRefusedMessage =
         "Windows sign-in to TFS is only for the Windows account DevKit runs as. Use a personal access token.";
 
-    private static readonly JsonSerializerOptions FileFormat = new() { WriteIndented = true };
+    internal static readonly JsonSerializerOptions FileFormat = new() { WriteIndented = true };
 
     private readonly ISettingsStore _store;
     private readonly ILogger<SettingsService> _logger;
@@ -33,6 +33,9 @@ public partial class SettingsService
 
     // A stored PAT this account cannot decrypt, written back unchanged so a save never erases it.
     private string? _undecryptablePat;
+
+    // The settings as last loaded or saved, as stored: a save tells the store what changed since (see ISettingsStore.Write).
+    private string? _savedText;
 
     public SettingsService(ILogger<SettingsService> logger)
         : this(logger, SettingsFile.ResolvePath(), LegacySettingsPathToMove())
@@ -54,7 +57,7 @@ public partial class SettingsService
     }
 
     /// <summary>
-    /// Shared mode: one person's settings, kept in their own browser. Nothing is in use until
+    /// Shared mode: one person's settings, kept on the DevKit server for them alone. Nothing is in use until
     /// <see cref="LoadFromStore"/> runs, once the store knows who is signed in.
     /// </summary>
     /// <param name="fixedTfsUrl">The one TFS server everyone works against; people cannot point DevKit elsewhere.</param>
@@ -65,13 +68,19 @@ public partial class SettingsService
         FixedTfsUrl = fixedTfsUrl;
         AllowsWindowsSignIn = false;
         _settings.Tfs.Url = fixedTfsUrl;
+        // Until settings are loaded, the defaults: a first save then adds only what it changed to whatever another of
+        // the person's pages saved first.
+        _savedText = PersistableText();
     }
 
-    /// <summary>Where the settings are kept: the settings file, or (shared mode) this person's browser.</summary>
+    /// <summary>Where the settings are kept: the settings file, or (shared mode) the DevKit server, for this person alone.</summary>
     public string SettingsFilePath => _store.Location;
 
     /// <summary>The TFS server everyone in shared mode works against; null in local mode, where the user picks it.</summary>
     public string? FixedTfsUrl { get; }
+
+    /// <summary>Shared mode: who these settings belong to, as a tag that names nobody, for their share of the TFS slots; null in local mode.</summary>
+    internal string? Person => _store.Person;
 
     /// <summary>
     /// Whether TFS may be signed in to as the Windows account DevKit runs as. Always in local mode; in shared mode only
@@ -100,18 +109,10 @@ public partial class SettingsService
             }
 
             Load(() => earlierText);
-            // The store keeps them from now on, also when nothing in them needed saving again.
+            // The store keeps them from now on, also when nothing in them needed saving again. They replace whatever it
+            // keeps whole: as changes, they would be measured against themselves, which leaves nothing to send.
+            _savedText = null;
             Save();
-        }
-    }
-
-    /// <summary>A store that finishes a save after <see cref="Save"/> returned (a person's browser) reports here one that failed.</summary>
-    internal void ReportSaveFailed(string error)
-    {
-        lock (_sync)
-        {
-            LastSaveError = error;
-            Changed?.Invoke();
         }
     }
 
@@ -120,6 +121,18 @@ public partial class SettingsService
 
     /// <summary>What went wrong reading the settings at startup, or null when nothing did.</summary>
     public string? LoadProblem { get; private set; }
+
+    /// <summary>
+    /// Whether the store kept no settings when they were loaded, and nothing was saved since: in shared mode, a
+    /// person's first visit.
+    /// </summary>
+    public bool StartedEmpty { get; private set; }
+
+    /// <summary>
+    /// Saves the settings as they are, for a person who wants to see that their settings are saved. False, with the
+    /// reason in <see cref="LastSaveError"/>, when they were not kept.
+    /// </summary>
+    public Task<bool> SaveAndConfirmAsync() => Task.FromResult(Save());
 
     public TfsSettings Tfs => _settings.Tfs;
     public string DefaultAreaPath
@@ -209,6 +222,20 @@ public partial class SettingsService
     {
         get => _settings.TeamName;
         set => Update(() => _settings.TeamName = value);
+    }
+
+    /// <summary>How the Dashboard lays out the tools; kept with the other settings, so it outlasts every restart.</summary>
+    public DashboardView DashboardView
+    {
+        get => _settings.DashboardView;
+        set => Update(() => _settings.DashboardView = Enum.IsDefined(value) ? value : DashboardView.Grid);
+    }
+
+    /// <summary>True once the first-visit tour was finished or skipped; the Guide page sets it back to show the tour again.</summary>
+    public bool GuideTourSeen
+    {
+        get => _settings.GuideTourSeen;
+        set => Update(() => _settings.GuideTourSeen = value);
     }
     public bool IsConfigured => Tfs.IsConfigured && (Tfs.Auth != TfsAuthMode.Windows || AllowsWindowsSignIn);
 
@@ -315,12 +342,14 @@ public partial class SettingsService
 
         try
         {
-            // Cleared first, so a failure the store reports while it writes (the browser's) is not wiped out after it.
             LastSaveError = null;
-            _store.Write(JsonSerializer.Serialize(BuildPersistableCopy(), FileFormat));
+            var text = PersistableText();
+            _store.Write(text, _savedText);
+            _savedText = text;
+            StartedEmpty = false;
             return true;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or CryptographicException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or CryptographicException or JsonException)
         {
             _logger.LogError(ex, "Settings could not be saved");
             LastSaveError = _store.SaveFailedMessage ?? SaveFailedMessage;
@@ -344,6 +373,9 @@ public partial class SettingsService
         _settings = loaded;
         var stored = loaded.Tfs.Pat ?? "";
         loaded.Tfs.Pat = DecryptPat(stored, loaded.Tfs.Url);
+        // What is stored, as this build reads it: a value it does not know reads as its default here, and stays stored
+        // until the person changes that setting.
+        _savedText = PersistableText();
         if (FixedTfsUrl is not null && !SameServer(loaded.Tfs.Url, FixedTfsUrl))
         {
             // The token belongs to another server, so it must never be sent to this one.
@@ -420,6 +452,8 @@ public partial class SettingsService
             ? _undecryptablePat
             : _store.Pat.Protect(_settings.Tfs.Pat, PatContext(_settings.Tfs.Url));
 
+    private string PersistableText() => JsonSerializer.Serialize(BuildPersistableCopy(), FileFormat);
+
     // The PAT is held in memory as plaintext (the API client needs it) but persisted
     // encrypted, by itself or with the whole text. Build a copy so the in-memory value is untouched.
     private UserSettings BuildPersistableCopy() => new()
@@ -429,7 +463,8 @@ public partial class SettingsService
             Url = _settings.Tfs.Url,
             Auth = _settings.Tfs.Auth,
             Pat = PersistedPat(),
-            ApiVersion = _settings.Tfs.ApiVersion
+            ApiVersion = _settings.Tfs.ApiVersion,
+            UnknownFields = _settings.Tfs.UnknownFields
         },
         DefaultAreaPath = _settings.DefaultAreaPath,
         DefaultSprint = _settings.DefaultSprint,
@@ -443,6 +478,9 @@ public partial class SettingsService
         CodeMergingTargetBranch = _settings.CodeMergingTargetBranch,
         CodeMergingRepoIds = _settings.CodeMergingRepoIds,
         RepoTargetBranches = _settings.RepoTargetBranches,
-        RepoBranches = _settings.RepoBranches
+        RepoBranches = _settings.RepoBranches,
+        DashboardView = _settings.DashboardView,
+        GuideTourSeen = _settings.GuideTourSeen,
+        UnknownFields = _settings.UnknownFields
     };
 }

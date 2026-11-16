@@ -15,7 +15,8 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      # Actions are pinned to the commit of a release, which nobody can move as a tag can be moved; Dependabot raises them.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Refuse committed settings files
         shell: pwsh
@@ -26,12 +27,39 @@ jobs:
             exit 1
           }
 
-      - uses: actions/setup-dotnet@v6
+      - name: Refuse committed secrets
+        shell: pwsh
+        run: |
+          # Certificates and keys by name; private keys and Azure DevOps tokens (52 characters of base32) by content.
+          $found = @(git ls-files | Where-Object { $_ -match '\.(pfx|p12|pem|key|snk)$' })
+          $found += @(git grep -I -l -E 'BEGIN (RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY' -- .)
+          $found += @(git grep -I -l -E '(^|[^a-z2-7])[a-z2-7]{52}([^a-z2-7]|$)' -- .)
+          if ($found) {
+            Write-Error "These files look like they hold a secret: $($found -join ', ')"
+            exit 1
+          }
+          exit 0
+
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           global-json-file: global.json
 
       - name: Restore
         run: dotnet restore DevKit.sln
+
+      - name: Refuse packages with known vulnerabilities
+        shell: pwsh
+        run: |
+          $report = dotnet list DevKit.sln package --vulnerable --include-transitive 2>&1 | Out-String
+          $report
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          if ($report -match 'has the following vulnerable packages') {
+            Write-Error 'A package with a known vulnerability is in use; update it.'
+            exit 1
+          }
+          exit 0
 
       - name: Build (warnings are errors)
         run: dotnet build DevKit.sln -c Release --no-restore -warnaserror
@@ -45,7 +73,7 @@ jobs:
 
       - name: Upload test results and coverage
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-results
           path: TestResults
@@ -56,9 +84,9 @@ jobs:
     timeout-minutes: 30
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           global-json-file: global.json
 
@@ -71,7 +99,7 @@ jobs:
           $issues | Add-Content sonar-summary.txt
 
       - name: Upload the SonarAnalyzer report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sonar-analyzer
           path: sonar-summary.txt
