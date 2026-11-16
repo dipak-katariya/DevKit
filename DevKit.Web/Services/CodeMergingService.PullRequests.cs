@@ -61,7 +61,7 @@ public partial class CodeMergingService
         TfsRepo repo, string status, int top, CancellationToken ct)
     {
         var url = _req.ProjectApi(repo.Project,
-            $"git/repositories/{repo.Id}/pullrequests" +
+            $"git/repositories/{Uri.EscapeDataString(repo.Id)}/pullrequests" +
             $"?searchCriteria.status={status}&$top={top}&api-version={_req.Ver}");
         try
         {
@@ -249,7 +249,7 @@ public partial class CodeMergingService
     {
         var path = link.RepositoryId is null
             ? $"git/pullrequests/{link.PullRequestId}"
-            : $"git/repositories/{link.RepositoryId}/pullrequests/{link.PullRequestId}";
+            : $"git/repositories/{Uri.EscapeDataString(link.RepositoryId)}/pullrequests/{link.PullRequestId}";
         var subject = $"Pull request !{link.PullRequestId} linked from #{workItemId}";
         try
         {

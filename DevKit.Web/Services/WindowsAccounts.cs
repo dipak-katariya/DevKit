@@ -1,11 +1,14 @@
+using System.Globalization;
 using System.Net.Security;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Security.Authentication.ExtendedProtection;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using Microsoft.AspNetCore.Connections.Features;
+using Microsoft.AspNetCore.Server.Kestrel.Core.Features;
 using Microsoft.Win32.SafeHandles;
 
 namespace DevKit.Web.Services;
@@ -38,6 +41,35 @@ public sealed record SignedInUser(string Id, string Name, bool IsOwner)
     {
         ArgumentNullException.ThrowIfNull(identity);
         return identity.User?.Value is { } id ? Of(id, identity.Name, ownerId) : null;
+    }
+}
+
+/// <summary>Who may sign in to shared DevKit when devkit.json names groups (<see cref="DevKitHostingOptions.AllowedGroups"/>).</summary>
+internal static class AllowedGroups
+{
+    /// <summary>
+    /// Whether <paramref name="identity"/> may sign in: anyone when <paramref name="allowed"/> is empty, the account DevKit
+    /// runs as always, and otherwise a member of one of the groups, or one of them itself.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    public static bool Admit(WindowsIdentity identity, IReadOnlySet<string> allowed, string ownerId)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+        return Admit(identity.User, (identity.Groups ?? new IdentityReferenceCollection()).OfType<SecurityIdentifier>(), allowed, ownerId);
+    }
+
+    /// <summary>Whether the account <paramref name="user"/>, a member of <paramref name="groups"/>, may sign in (as above).</summary>
+    [SupportedOSPlatform("windows")]
+    public static bool Admit(SecurityIdentifier? user, IEnumerable<SecurityIdentifier> groups, IReadOnlySet<string> allowed, string ownerId)
+    {
+        ArgumentNullException.ThrowIfNull(groups);
+        ArgumentNullException.ThrowIfNull(allowed);
+        if (allowed.Count == 0 || string.Equals(user?.Value, ownerId, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return (user is not null && allowed.Contains(user.Value)) || groups.Any(group => allowed.Contains(group.Value));
     }
 }
 
@@ -99,11 +131,20 @@ internal enum SingleSignOnState
     Completed,
 
     /// <summary>The handshake failed: <see cref="SingleSignOnStep.Error"/> says why.</summary>
-    Failed
+    Failed,
+
+    /// <summary>
+    /// Windows accepted the proof, but <see cref="SingleSignOnStep.User"/> is in none of the groups devkit.json allows
+    /// (<see cref="DevKitHostingOptions.AllowedGroups"/>).
+    /// </summary>
+    NotAllowed
 }
 
 internal readonly record struct SingleSignOnStep(SingleSignOnState State, SignedInUser? User, string Error)
 {
+    /// <summary>What the audit log says of an account outside the allowed groups.</summary>
+    public const string NotAllowedDetail = "not in DevKit:AllowedGroups";
+
     public static SingleSignOnStep Of(SingleSignOnState state) => new(state, null, "");
 
     public static SingleSignOnStep Fail(string error) => new(SingleSignOnState.Failed, null, error);
@@ -120,25 +161,63 @@ internal readonly record struct SingleSignOnStep(SingleSignOnState State, Signed
 /// NTLM's challenge, and Windows checks the answer with the domain. NTLM's three messages must share one connection,
 /// so the handshake is kept with the connection, never longer.
 /// </para>
+/// <para>
+/// An answer counts only when the browser made it for this DevKit: the site a browser signs in to is part of what Windows
+/// checks, so it cannot be changed on the way. It must be one of DevKit's names, and when it names a port ("HTTP/name:port",
+/// as Chrome and Edge do), the port this connection reached; other clients leave the port out ("HTTP/name"). A sign-in
+/// someone collected on a site of their own and passed on to DevKit (NTLM relay) names their site, or, from Chrome or
+/// Edge, their port on this same server, and is refused.
+/// </para>
 /// </summary>
 internal sealed class WindowsSignIn
 {
     private const string NtlmScheme = "NTLM";
     private const string NtlmPrefix = NtlmScheme + " ";
+    private const string ServicePrefix = "HTTP/";
     private const int NtlmTypeOffset = 8;
     private const byte NtlmNegotiateType = 1;
 
     private static readonly object HandshakeKey = new();
+    private static readonly object BindingKey = new();
 
     private readonly IWindowsCredentialChecker _checker;
     private readonly SignInThrottle _throttle;
     private readonly OwnerAccount _owner;
+    private readonly HashSet<string> _ownNames;
+    private readonly IReadOnlySet<string> _allowedGroups;
 
-    public WindowsSignIn(IWindowsCredentialChecker checker, SignInThrottle throttle, OwnerAccount owner)
+    /// <param name="hostNames">The names browsers reach DevKit by (<see cref="DevKitHostingOptions.HostNames"/>).</param>
+    /// <param name="allowedGroups">The groups whose members may sign in (<see cref="DevKitHostingOptions.AllowedGroupIds"/>); null or empty for anyone.</param>
+    public WindowsSignIn(
+        IWindowsCredentialChecker checker, SignInThrottle throttle, OwnerAccount owner, IEnumerable<string> hostNames, IReadOnlySet<string>? allowedGroups = null)
     {
+        ArgumentNullException.ThrowIfNull(hostNames);
         _checker = checker;
         _throttle = throttle;
         _owner = owner;
+        _ownNames = new HashSet<string>(hostNames, StringComparer.OrdinalIgnoreCase);
+        _allowedGroups = allowedGroups ?? new HashSet<string>();
+    }
+
+    /// <summary>
+    /// Whether <paramref name="signedInTo"/>, the site the browser signed in to, is this DevKit: one of its names, at the
+    /// port the connection reached. The request's Host header is not used, since whoever sends the request writes it.
+    /// </summary>
+    internal bool IsForThisDevKit(string? signedInTo, HttpContext context)
+    {
+        if (signedInTo is null || !signedInTo.StartsWith(ServicePrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var site = signedInTo[ServicePrefix.Length..];
+        var colon = site.LastIndexOf(':');
+        var named = colon > site.LastIndexOf(']')
+                    && int.TryParse(site.AsSpan(colon + 1), NumberStyles.None, CultureInfo.InvariantCulture, out var port)
+            ? port
+            : (int?)null;
+        var host = named is null ? site : site[..colon];
+        return _ownNames.Contains(host) && (named is null || named == context.Connection.LocalPort);
     }
 
     /// <summary>
@@ -181,9 +260,22 @@ internal sealed class WindowsSignIn
 
         try
         {
-            return status == NegotiateAuthenticationStatusCode.Completed && UserOf(handshake) is { } user
-                ? new SingleSignOnStep(SingleSignOnState.Completed, user, "")
-                : SingleSignOnStep.Fail($"Windows did not accept the sign-in ({status}).");
+            if (status != NegotiateAuthenticationStatusCode.Completed)
+            {
+                return SingleSignOnStep.Fail($"Windows did not accept the sign-in ({status}).");
+            }
+
+            if (!IsForThisDevKit(handshake.TargetName, context))
+            {
+                return SingleSignOnStep.Fail($"The browser signed in to another site ({handshake.TargetName}), so it was passed on to DevKit and not taken.");
+            }
+
+            return UserOf(handshake) switch
+            {
+                ({ } user, true) => new SingleSignOnStep(SingleSignOnState.Completed, user, ""),
+                ({ } user, false) => new SingleSignOnStep(SingleSignOnState.NotAllowed, user, SingleSignOnStep.NotAllowedDetail),
+                _ => SingleSignOnStep.Fail("Windows did not say who signed in.")
+            };
         }
         finally
         {
@@ -194,24 +286,29 @@ internal sealed class WindowsSignIn
     public CredentialCheck CheckPassword(string userName, string password)
     {
         var account = _checker.AccountKey(userName);
-        if (_throttle.IsBlocked(account, out var wait))
+        var start = _throttle.TryBegin(account);
+        if (!start.IsStarted)
         {
-            return CredentialCheck.Refused(
-                $"Too many wrong passwords for this account. Try again in {Math.Max(1, (int)Math.Ceiling(wait.TotalMinutes))} minute(s), or use \"Sign in with your Windows account\".",
-                "stopped after too many wrong passwords");
+            var minutes = Math.Max(1, (int)Math.Ceiling(start.Wait.TotalMinutes));
+            return start.ForEveryone
+                ? CredentialCheck.Refused(
+                    $"Too many wrong passwords were typed on this DevKit just now. Try again in {minutes} minute(s), or use \"Sign in with your Windows account\".",
+                    "stopped after too many wrong passwords on this DevKit")
+                : CredentialCheck.Refused(
+                    $"Too many wrong passwords for this account. Try again in {minutes} minute(s), or use \"Sign in with your Windows account\".",
+                    "stopped after too many wrong passwords");
         }
 
-        var check = _checker.Check(userName, password);
-        if (check.User is null)
+        var check = CredentialCheck.Refused("", "");
+        try
         {
-            _throttle.RecordFailure(account);
+            check = _checker.Check(userName, password);
+            return check;
         }
-        else
+        finally
         {
-            _throttle.RecordSuccess(account);
+            _throttle.End(account, accepted: check.User is not null);
         }
-
-        return check;
     }
 
     /// <summary>NTLM's negotiate message: "NTLMSSP", a zero byte, then message type 1.</summary>
@@ -232,11 +329,25 @@ internal sealed class WindowsSignIn
         return true;
     }
 
-    /// <summary>A new handshake kept with this connection, and released with it if the browser never finishes.</summary>
+    /// <summary>
+    /// A new handshake kept with this connection, and released with it if the browser never finishes. Over https it is
+    /// bound to this connection's TLS channel (Extended Protection): an answer a browser made inside another TLS channel,
+    /// such as one to a site that passes it on, does not complete it. A browser that binds nothing is still checked by
+    /// the site it signed in to (<see cref="IsForThisDevKit"/>).
+    /// </summary>
     private static NegotiateAuthentication StartHandshake(HttpContext context, IDictionary<object, object?> connection)
     {
-        var handshake = new NegotiateAuthentication(new NegotiateAuthenticationServerOptions { Package = NtlmScheme });
+        var binding = context.Request.IsHttps
+            ? context.Features.Get<ISslStreamFeature>()?.SslStream.TransportContext?.GetChannelBinding(ChannelBindingKind.Endpoint)
+            : null;
+        var handshake = new NegotiateAuthentication(new NegotiateAuthenticationServerOptions
+        {
+            Package = NtlmScheme,
+            Binding = binding,
+            Policy = binding is null ? null : new ExtendedProtectionPolicy(PolicyEnforcement.WhenSupported, ProtectionScenario.TransportSelected, null)
+        });
         connection[HandshakeKey] = handshake;
+        connection[BindingKey] = binding;
         context.Features.Get<IConnectionCompleteFeature>()?.OnCompleted(
             static state =>
             {
@@ -249,23 +360,36 @@ internal sealed class WindowsSignIn
 
     private static void DropHandshake(IDictionary<object, object?>? connection)
     {
-        if (connection is not null && connection.Remove(HandshakeKey, out var kept))
+        if (connection is null)
+        {
+            return;
+        }
+
+        if (connection.Remove(HandshakeKey, out var kept))
         {
             (kept as IDisposable)?.Dispose();
         }
+
+        if (connection.Remove(BindingKey, out var binding))
+        {
+            (binding as IDisposable)?.Dispose();
+        }
     }
 
-    /// <summary>The person a finished handshake proved to be. The identity Windows hands out is read, then released.</summary>
-    private SignedInUser? UserOf(NegotiateAuthentication handshake)
+    /// <summary>
+    /// The person a finished handshake proved to be, and whether they may sign in. The identity Windows hands out is read,
+    /// then released.
+    /// </summary>
+    private (SignedInUser? User, bool Allowed) UserOf(NegotiateAuthentication handshake)
     {
         if (!OperatingSystem.IsWindows() || handshake.RemoteIdentity is not WindowsIdentity identity)
         {
-            return null;
+            return (null, false);
         }
 
         using (identity)
         {
-            return SignedInUser.From(identity, _owner.Id);
+            return (SignedInUser.From(identity, _owner.Id), AllowedGroups.Admit(identity, _allowedGroups, _owner.Id));
         }
     }
 }
@@ -297,15 +421,20 @@ internal sealed class WindowsCredentialChecker : IWindowsCredentialChecker
 
     private readonly string _defaultDomain;
     private readonly string _ownerId;
+    private readonly IReadOnlySet<string> _allowedGroups;
     private readonly ILogger<WindowsCredentialChecker> _logger;
 
-    /// <param name="options">Its <see cref="DevKitHostingOptions.Domain"/> is the domain of a username typed without one.</param>
+    /// <param name="options">
+    /// Its <see cref="DevKitHostingOptions.Domain"/> is the domain of a username typed without one, and its
+    /// <see cref="DevKitHostingOptions.AllowedGroupIds"/> the groups whose members may sign in.
+    /// </param>
     public WindowsCredentialChecker(DevKitHostingOptions options, OwnerAccount owner, ILogger<WindowsCredentialChecker> logger)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(owner);
         _defaultDomain = options.Domain;
         _ownerId = owner.Id;
+        _allowedGroups = options.AllowedGroupIds;
         _logger = logger;
     }
 
@@ -321,8 +450,23 @@ internal sealed class WindowsCredentialChecker : IWindowsCredentialChecker
         var error = Marshal.GetLastPInvokeError();
         using (token)
         {
-            return accepted ? Identify(Account(user, domain)) : CredentialCheck.Refused(NotAccepted, Describe(error));
+            if (!accepted)
+            {
+                return CredentialCheck.Refused(NotAccepted, Describe(error));
+            }
+
+            // The same answer as a wrong password: saying "not allowed" would tell a guesser the password is right.
+            return IsAllowed(token)
+                ? Identify(Account(user, domain))
+                : CredentialCheck.Refused(NotAccepted, SingleSignOnStep.NotAllowedDetail);
         }
+    }
+
+    /// <summary>Whether the account whose sign-in <paramref name="token"/> holds may sign in (<see cref="AllowedGroups"/>).</summary>
+    private bool IsAllowed(SafeAccessTokenHandle token)
+    {
+        return _allowedGroups.Count == 0
+               || AllowedGroups.Admit(WindowsTokens.User(token), WindowsTokens.Groups(token), _allowedGroups, _ownerId);
     }
 
     /// <summary>

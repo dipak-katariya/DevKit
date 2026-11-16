@@ -123,6 +123,26 @@ public sealed class TfsConnectionFormTests : IDisposable
     }
 
     [Theory]
+    [InlineData("http://tfs.example.test:8080/tfs/C")]
+    [InlineData("HTTP://10.20.30.40/tfs/C")]
+    public void Windows_sign_in_refuses_plain_http_to_another_machine(string url)
+    {
+        var candidate = TfsConnectionForm.ChooseWindowsSignIn(url);
+
+        Assert.False(candidate.IsValid);
+        Assert.Equal(TfsConnectionForm.WindowsSignInNeedsHttps, candidate.Error);
+    }
+
+    [Theory]
+    [InlineData("http://localhost:8080/tfs/C")]
+    [InlineData("http://127.0.0.1/tfs/C")]
+    [InlineData("https://tfs.example.test/tfs/C")]
+    public void Windows_sign_in_takes_https_or_this_machine(string url)
+    {
+        Assert.True(TfsConnectionForm.ChooseWindowsSignIn(url).IsValid);
+    }
+
+    [Theory]
     [InlineData(TfsAuthMode.Pat, "your PAT")]
     [InlineData(TfsAuthMode.Windows, "your Windows sign-in")]
     public void The_unencrypted_warning_names_what_travels_in_the_clear(TfsAuthMode auth, string named)

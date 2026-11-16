@@ -1,0 +1,147 @@
+@inject IJSRuntime JS
+@inject ILogger<GuideTour> Logger
+@implements IAsyncDisposable
+
+@* The first-visit tour. Each step lights up the real part of the screen it talks about (devKit.tour in app.js finds
+   it and places the note beside it); a step whose part is not on screen, such as the sidebar inside the closed menu
+   on a phone, falls back to the part that opens it, or to a note on its own. MainLayout shows the tour until it is
+   finished or skipped; Escape skips it. A click outside does nothing, so a stray click does not lose the tour. *@
+
+<div class="tour">
+    <div class="tour-veil"></div>
+    <div class="tour-hole" aria-hidden="true"></div>
+    <div class="tour-card" @ref="card" role="dialog" aria-modal="true" aria-labelledby="@titleId" aria-describedby="@textId"
+         tabindex="-1" @onkeydown="OnKeyDownAsync">
+        @* Read out again on each step, as the dialog's focus stays on the button that moved it. *@
+        <div class="tour-step" aria-live="polite" aria-atomic="true">
+            <p class="tour-count">@(index + 1) of @steps.Count</p>
+            <h2 id="@titleId">@Current.Title</h2>
+            <p id="@textId" class="tour-text">@Current.Text</p>
+        </div>
+        <div class="tour-actions">
+            @if (IsLast)
+            {
+                <button type="button" class="btn-ghost tour-skip" @onclick="() => OnDone.InvokeAsync(true)">Open the Guide</button>
+            }
+            else
+            {
+                <button type="button" class="btn-ghost tour-skip" @onclick="() => OnDone.InvokeAsync(false)">Skip tour</button>
+            }
+            @if (index > 0)
+            {
+                <button type="button" class="btn-ghost" @onclick="() => Go(-1)">Back</button>
+            }
+            @if (IsLast)
+            {
+                <button type="button" class="btn-primary" @onclick="() => OnDone.InvokeAsync(false)">Done</button>
+            }
+            else
+            {
+                <button type="button" class="btn-primary" @onclick="() => Go(1)">Next</button>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private const string PlaceCall = "devKit.tour.place";
+    private const string EndCall = "devKit.tour.end";
+    private const string OpenCall = "devKit.openDialog";
+    private const string CloseCall = "devKit.closeDialog";
+
+    // The sidebar is a drawer behind the menu button at 900px and narrower, so its steps fall back to that button.
+    private const string MenuButton = ".tb-menu";
+
+    /// <summary>One step: what it says, and where on the screen it points, best match first.</summary>
+    private sealed record TourStep(string Title, string Text, params string[] Targets);
+
+    private static readonly TourStep[] AllSteps =
+    {
+        new("Welcome to DevKit", "Tools for our TFS work, all in one place. This short tour shows where things are. It takes a minute."),
+        new("Your tools are in the sidebar", "Your day tools first, then Sprint work in the order you use them. On a small screen they are behind this menu button.",
+            ".sidebar-nav", MenuButton),
+        new("Start with Settings", "Connect TFS and pick your team once. Every tool then opens with your team, area and sprint already picked.",
+            ".sidebar-foot .nav-item", MenuButton),
+        new("The Dashboard", "Every tool as a tile, with a line on what it does. Open it any time from here.",
+            ".sidebar-nav > .nav-item", MenuButton),
+        new("Ctrl K jumps anywhere", "Press Ctrl K on any page, type a few letters of a tool's name and press Enter.",
+            ".topbar-search .ts-box"),
+        new("The Guide, any time", "This button opens the Guide: what each tool is for and how to use it. The label beside it shows whether DevKit reaches TFS.",
+            ".tb-guide"),
+        new(SignOutTitle, "Ends your session in every tab, so someone else can sign in on this PC.",
+            ".tb-user"),
+    };
+
+    private const string SignOutTitle = "Sign out when you are done";
+
+    private readonly string titleId = "tour-" + Guid.NewGuid().ToString("N")[..8];
+    private readonly string textId = "tour-text-" + Guid.NewGuid().ToString("N")[..8];
+
+    private IReadOnlyList<TourStep> steps = AllSteps;
+    private int index;
+    private int placedIndex = -1;
+    private bool opened;
+    private ElementReference card;
+
+    /// <summary>Shared DevKit has a Sign out button to point at; DevKit run for one person does not.</summary>
+    [Parameter] public bool ShowSignOut { get; set; }
+
+    /// <summary>The tour is over. True when the person asked to open the Guide.</summary>
+    [Parameter] public EventCallback<bool> OnDone { get; set; }
+
+    private TourStep Current => steps[index];
+    private bool IsLast => index == steps.Count - 1;
+
+    protected override void OnParametersSet()
+    {
+        steps = ShowSignOut ? AllSteps : AllSteps.Where(s => s.Title != SignOutTitle).ToArray();
+        index = Math.Min(index, steps.Count - 1);
+    }
+
+    private void Go(int by) => index = Math.Clamp(index + by, 0, steps.Count - 1);
+
+    private Task OnKeyDownAsync(KeyboardEventArgs e) => e.Key == "Escape" ? OnDone.InvokeAsync(false) : Task.CompletedTask;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            opened = await CallAsync(OpenCall, card, titleId);
+        }
+        if (placedIndex == index)
+        {
+            return;
+        }
+        placedIndex = index;
+        await CallAsync(PlaceCall, card, Current.Targets);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await CallAsync(EndCall);
+        if (opened)
+        {
+            await CallAsync(CloseCall, titleId);
+        }
+    }
+
+    // Pointing at the screen is a help, not something the tour depends on: if the browser call fails, the note still
+    // shows on its own, so the failure is logged and the tour carries on. A page that has closed has nothing to point at.
+    private async Task<bool> CallAsync(string identifier, params object[] args)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync(identifier, args);
+            return true;
+        }
+        catch (JSDisconnectedException ex)
+        {
+            Logger.LogDebug(ex, "Tour call {Call} was not made because the page has closed", identifier);
+        }
+        catch (JSException ex)
+        {
+            Logger.LogError(ex, "Tour call {Call} failed in the browser", identifier);
+        }
+        return false;
+    }
+}

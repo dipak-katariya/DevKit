@@ -5,14 +5,22 @@ using Microsoft.JSInterop;
 namespace DevKit.Web.Services;
 
 /// <summary>
-/// The copies of a person's settings that earlier DevKits kept: their file on this server (<see cref="ServerSettingsFolder"/>),
-/// or, before that, this browser's local storage, encrypted with this server's keys. When the person's browser keeps no
-/// settings yet, the newest copy is read once to move it there (<see cref="ClientSettingsStore"/>), and every copy is
-/// deleted once the browser has kept it, so the server keeps nothing of theirs. A browser keeps one local storage per
-/// site address, so only a copy made under the address DevKit is opened at now can be found.
+/// The copies of a person's settings that earlier DevKits kept outside the server's settings folder: in the server's
+/// older folder (<see cref="ServerSettingsFolder"/>), or encrypted in their browser's local storage. Both were encrypted
+/// with keys only this server has, so a copy that opens is one DevKit made. When the server keeps no settings for the
+/// person yet, the newest copy found is read once to move it there (<see cref="PersonSettingsStore"/>), and the copies
+/// DevKit can reach are deleted once the server keeps it. A browser keeps its copies per site address, so only those
+/// made under the address DevKit is opened at now are found.
+/// <para>
+/// The copy a later DevKit kept sealed in the browser's cookies is never moved: anyone can seal settings that open as
+/// someone else's, and plant them in a browser from any site of the domain, so a cookie cannot show that DevKit made it.
+/// The browser is only told to drop those cookies.
+/// </para>
 /// </summary>
 internal sealed class EarlierSettingsCopies
 {
+    private const string ModulePath = "./earlier-settings.js?v=3";
+
     // How the browser store before the server's named and encrypted each account's settings.
     private const string PurposePrefix = "DevKit.UserSettings.v1|";
     private const string KeyPrefix = "devkit-settings-";
@@ -20,30 +28,36 @@ internal sealed class EarlierSettingsCopies
 
     private readonly ServerSettingsFolder _server;
     private readonly ProtectedLocalStorage _browser;
+    private readonly IJSRuntime _js;
     private readonly ILogger<EarlierSettingsCopies> _logger;
 
-    public EarlierSettingsCopies(ServerSettingsFolder server, ProtectedLocalStorage browser, ILogger<EarlierSettingsCopies> logger)
+    public EarlierSettingsCopies(
+        ServerSettingsFolder server,
+        ProtectedLocalStorage browser,
+        IJSRuntime js,
+        ILogger<EarlierSettingsCopies> logger)
     {
         _server = server;
         _browser = browser;
+        _js = js;
         _logger = logger;
     }
 
-    /// <summary>The settings text of the newest earlier copy, the server's before the browser's; null when none can be read.</summary>
+    /// <summary>The settings text of the newest earlier copy: the older server folder's, then the browser's local storage; null when none can be read.</summary>
     public async Task<string?> ReadAsync(SignedInUser user)
     {
         ArgumentNullException.ThrowIfNull(user);
         return ReadServerCopy(user) ?? await ReadBrowserCopyAsync(user);
     }
 
-    /// <summary>Deletes every earlier copy of <paramref name="user"/>'s settings, once their browser keeps them.</summary>
+    /// <summary>Deletes every earlier copy, once the server keeps the settings.</summary>
     public async Task DeleteAsync(SignedInUser user)
     {
         DeleteServerCopy(user);
         await DeleteBrowserCopyAsync(user);
     }
 
-    /// <summary>Deletes the server's copy, with its backup and any damaged copies set aside beside it.</summary>
+    /// <summary>Deletes the older server folder's copy, with its backup and any damaged copies set aside beside it.</summary>
     public void DeleteServerCopy(SignedInUser user)
     {
         ArgumentNullException.ThrowIfNull(user);
@@ -52,12 +66,33 @@ internal sealed class EarlierSettingsCopies
             var deleted = _server.Delete(user);
             if (deleted > 0)
             {
-                _logger.LogInformation("Deleted {Count} files of a person's settings from the server, now that their browser keeps them", deleted);
+                _logger.LogInformation("Deleted {Count} files of a person's settings from the older server folder, now that the settings folder keeps them", deleted);
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError(ex, "A person's settings could not be deleted from the server; DevKit tries again on their next visit");
+            _logger.LogError(ex, "A person's settings could not be deleted from the older server folder; DevKit tries again on their next visit");
+        }
+    }
+
+    /// <summary>Has the browser drop the settings an earlier DevKit kept sealed in its cookies, which are never moved.</summary>
+    public async Task ClearCookieCopyAsync()
+    {
+        try
+        {
+            var module = await _js.InvokeAsync<IJSObjectReference>("import", ModulePath);
+            await using (module)
+            {
+                await module.InvokeVoidAsync("clearBrowser");
+            }
+        }
+        catch (Exception ex) when (ex is JSDisconnectedException or OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "The page closed before its browser's earlier settings copy was cleared");
+        }
+        catch (JSException ex)
+        {
+            _logger.LogError(ex, "A browser's earlier settings copy could not be cleared; it stays until the browser deletes it");
         }
     }
 

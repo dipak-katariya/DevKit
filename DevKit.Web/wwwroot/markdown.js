@@ -14,19 +14,21 @@
             .replace(/"/g, '&quot;');
     }
 
-    // Block javascript:, data:, vbscript: and similar dangerous schemes. Relative
-    // URLs and anchors (no scheme) are allowed; absolute URLs must be on the allowlist.
-    function hasScheme(url) { return /^[a-z][a-z0-9+.-]*:/i.test(url); }
-    function safeLinkUrl(url) {
-        var u = (url || '').trim();
-        if (hasScheme(u) && !/^(https?|mailto):/i.test(u)) return '';
-        return u;
+    // Only http, https and (for links) mailto, or an address on this site. The address is read the way the browser will
+    // read it: browsers drop tabs and line breaks anywhere in it and control characters and spaces at either end, so
+    // "java<tab>script:" is still javascript:. What is left is parsed as a URL, and its scheme decides.
+    var LINK_SCHEMES = ['http:', 'https:', 'mailto:'];
+    var IMAGE_SCHEMES = ['http:', 'https:'];
+    function asBrowserReadsIt(url) {
+        return String(url || '').replace(/[\t\n\r]/g, '').replace(/^[\u0000- ]+|[\u0000- ]+$/g, '');
     }
-    function safeImageUrl(url) {
-        var u = (url || '').trim();
-        if (hasScheme(u) && !/^https?:/i.test(u)) return '';
-        return u;
+    function allowedUrl(url, schemes) {
+        var u = asBrowserReadsIt(url);
+        if (!URL.canParse(u, document.baseURI)) return '';
+        return schemes.indexOf(new URL(u, document.baseURI).protocol) >= 0 ? u : '';
     }
+    function safeLinkUrl(url) { return allowedUrl(url, LINK_SCHEMES); }
+    function safeImageUrl(url) { return allowedUrl(url, IMAGE_SCHEMES); }
 
     // ════════════════════════════════
     //  SYNTAX HIGHLIGHTER

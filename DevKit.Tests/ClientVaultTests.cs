@@ -135,47 +135,24 @@ public sealed class ClientVaultTests
     }
 
     [Fact]
-    public void Only_text_in_the_shape_this_DevKit_seals_it_is_kept()
+    public void Clearing_drops_every_piece_for_the_whole_domain_at_the_vault_address_only()
     {
-        var sealedText = Seal(Alice, Settings);
-        var other = new ClientVault(new FakeKeyLock(AnotherAccount), Domain);
-        var anotherAccounts = other.Seal(Alice, other.NewKey(), Settings);
-        var parts = sealedText.Split('.');
+        var context = SignedIn(Request("devkit-a.example.test", KeptInPieces(Alice, LongSealedText())), Alice);
 
-        Assert.True(_vault.IsWellFormed(sealedText));
-        Assert.False(_vault.IsWellFormed(null));
-        Assert.False(_vault.IsWellFormed(anotherAccounts));
-        Assert.False(_vault.IsWellFormed("v1.12345678.***"));
-        Assert.False(_vault.IsWellFormed(string.Join('.', parts[0], parts[1], "", parts[3])));
-        Assert.False(_vault.IsWellFormed(string.Join('.', parts[0], parts[1], parts[2], "AAAA")));
-        Assert.False(_vault.IsWellFormed(sealedText + new string('A', ClientVault.MaxSealedChars)));
-    }
-
-    [Fact]
-    public void The_browser_keeps_them_in_pieces_for_the_whole_domain_sent_only_to_the_vault_address()
-    {
-        var context = Request("devkit-a.example.test");
-        var sealedText = LongSealedText();
-
-        _vault.WriteTo(context, Alice, sealedText);
+        Assert.IsType<NoContent>(ClientVaultEndpoints.Clear(context, _vault, RunsDevKit));
 
         var cookies = SetCookies(context);
         Assert.Equal(3, cookies.Count);
         Assert.All(cookies, cookie =>
         {
             Assert.StartsWith(ClientVault.CookieNameFor(Alice), cookie.Name.Value, StringComparison.Ordinal);
-            Assert.True(cookie.Value.Length <= ClientVault.PieceChars);
+            Assert.True(cookie.Expires < DateTimeOffset.UtcNow);
             Assert.Equal(Domain, cookie.Domain.Value);
             Assert.Equal(ClientVault.Address, cookie.Path.Value);
             Assert.True(cookie.HttpOnly);
             Assert.True(cookie.Secure);
-            Assert.Equal(Microsoft.Net.Http.Headers.SameSiteMode.Strict, cookie.SameSite);
-            Assert.Equal(ClientVault.CookieLifetime, cookie.MaxAge);
         });
-
-        var next = Request("devkit-b.example.test", cookies);
-        Assert.Equal(sealedText, ClientVault.ReadFrom(next.Request.Cookies, Alice));
-        Assert.Null(ClientVault.ReadFrom(next.Request.Cookies, Bob));
+        Assert.Equal("no-store", context.Response.Headers.CacheControl.ToString());
     }
 
     [Theory]
@@ -183,27 +160,23 @@ public sealed class ClientVaultTests
     [InlineData("devbox")]
     [InlineData("devkit.example.test.evil.test")]
     [InlineData("notexample.test")]
-    public void A_name_outside_the_domain_keeps_them_for_that_name_alone(string host)
+    public void A_name_outside_the_domain_clears_them_for_that_name_alone(string host)
     {
-        var context = Request(host);
+        var context = SignedIn(Request(host, KeptInPieces(Alice, Seal(Alice, Settings))), Alice);
 
-        _vault.WriteTo(context, Alice, Seal(Alice, Settings));
+        ClientVaultEndpoints.Clear(context, _vault, RunsDevKit);
 
         Assert.All(SetCookies(context), cookie => Assert.False(cookie.Domain.HasValue));
     }
 
     [Fact]
-    public void Pieces_left_from_longer_settings_are_dropped()
+    public void Clearing_leaves_other_peoples_pieces_alone()
     {
-        var first = Request("devkit-a.example.test");
-        _vault.WriteTo(first, Alice, LongSealedText());
-        var context = Request("devkit-a.example.test", SetCookies(first));
+        var context = SignedIn(Request("devkit-a.example.test", KeptInPieces(Bob, Seal(Bob, Settings))), Alice);
 
-        _vault.WriteTo(context, Alice, Seal(Alice, Settings));
+        ClientVaultEndpoints.Clear(context, _vault, RunsDevKit);
 
-        var cookies = SetCookies(context);
-        Assert.Equal(3, cookies.Count);
-        Assert.Equal(2, cookies.Count(c => c.Expires < DateTimeOffset.UtcNow && c.MaxAge is null));
+        Assert.Empty(SetCookies(context));
     }
 
     [Fact]
@@ -217,48 +190,22 @@ public sealed class ClientVaultTests
     }
 
     [Fact]
-    public void Reading_with_nothing_kept_answers_no_content_and_is_never_cached()
+    public void Nobody_signed_in_clears_nothing()
     {
-        var context = SignedIn(Request("devkit-a.example.test"), Alice);
+        var context = Request("devkit-a.example.test", KeptInPieces(Alice, Seal(Alice, Settings)));
 
-        Assert.IsType<NoContent>(ClientVaultEndpoints.Read(context, _vault, RunsDevKit));
-        Assert.Equal("no-store", context.Response.Headers.CacheControl.ToString());
-    }
-
-    [Fact]
-    public void Reading_answers_the_sealed_text_and_keeps_it_longer()
-    {
-        var sealedText = Seal(Alice, Settings);
-        var kept = Request("devkit-a.example.test");
-        _vault.WriteTo(kept, Alice, sealedText);
-        var context = SignedIn(Request("devkit-b.example.test", SetCookies(kept)), Alice);
-
-        var answer = Assert.IsType<ContentHttpResult>(ClientVaultEndpoints.Read(context, _vault, RunsDevKit));
-
-        Assert.Equal(sealedText, answer.ResponseContent);
-        Assert.Single(SetCookies(context));
-    }
-
-    [Fact]
-    public void Writing_keeps_only_text_this_server_sealed_for_the_person_signed_in()
-    {
-        var refused = SignedIn(Request("devkit-a.example.test"), Alice);
-        Assert.IsType<BadRequest>(ClientVaultEndpoints.Write(refused, _vault, RunsDevKit, new VaultWrite("v1.00000000.AAAA")));
-        Assert.Empty(SetCookies(refused));
-
-        var context = SignedIn(Request("devkit-a.example.test"), Alice);
-        Assert.IsType<NoContent>(ClientVaultEndpoints.Write(context, _vault, RunsDevKit, new VaultWrite(Seal(Alice, Settings))));
-        Assert.StartsWith(ClientVault.CookieNameFor(Alice), Assert.Single(SetCookies(context)).Name.Value, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void Nobody_signed_in_reads_or_keeps_nothing()
-    {
-        var context = Request("devkit-a.example.test");
-
-        Assert.IsType<UnauthorizedHttpResult>(ClientVaultEndpoints.Read(context, _vault, RunsDevKit));
-        Assert.IsType<UnauthorizedHttpResult>(ClientVaultEndpoints.Write(context, _vault, RunsDevKit, new VaultWrite(Seal(Alice, Settings))));
+        Assert.IsType<UnauthorizedHttpResult>(ClientVaultEndpoints.Clear(context, _vault, RunsDevKit));
         Assert.Empty(SetCookies(context));
+    }
+
+    [Fact]
+    public void Only_sealed_text_has_the_sealed_shape()
+    {
+        Assert.True(ClientVault.HasSealedShape(Seal(Alice, Settings)));
+        Assert.False(ClientVault.HasSealedShape(null));
+        Assert.False(ClientVault.HasSealedShape(""));
+        Assert.False(ClientVault.HasSealedShape("{\"TeamName\":\"x\"}"));
+        Assert.False(ClientVault.HasSealedShape(Seal(Alice, Settings) + new string('A', ClientVault.MaxSealedChars)));
     }
 
     /// <summary><paramref name="text"/> sealed for <paramref name="user"/> under a new key of theirs.</summary>
@@ -275,17 +222,20 @@ public sealed class ClientVaultTests
     private string LongSealedText() =>
         Seal(Alice, Convert.ToBase64String(RandomNumberGenerator.GetBytes(ClientVault.PieceChars * 2)));
 
-    /// <summary>An https request to <paramref name="host"/>, carrying the cookies a browser kept from an earlier answer.</summary>
-    private static DefaultHttpContext Request(string host, IEnumerable<SetCookieHeaderValue>? kept = null)
+    /// <summary>An https request to <paramref name="host"/>, carrying <paramref name="cookies"/> (name=value pairs).</summary>
+    private static DefaultHttpContext Request(string host, IEnumerable<string>? cookies = null)
     {
         var context = new DefaultHttpContext();
         context.Request.Scheme = "https";
         context.Request.Host = new HostString(host, 5850);
         context.Request.Path = ClientVault.Address;
-        var cookies = (kept ?? []).Where(c => c.Expires is null || c.Expires > DateTimeOffset.UtcNow).Select(c => $"{c.Name}={c.Value}");
-        context.Request.Headers.Cookie = string.Join("; ", cookies);
+        context.Request.Headers.Cookie = string.Join("; ", cookies ?? []);
         return context;
     }
+
+    /// <summary>The cookies an earlier DevKit had a browser keep <paramref name="sealedText"/> in, for <paramref name="user"/>.</summary>
+    private static IEnumerable<string> KeptInPieces(SignedInUser user, string sealedText) =>
+        sealedText.Chunk(ClientVault.PieceChars).Select((piece, index) => $"{ClientVault.CookieNameFor(user)}{index}={new string(piece)}");
 
     private static DefaultHttpContext SignedIn(DefaultHttpContext context, SignedInUser user)
     {

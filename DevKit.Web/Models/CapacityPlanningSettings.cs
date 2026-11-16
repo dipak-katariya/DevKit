@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace DevKit.Web.Models;
 
 /// <summary>How far above capacity a sprint is meant to be planned.</summary>
@@ -31,7 +34,12 @@ public sealed class PlanningTagRule
         Tag = other.Tag;
         Deliverable = other.Deliverable;
         ExcludeFromOverPlan = other.ExcludeFromOverPlan;
+        UnknownFields = other.UnknownFields;
     }
+
+    /// <summary>Fields of a rule this build does not know, written back as they were (see UserSettings).</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownFields { get; set; }
 
     public string Tag { get; set; } = "";
 
@@ -89,7 +97,12 @@ public sealed class CapacityPlanningSettings
         NonDeliverableMarkerTag = other.NonDeliverableMarkerTag;
         DevDisciplines = new List<string>(other.DevDisciplines ?? new List<string>());
         QaDisciplines = new List<string>(other.QaDisciplines ?? new List<string>());
+        UnknownFields = other.UnknownFields;
     }
+
+    /// <summary>Fields this build does not know, written back as they were (see UserSettings).</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownFields { get; set; }
 
     public PlanningMode Mode { get; set; } = PlanningMode.AiOverPlan;
 

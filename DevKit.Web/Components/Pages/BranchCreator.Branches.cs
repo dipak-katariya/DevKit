@@ -14,7 +14,7 @@ public partial class BranchCreator
     private void SelectItem(WorkItem item)
     {
         selectedItem = item;
-        resultMsg = "";
+        result = null;
         existingBranches = new();
         unlinkCandidate = null;
         RegenerateBranchName(item);
@@ -89,26 +89,26 @@ public partial class BranchCreator
         StateHasChanged();
         try
         {
-            var result = await TfsApi.UnlinkWorkItemBranchAsync(
+            var unlinked = await TfsApi.UnlinkWorkItemBranchAsync(
                 item.Project, item.Id, link.RepositoryId, link.BranchName, CancellationToken.None);
 
-            resultOk = result.IsUnlinked;
-            resultMsg = result.Outcome switch
+            resultOk = unlinked.IsUnlinked;
+            result = unlinked.Outcome switch
             {
                 WorkItemLinkOutcome.Unlinked =>
-                    $"<span class='bc-msg ok'>✓ Stale link removed from #{Enc(item.Id)}: <code>{Enc(link.BranchName)}</code></span>",
+                    BranchResult.Line("ok", ResultText.Plain($"✓ Stale link removed from #{item.Id}: "), ResultText.Code(link.BranchName)),
                 WorkItemLinkOutcome.NotLinked =>
-                    $"<span class='bc-msg warn'>⚠ That link was already gone from #{Enc(item.Id)}.</span>",
+                    BranchResult.Line("warn", ResultText.Plain($"⚠ That link was already gone from #{item.Id}.")),
                 _ =>
-                    $"<span class='bc-msg bad'>✕ Could not remove the link: {Enc(result.Detail)}</span>"
+                    BranchResult.Line("bad", ResultText.Plain($"✕ Could not remove the link: {unlinked.Detail}"))
             };
 
-            if (result.IsUnlinked) await LoadExistingBranches(item);
+            if (unlinked.IsUnlinked) await LoadExistingBranches(item);
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Removing stale link {Branch} from work item {Id} failed", link.BranchName, item.Id);
-            resultMsg = $"<span class='bc-msg bad'>✕ Could not remove the link: {Enc(TfsErrors.Describe(ex))}</span>";
+            result = BranchResult.Line("bad", ResultText.Plain($"✕ Could not remove the link: {TfsErrors.Describe(ex)}"));
             resultOk = false;
         }
         finally
@@ -123,7 +123,7 @@ public partial class BranchCreator
     private async Task UseExistingBranch(WorkItemBranchLink link)
     {
         branchName = link.BranchName;
-        resultMsg = "";
+        result = null;
 
         if (link.BelongsTo(selectedRepo?.Id)) return;
 
@@ -230,19 +230,21 @@ public partial class BranchCreator
     private async Task CheckBranch()
     {
         if (!CanCheck) return;
-        checking = true; resultMsg = ""; StateHasChanged();
+        checking = true; result = null; StateHasChanged();
         try
         {
             var name = branchName.Trim();
             var existing = await TfsApi.GetRefAsync(selectedRepo!.Project, selectedRepo.Id, $"refs/heads/{name}", page.Token);
             if (existing != null)
             {
-                resultMsg = $"<span class='bc-msg warn'>⚠ Branch <code>{Enc(name)}</code> already exists (SHA: {Enc(WorkItemBadges.ShortSha(existing.ObjectId))})</span>";
+                result = BranchResult.Line("warn", ResultText.Plain("⚠ Branch "), ResultText.Code(name),
+                    ResultText.Plain($" already exists (SHA: {WorkItemBadges.ShortSha(existing.ObjectId)})"));
                 resultOk = false;
             }
             else
             {
-                resultMsg = $"<span class='bc-msg ok'>✓ Branch name <code>{Enc(name)}</code> is available in {Enc(selectedRepo.Name)}.</span>";
+                result = BranchResult.Line("ok", ResultText.Plain("✓ Branch name "), ResultText.Code(name),
+                    ResultText.Plain($" is available in {selectedRepo.Name}."));
                 resultOk = true;
             }
         }
@@ -253,7 +255,7 @@ public partial class BranchCreator
         catch (Exception ex)
         {
             Logger.LogError(ex, "Branch availability check failed in {Repo}", selectedRepo?.Name);
-            resultMsg = $"<span class='bc-msg bad'>✕ Check failed: {Enc(TfsErrors.Describe(ex))}</span>";
+            result = BranchResult.Line("bad", ResultText.Plain($"✕ Check failed: {TfsErrors.Describe(ex)}"));
             resultOk = false;
         }
         checking = false;
@@ -267,7 +269,7 @@ public partial class BranchCreator
         branchName = ""; prName = "";
         existingBranches = new();
         existingErr = "";
-        resultMsg = "";
+        result = null;
         unlinkCandidate = null;
 
         // The form the Clear button sat in is gone, so focus goes back to the work item it was for.
@@ -286,7 +288,7 @@ public partial class BranchCreator
         var item = selectedItem!;
         var name = branchName.Trim();
 
-        creating = true; resultMsg = ""; StateHasChanged();
+        creating = true; result = null; StateHasChanged();
         try
         {
             var (baseRef, refusal) = await ResolveBaseRefAsync(repo, name);
@@ -302,7 +304,7 @@ public partial class BranchCreator
             await TfsApi.CreateBranchAsync(repo.Project, repo.Id, name, baseRef.ObjectId, CancellationToken.None);
             AdoptCreatedBranch(repo, name);
 
-            resultMsg = BuildSuccessMessage(repo, name, baseRef.ObjectId, await LinkWorkItemAsync(repo, item, name));
+            result = CreatedResult(repo, name, baseRef.ObjectId, await LinkWorkItemAsync(repo, item, name));
             resultOk = true;
 
             await LoadExistingBranches(item);
@@ -339,7 +341,7 @@ public partial class BranchCreator
 
     private void ShowCreateFailure(string message)
     {
-        resultMsg = $"<span class='bc-msg bad'>✕ {Enc(message)}</span>";
+        result = BranchResult.Line("bad", ResultText.Plain($"✕ {message}"));
         resultOk = false;
     }
 
@@ -361,32 +363,32 @@ public partial class BranchCreator
     /// the artifact carries the repository's, so a branch in a repository belonging to another
     /// project links just as well as one alongside the work item.
     /// </summary>
-    private async Task<string> LinkWorkItemAsync(TfsRepo repo, WorkItem item, string branch)
+    private async Task<ResultRow> LinkWorkItemAsync(TfsRepo repo, WorkItem item, string branch)
     {
         var repoProjectId = ResolveProjectId(repo.Project);
         if (repoProjectId == null)
         {
             Logger.LogWarning("Project {Project} was not in the loaded list, so {Branch} could not be linked",
                 repo.Project, branch);
-            return LinkRow("warn", $"⚠ Link skipped: project &quot;{Enc(repo.Project)}&quot; was not found. Reconnect in Settings, then link the branch from the work item.");
+            return LinkRow("warn", $"⚠ Link skipped: project \"{repo.Project}\" was not found. Reconnect in Settings, then link the branch from the work item.");
         }
 
         try
         {
-            var result = await TfsApi.LinkWorkItemAsync(item.Project, item.Id, repoProjectId, repo.Id, branch, CancellationToken.None);
-            return result.Outcome switch
+            var linked = await TfsApi.LinkWorkItemAsync(item.Project, item.Id, repoProjectId, repo.Id, branch, CancellationToken.None);
+            return linked.Outcome switch
             {
                 WorkItemLinkOutcome.Linked =>
-                    LinkRow("ok", $"✓ Branch linked to #{Enc(item.Id)} ({Enc(item.Type)})"),
+                    LinkRow("ok", $"✓ Branch linked to #{item.Id} ({item.Type})"),
                 WorkItemLinkOutcome.AlreadyLinked =>
-                    LinkRow("ok", $"✓ Already linked to #{Enc(item.Id)}. The work item kept its link to this branch."),
-                _ => LinkRow("warn", $"⚠ Link failed: {Enc(result.Detail)}")
+                    LinkRow("ok", $"✓ Already linked to #{item.Id}. The work item kept its link to this branch."),
+                _ => LinkRow("warn", $"⚠ Link failed: {linked.Detail}")
             };
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Could not link branch {Branch} to work item {Id}", branch, item.Id);
-            return LinkRow("warn", $"⚠ Link failed: {Enc(TfsErrors.Describe(ex))}");
+            return LinkRow("warn", $"⚠ Link failed: {TfsErrors.Describe(ex)}");
         }
     }
 
@@ -395,27 +397,27 @@ public partial class BranchCreator
             .FirstOrDefault(p => string.Equals(p.Name, projectName, StringComparison.OrdinalIgnoreCase))?.Id;
 
     /// <summary>
-    /// Content is pre-encoded by the caller; this only wraps it in the result row markup. The tone (ok or warn) colours
-    /// the row, and a warn here turns the whole result amber: the branch exists but its link does not.
+    /// The row that says whether the work item links to the new branch. The tone (ok or warn) colours the row, and a warn
+    /// here turns the whole result amber: the branch exists but its link does not.
     /// </summary>
-    private static string LinkRow(string tone, string encodedContent) =>
-        $"<div class='modal-row'><span class='label'>Linked</span><span class='bc-msg {tone}'>{encodedContent}</span></div>";
+    private static ResultRow LinkRow(string tone, string text) => new("Linked", $"bc-msg {tone}", [ResultText.Plain(text)]);
 
-    private string BuildSuccessMessage(TfsRepo repo, string branch, string sha, string linkedMsg)
+    private BranchResult CreatedResult(TfsRepo repo, string branch, string sha, ResultRow linked)
     {
         var areaDisp = selectedArea != null
             ? $"\\{selectedArea.Project}\\Area\\{TfsApiService.AreaDisplayPath(selectedArea.Path)}"
             : "";
-
-        return $@"
-<div class='bc-msg-h'>✅ Branch created.</div>
-<div class='modal-row'><span class='label'>Branch</span><span class='bc-ref'>{Enc(branch)}</span></div>
-<div class='modal-row'><span class='label'>Repo</span><span>{Enc(repo.Project)} → {Enc(repo.Name)}</span></div>
-<div class='modal-row'><span class='label'>Area</span><span>{Enc(areaDisp)}</span></div>
-<div class='modal-row'><span class='label'>Base</span><span><code>{Enc(baseBranch)}</code> @ {Enc(WorkItemBadges.ShortSha(sha))}</span></div>
-<div class='modal-row'><span class='label'>PR Name</span><span>{Enc(prName)}</span></div>
-<div class='modal-row'><span class='label'>New SHA</span><span class='bc-ref'>{Enc(WorkItemBadges.ShortSha(sha))}</span></div>
-{linkedMsg}";
+        var shortSha = WorkItemBadges.ShortSha(sha);
+        return BranchResult.CreatedWith(
+        [
+            new("Branch", "bc-ref", [ResultText.Plain(branch)]),
+            new("Repo", "", [ResultText.Plain($"{repo.Project} → {repo.Name}")]),
+            new("Area", "", [ResultText.Plain(areaDisp)]),
+            new("Base", "", [ResultText.Code(baseBranch), ResultText.Plain($" @ {shortSha}")]),
+            new("PR Name", "", [ResultText.Plain(prName)]),
+            new("New SHA", "bc-ref", [ResultText.Plain(shortSha)]),
+            linked
+        ]);
     }
 
 }

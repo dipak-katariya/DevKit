@@ -1,10 +1,11 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using DevKit.Web.Models;
 
 namespace DevKit.Web.Services;
 
 /// <summary>How the default sprint is chosen. Stored by name, so the settings file reads as what was chosen.</summary>
-[JsonConverter(typeof(JsonStringEnumConverter<DefaultSprintMode>))]
+[JsonConverter(typeof(TolerantEnumConverter<DefaultSprintMode>))]
 public enum DefaultSprintMode
 {
     /// <summary>The sprint running today, by the sprint dates in TFS.</summary>
@@ -14,8 +15,19 @@ public enum DefaultSprintMode
     Chosen
 }
 
+/// <summary>How the Dashboard lays out the tools. Stored by name; a file without it means Grid.</summary>
+[JsonConverter(typeof(TolerantEnumConverter<DashboardView>))]
+public enum DashboardView
+{
+    Grid,
+    List
+}
+
 // The shape of usersettings.json. Written and read only through SettingsService, which
-// sanitises every value on the way in and out.
+// sanitises every value on the way in and out. Each part keeps the fields this build does not
+// know (UnknownFields) and writes them back, so a save by this package, after going back to it
+// from a later one, never drops a setting the later one added. Packages made before this do
+// drop them, so "Run Latest DevKit.bat" asks before going back to one of those.
 
 /// <summary>
 /// The two branches a repository needs on the merging sheet: the one developers merge into,
@@ -23,6 +35,9 @@ public enum DefaultSprintMode
 /// </summary>
 public class RepoBranchDefaults
 {
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownFields { get; set; }
+
     /// <summary>Branch developers merge pull requests into; decides which PRs the sheet shows.</summary>
     public string QaBranch { get; set; } = "";
 
@@ -58,4 +73,11 @@ public class UserSettings
     public List<string> CodeMergingRepoIds { get; set; } = new();
     public Dictionary<string, string> RepoTargetBranches { get; set; } = new();
     public Dictionary<string, RepoBranchDefaults> RepoBranches { get; set; } = new();
+    public DashboardView DashboardView { get; set; }
+
+    /// <summary>False until the person finishes or skips the first-visit tour; a file without it shows the tour once.</summary>
+    public bool GuideTourSeen { get; set; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownFields { get; set; }
 }

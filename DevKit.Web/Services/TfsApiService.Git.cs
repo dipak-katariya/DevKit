@@ -75,7 +75,7 @@ public partial class TfsApiService
     public async Task<TfsRef?> GetRefAsync(string project, string repoId, string refName, CancellationToken ct = default)
     {
         var filter = refName.Replace("refs/", "");
-        var data = await GetJson(ProjectApi(project, $"git/repositories/{repoId}/refs?filter={Uri.EscapeDataString(filter)}&api-version={Ver}"), ct);
+        var data = await GetJson(ProjectApi(project, $"git/repositories/{Uri.EscapeDataString(repoId)}/refs?filter={Uri.EscapeDataString(filter)}&api-version={Ver}"), ct);
         return data.GetProperty("value").EnumerateArray()
             .Where(r => r.GetProperty("name").GetString() == refName)
             .Select(r => new TfsRef { Name = refName, ObjectId = r.GetProperty("objectId").GetString()! })

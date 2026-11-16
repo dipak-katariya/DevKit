@@ -4,6 +4,12 @@ setlocal enabledelayedexpansion
 set "ROOT=%~dp0"
 set "WEBDIR=%ROOT%DevKit.Web"
 set "PUBDIR=%ROOT%Release\app"
+:: Packages have folders of their own in Release\ now: this is the one "Run Latest DevKit.bat" made the DevKit that runs.
+set "LIVE_FILE=%ROOT%Release\live.txt"
+:: Its first line names the package; it is used only when that line is a package's name, so it names a folder in Release\.
+if exist "%LIVE_FILE%" set /p LIVE_PACKAGE=<"%LIVE_FILE%"
+if defined LIVE_PACKAGE set LIVE_PACKAGE | findstr /r /x /c:"LIVE_PACKAGE=DevKit_[0-9][0-9]_[0-9][0-9]_[0-9][0-9][0-9][0-9]_[0-9][0-9]_[0-9][0-9]_[AP]M" >nul || set "LIVE_PACKAGE="
+if defined LIVE_PACKAGE set "PUBDIR=%ROOT%Release\%LIVE_PACKAGE%\app"
 set "PORT=5850"
 set "URL=http://*:%PORT%"
 set "LOCALURL=http://localhost:%PORT%"
@@ -16,6 +22,7 @@ if /i "%~1"=="host"      goto :host
 if /i "%~1"=="local"     goto :local
 if /i "%~1"=="publish"   goto :publish
 if /i "%~1"=="autostart" goto :autostart
+if /i "%~1"=="boot"      goto :boot
 if /i "%~1"=="remove"    goto :remove
 if /i "%~1"=="status"    goto :status
 if /i "%~1"=="version"   goto :version
@@ -77,7 +84,7 @@ dotnet run --urls "%START_URL%"
 goto :eof
 
 :publish
-:: Packages a self-contained build into Release\, with devkit-run.bat to start it shared on another machine.
+:: Makes a self-contained package in a folder of its own in Release\; "Run Latest DevKit.bat" there makes it the one that runs.
 call "%ROOT%scripts\devkit-deploy.bat"
 goto :eof
 
@@ -93,12 +100,19 @@ call "%ROOT%tools\devkit-startup.bat" %PORT% "%PUBDIR%" DevKit.Web.exe "--urls %
 pause
 goto :eof
 
+:boot
+:: Starts DevKit on %PORT% with the machine, before anyone signs in; asks for this account's password once.
+call "%ROOT%tools\devkit-boot-task.bat" %PORT%
+pause
+goto :eof
+
 :remove
 set "STARTUP=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"
 set "REMOVED="
-:: DevKit.lnk is what DevKit put there before DevKit.cmd.
-for %%F in (DevKit.cmd DevKit.lnk) do if exist "%STARTUP%\%%F" del "%STARTUP%\%%F" && set "REMOVED=1"
+:: DevKit.cmd and DevKit.lnk are what DevKit put there before each port had a DevKit-<port>.cmd of its own.
+for %%F in (DevKit-%PORT%.cmd DevKit.cmd DevKit.lnk) do if exist "%STARTUP%\%%F" del "%STARTUP%\%%F" && set "REMOVED=1"
 if defined REMOVED (echo [OK] Removed from Startup.) else (echo [*] Not registered in Startup.)
+schtasks /query /tn "DevKit %PORT%" >nul 2>&1 && (schtasks /delete /tn "DevKit %PORT%" /f >nul 2>&1 && echo [OK] Removed the start with the machine. || echo [!] The task "DevKit %PORT%" could not be removed: run this as administrator.)
 pause
 goto :eof
 
@@ -107,9 +121,10 @@ echo.
 echo --- %APPNAME% Status ---
 set "STARTUP=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"
 set "REGISTERED="
-for %%F in (DevKit.cmd DevKit.lnk) do if exist "%STARTUP%\%%F" set "REGISTERED=1"
+for %%F in (DevKit-%PORT%.cmd DevKit.cmd DevKit.lnk) do if exist "%STARTUP%\%%F" set "REGISTERED=1"
 if defined REGISTERED (echo [*] Autostart: REGISTERED) else (echo [*] Autostart: not registered)
-if exist "%PUBDIR%\DevKit.Web.exe" (echo [*] Published: YES, in %PUBDIR%) else (echo [*] Published: NO)
+schtasks /query /tn "DevKit %PORT%" >nul 2>&1 && (echo [*] Starts with the machine: YES) || (echo [*] Starts with the machine: NO)
+if exist "%PUBDIR%\DevKit.Web.exe" (echo [*] Published: YES, in "%PUBDIR%") else (echo [*] Published: NO)
 netstat -ano 2>nul | findstr ":%PORT% " >nul 2>&1
 if not errorlevel 1 (echo [*] Running: YES on port %PORT%) else (echo [*] Running: NO)
 echo.
@@ -132,9 +147,11 @@ echo  Commands:
 echo    host       Clean, restore, build and start it shared at http://%COMPUTERNAME%:%PORT% (scripts\devkit-host.bat)
 echo    run        Start it as this machine's devkit.json says, without rebuilding
 echo    local      Start it for yourself only (%LOCALURL%, with the printed link)
-echo    publish    Package it into Release\ to run on another machine, no .NET needed (scripts\devkit-deploy.bat)
+echo    publish    Make a new package in Release\, no .NET needed to run it (scripts\devkit-deploy.bat);
+echo               "Run Latest DevKit.bat" in Release\ then swaps it in, with a maintenance page meanwhile
 echo    autostart  Add to Windows Startup
-echo    remove     Remove from Startup
+echo    boot       Start with the machine, before anyone signs in (run as administrator)
+echo    remove     Remove from Startup, and from the start with the machine
 echo    status     Show status
 echo    version    Show version
 echo.

@@ -55,8 +55,9 @@ public sealed class HostedLeakProtectionTests : IDisposable
         new DevKitHostingOptions { Mode = DevKitMode.Hosted, Domain = "MT" },
         _services.GetRequiredService<IAntiforgery>(),
         _sessions,
-        new WindowsSignIn(_checker, new SignInThrottle(new ManualClock()), OwnerAccount.Current()),
-        _audit);
+        new WindowsSignIn(_checker, new SignInThrottle(new ManualClock()), OwnerAccount.Current(), ["localhost"]),
+        _audit,
+        new ManualClock());
 
     private DefaultHttpContext Request(string from, bool https = false)
     {

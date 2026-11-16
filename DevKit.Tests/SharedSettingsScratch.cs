@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Net;
+using System.Runtime.Versioning;
 using System.Security.Claims;
+using System.Security.Principal;
 using DevKit.Web.Services;
 using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage;
 using Microsoft.AspNetCore.DataProtection;
@@ -12,9 +14,11 @@ namespace DevKit.Tests;
 
 /// <summary>
 /// Shared mode's settings for the tests: one DevKit server, running as <see cref="Owner"/>, whose domain locks each
-/// person's key to that account, a browser that keeps them, and a throwaway DevKit folder, with the server's keys on
-/// disk, where an earlier DevKit kept everyone's settings files.
+/// person's key to that account, a throwaway DevKit folder holding its settings folder (<see cref="Server"/>, closed
+/// to the account the tests run as), the server's keys on disk and an earlier DevKit's settings files, and a browser
+/// where earlier DevKits kept copies.
 /// </summary>
+[SupportedOSPlatform("windows")]
 public abstract class SharedSettingsScratch : IDisposable
 {
     protected const string FixedUrl = "https://tfs.example.test/tfs/Collection";
@@ -37,6 +41,8 @@ public abstract class SharedSettingsScratch : IDisposable
         Keys = KeysOnDisk();
         Folder = new ServerSettingsFolder(UsersPath, Keys);
         Vault = new ClientVault(KeyLock, Domain);
+        Server = NewServer();
+        Server.Secure();
     }
 
     protected string Root { get; }
@@ -53,8 +59,23 @@ public abstract class SharedSettingsScratch : IDisposable
     /// <summary>The domain, as this DevKit server asks it to lock and open people's keys.</summary>
     private protected FakeKeyLock KeyLock { get; } = new(Owner.Id);
 
-    /// <summary>This DevKit server's vault.</summary>
+    /// <summary>This DevKit server's vault, which seals and opens people's settings.</summary>
     private protected ClientVault Vault { get; }
+
+    /// <summary>This DevKit server's settings folder, where everyone's sealed settings are kept.</summary>
+    private protected PersonVault Server { get; }
+
+    protected string ServerPath => Path.Combine(Root, PersonVault.FolderName);
+
+    /// <summary>The sealed settings the server keeps for <paramref name="user"/>; null when none.</summary>
+    private protected string? KeptFor(SignedInUser user) => Server.Load(user);
+
+    /// <summary>Puts <paramref name="sealedText"/> in the server's settings folder for <paramref name="user"/>, as a save would.</summary>
+    private protected void Keep(SignedInUser user, string sealedText) => Server.Update(user, _ => sealedText);
+
+    /// <summary>The settings folder as a DevKit started again (after a redeploy, a package switch, another port) opens it.</summary>
+    private protected PersonVault NewServer() =>
+        new(ServerPath, WindowsIdentity.GetCurrent().User!, NullLogger<PersonVault>.Instance);
 
     /// <summary>The server's keys as a newly started DevKit reads them back from disk.</summary>
     protected IDataProtectionProvider KeysOnDisk() =>
@@ -69,25 +90,28 @@ public abstract class SharedSettingsScratch : IDisposable
         FakeBrowserStorage? browser = null,
         ClientVault? vault = null,
         string fixedUrl = FixedUrl,
-        ILogger<EarlierSettingsCopies>? logger = null)
+        ILogger<EarlierSettingsCopies>? logger = null,
+        PersonVault? server = null)
     {
         var inBrowser = browser ?? Browser;
-        var store = new ClientSettingsStore(inBrowser, vault ?? Vault, NullLogger<ClientSettingsStore>.Instance);
+        var sealer = vault ?? Vault;
+        var store = new PersonSettingsStore(server ?? Server, sealer, NullLogger<PersonSettingsStore>.Instance);
         var settings = new SettingsService(NullLogger<SettingsService>.Instance, store, fixedUrl);
-        store.WriteFailed += settings.ReportSaveFailed;
         var earlier = new EarlierSettingsCopies(
-            Folder, new ProtectedLocalStorage(inBrowser, Keys), logger ?? NullLogger<EarlierSettingsCopies>.Instance);
+            Folder, new ProtectedLocalStorage(inBrowser, Keys), inBrowser, logger ?? NullLogger<EarlierSettingsCopies>.Instance);
         var principal = user is null
             ? new ClaimsPrincipal(new ClaimsIdentity())
             : new SessionRegistry(new ManualClock()).Start(user, "windows", TimeSpan.FromDays(5), IPAddress.Loopback).Principal;
-        return new Page(new SharedUserSession(new FixedAuthenticationState(principal), store, earlier, settings, RunsDevKit), settings, store);
+        var session = new SharedUserSession(
+            new FixedAuthenticationState(principal), store, earlier, settings, RunsDevKit);
+        return new Page(session, settings, store);
     }
 
     /// <summary>The settings of a page signed in as <paramref name="user"/>, once it has started.</summary>
     private protected async Task<SettingsService> SignedInAsync(
-        SignedInUser user, FakeBrowserStorage? browser = null, ClientVault? vault = null, string fixedUrl = FixedUrl)
+        SignedInUser user, FakeBrowserStorage? browser = null, ClientVault? vault = null, string fixedUrl = FixedUrl, PersonVault? server = null)
     {
-        var page = OpenPage(user, browser, vault, fixedUrl);
+        var page = OpenPage(user, browser, vault, fixedUrl, server: server);
         Assert.True(await page.Session.StartAsync());
         return page.Settings;
     }
@@ -109,7 +133,7 @@ public abstract class SharedSettingsScratch : IDisposable
             .AsTask();
 
     /// <summary>A directory junction at <paramref name="link"/> to <paramref name="target"/>; no administrator rights needed.</summary>
-    protected static void MakeJunction(string link, string target)
+    internal static void MakeJunction(string link, string target)
     {
         Directory.CreateDirectory(target);
         using var mklink = Process.Start(new ProcessStartInfo("cmd.exe", $"/c mklink /J \"{link}\" \"{target}\"")
@@ -156,5 +180,5 @@ public abstract class SharedSettingsScratch : IDisposable
     }
 
     /// <summary>One open page: who it is for, their settings, and where those are kept.</summary>
-    private protected sealed record Page(SharedUserSession Session, SettingsService Settings, ClientSettingsStore Store);
+    private protected sealed record Page(SharedUserSession Session, SettingsService Settings, PersonSettingsStore Store);
 }

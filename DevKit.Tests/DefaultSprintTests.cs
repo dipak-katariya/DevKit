@@ -105,6 +105,7 @@ public sealed class DefaultSprintTests
     [InlineData("/settings", "Settings · DevKit")]
     [InlineData("/insights/", "Sprint Insights · DevKit")]
     [InlineData("/", "Dashboard · DevKit")]
+    [InlineData("/guide", "Guide · DevKit")]
     [InlineData("/no-such-page", "DevKit")]
     public void The_browser_tab_names_the_tool(string path, string title)
     {

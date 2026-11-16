@@ -1,0 +1,11 @@
+# Raises the actions ci.yml pins by commit, and the test and analyzer packages, once a week.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly

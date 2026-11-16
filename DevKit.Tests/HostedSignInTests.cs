@@ -58,7 +58,7 @@ public sealed class HostedSignInTests : IDisposable
         Assert.True(options.IsHosted);
         Assert.Equal(TfsUrl, options.TfsUrl);
         Assert.Equal(Environment.UserDomainName, options.Domain);
-        Assert.Equal(TimeSpan.FromDays(5), options.SessionLength);
+        Assert.Equal(TimeSpan.FromDays(30), options.SessionLength);
         Assert.Contains(Environment.MachineName, options.HostNames, StringComparer.OrdinalIgnoreCase);
         Assert.Contains("localhost", options.HostNames);
         Assert.Equal(Path.Combine(DevKitMachineConfig.Folder, "audit"), options.AuditFolder);
@@ -233,7 +233,7 @@ public sealed class HostedSignInTests : IDisposable
     {
         var checker = new FakeCredentialChecker();
         checker.Add(@"MT\alice", "right", Alice);
-        var windows = new WindowsSignIn(checker, new SignInThrottle(new ManualClock()), new OwnerAccount("S-1-5-21-9"));
+        var windows = new WindowsSignIn(checker, new SignInThrottle(new ManualClock()), new OwnerAccount("S-1-5-21-9"), ["localhost"]);
 
         foreach (var typed in new[] { @"MT\alice", "alice", @"mt\ALICE" })
         {
@@ -297,6 +297,93 @@ public sealed class HostedSignInTests : IDisposable
     }
 
     [Fact]
+    public void A_sign_out_holds_after_a_restart()
+    {
+        var clock = new ManualClock();
+        var before = KeptSessions(clock);
+        var (signedOut, _) = before.Start(Alice, "windows", TimeSpan.FromDays(5), IPAddress.Loopback);
+        var (stillIn, _) = before.Start(Alice, "windows", TimeSpan.FromDays(5), IPAddress.Loopback);
+        before.SignOut(signedOut);
+
+        var afterRestart = KeptSessions(clock);
+
+        Assert.False(afterRestart.IsActive(signedOut));
+        Assert.True(afterRestart.IsActive(stillIn));
+    }
+
+    [Fact]
+    public void The_DevKit_a_switch_is_replacing_learns_of_a_sign_out_the_new_one_took_within_seconds()
+    {
+        var clock = new ManualClock();
+        var old = KeptSessions(clock);
+        var replacing = KeptSessions(clock);
+        var (principal, _) = old.Start(Alice, "windows", TimeSpan.FromDays(5), IPAddress.Loopback);
+        Assert.True(old.IsActive(principal));
+
+        replacing.SignOut(principal);
+        clock.Now += TimeSpan.FromSeconds(6);
+        File.SetLastWriteTimeUtc(SignedOutFile, DateTime.UtcNow.AddSeconds(1));
+
+        Assert.False(old.IsActive(principal));
+    }
+
+    [Fact]
+    public void Sign_outs_of_sessions_that_ended_anyway_and_damaged_lines_leave_the_file_at_start()
+    {
+        var clock = new ManualClock();
+        var sessions = KeptSessions(clock);
+        var (shortOne, _) = sessions.Start(Alice, "windows", TimeSpan.FromHours(1), IPAddress.Loopback);
+        var (longOne, _) = sessions.Start(Alice, "windows", TimeSpan.FromDays(5), IPAddress.Loopback);
+        sessions.SignOut(shortOne);
+        sessions.SignOut(longOne);
+        File.AppendAllText(SignedOutFile, "not a sign-out\nXYZ\t1\n");
+
+        clock.Now += TimeSpan.FromDays(1);
+        var restarted = KeptSessions(clock);
+
+        Assert.False(restarted.IsActive(longOne));
+        Assert.Equal([longOne.FindFirstValue(SessionClaims.Id)], File.ReadAllLines(SignedOutFile).Select(line => line.Split('\t')[0]));
+    }
+
+    [Fact]
+    public void A_copied_cookie_used_from_another_address_is_audited_once_in_a_while_not_on_every_request()
+    {
+        var clock = new ManualClock();
+        var flow = new SignInFlow(null!, null!, null!, null!, null!, clock);
+
+        Assert.True(flow.IsFirstRefusalInAWhile("session-a"));
+        Assert.False(flow.IsFirstRefusalInAWhile("session-a"));
+        Assert.True(flow.IsFirstRefusalInAWhile("session-b"));
+
+        clock.Now += SignInFlow.RefusedSessionAuditGap;
+
+        Assert.True(flow.IsFirstRefusalInAWhile("session-a"));
+    }
+
+    [Theory]
+    [InlineData("127.0.0.1", true)]
+    [InlineData("::1", true)]
+    [InlineData("10.102.50.20", false)]
+    public void Browsers_on_the_server_itself_share_no_limit_while_each_other_machine_has_its_own(string address, bool unlimited)
+    {
+        var context = new DefaultHttpContext();
+        context.Connection.RemoteIpAddress = IPAddress.Parse(address);
+        var partition = HostedAccess.PerAddress(1)(context);
+        using var limiter = partition.Factory(partition.PartitionKey);
+
+        using var first = limiter.AttemptAcquire();
+        using var second = limiter.AttemptAcquire();
+
+        Assert.True(first.IsAcquired);
+        Assert.Equal(unlimited, second.IsAcquired);
+    }
+
+    private string SignedOutFile => Path.Combine(_auditFolder, "signed-out.txt");
+
+    private SessionRegistry KeptSessions(TimeProvider clock) =>
+        new(clock, SignedOutFile, NullLogger<SessionRegistry>.Instance);
+
+    [Fact]
     public void A_principal_that_is_not_a_DevKit_session_is_never_active()
     {
         var sessions = new SessionRegistry(new ManualClock());
@@ -356,6 +443,7 @@ public sealed class HostedSignInTests : IDisposable
     {
         var context = new DefaultHttpContext();
         context.Features.Set<IConnectionItemsFeature>(connection);
+        context.Connection.LocalPort = 5855;
         if (authorization is not null)
         {
             context.Request.Headers.Authorization = authorization;
@@ -365,7 +453,7 @@ public sealed class HostedSignInTests : IDisposable
     }
 
     private static WindowsSignIn SingleSignOn() =>
-        new(new FakeCredentialChecker(), new SignInThrottle(new ManualClock()), OwnerAccount.Current());
+        new(new FakeCredentialChecker(), new SignInThrottle(new ManualClock()), OwnerAccount.Current(), ["localhost"]);
 
     [Theory]
     [InlineData(null)]
@@ -407,24 +495,15 @@ public sealed class HostedSignInTests : IDisposable
     /// is played by .NET's own NTLM client. The person signed in is exactly that account, and the handshake leaves
     /// nothing behind on the connection.
     /// </summary>
-    [Fact]
-    public void A_full_NTLM_handshake_signs_in_the_Windows_account_that_answered()
+    [Theory]
+    [InlineData("HTTP/localhost:5855")]
+    [InlineData("HTTP/LOCALHOST:5855")]
+    [InlineData("HTTP/localhost")]
+    public void A_full_NTLM_handshake_signs_in_the_Windows_account_that_answered(string targetName)
     {
-        var windows = SingleSignOn();
         var connection = new FakeConnectionItems();
-        using var browser = new NegotiateAuthentication(new NegotiateAuthenticationClientOptions
-        {
-            Package = "NTLM",
-            Credential = CredentialCache.DefaultNetworkCredentials,
-            TargetName = "HTTP/localhost"
-        });
 
-        Assert.Equal(SingleSignOnState.Challenge, windows.ContinueSingleSignOn(SignOnRequest(connection)).State);
-        var second = SignOnRequest(connection, "NTLM " + Convert.ToBase64String(browser.GetOutgoingBlob(ReadOnlySpan<byte>.Empty, out _)!));
-        Assert.Equal(SingleSignOnState.Continue, windows.ContinueSingleSignOn(second).State);
-        var authenticate = browser.GetOutgoingBlob(
-            Convert.FromBase64String(second.Response.Headers.WWWAuthenticate.ToString()["NTLM ".Length..]), out _)!;
-        var done = windows.ContinueSingleSignOn(SignOnRequest(connection, "NTLM " + Convert.ToBase64String(authenticate)));
+        var done = FullHandshake(connection, targetName);
 
         using var me = WindowsIdentity.GetCurrent();
         Assert.Equal(SingleSignOnState.Completed, done.State);
@@ -432,5 +511,72 @@ public sealed class HostedSignInTests : IDisposable
         Assert.Equal(me.Name, done.User.Name);
         Assert.True(done.User.IsOwner);
         Assert.Empty(connection.Items);
+    }
+
+    /// <summary>
+    /// NTLM relay: someone has a browser sign in to a site of theirs and passes each message on to DevKit. Windows
+    /// accepts the answer, but it names their site, so nobody is signed in.
+    /// </summary>
+    [Theory]
+    [InlineData("HTTP/intranet.attacker.example:5855")]
+    [InlineData("HTTP/localhost.attacker.example:5855")]
+    [InlineData("HTTP/localhost:6000")]
+    [InlineData("")]
+    public void A_sign_in_made_for_another_site_and_passed_on_to_DevKit_is_refused(string targetName)
+    {
+        var connection = new FakeConnectionItems();
+
+        var done = FullHandshake(connection, targetName);
+
+        Assert.Equal(SingleSignOnState.Failed, done.State);
+        Assert.Null(done.User);
+        Assert.Empty(connection.Items);
+    }
+
+    /// <summary>
+    /// The site a browser signs in to: one of DevKit's names, and when it names a port, the port the connection reached.
+    /// Another port of the same server is someone else's site, whatever Host header the request carries.
+    /// </summary>
+    [Theory]
+    [InlineData("HTTP/devbox.example.com:5850", true)]
+    [InlineData("HTTP/DEVBOX:5850", true)]
+    [InlineData("HTTP/devbox.example.com", true)]
+    [InlineData("HTTP/[::1]:5850", true)]
+    [InlineData("HTTP/[::1]", true)]
+    [InlineData("HTTP/devbox.example.com:6000", false)]
+    [InlineData("HTTP/devbox.example.com:5850x", false)]
+    [InlineData("HTTP/evil.example.com:5850", false)]
+    [InlineData("HTTP/evil.example.com", false)]
+    [InlineData("HOST/devbox.example.com:5850", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void Only_a_sign_in_made_for_this_DevKit_counts(string? signedInTo, bool counts)
+    {
+        var windows = new WindowsSignIn(new FakeCredentialChecker(), new SignInThrottle(new ManualClock()), OwnerAccount.Current(),
+            ["devbox", "devbox.example.com", "[::1]"]);
+        var context = new DefaultHttpContext();
+        context.Connection.LocalPort = 5850;
+        context.Request.Host = new HostString("devbox.example.com", 6000);
+
+        Assert.Equal(counts, windows.IsForThisDevKit(signedInTo, context));
+    }
+
+    /// <summary>The whole handshake against DevKit, the browser's part played by .NET's NTLM client signing in to <paramref name="targetName"/>.</summary>
+    private static SingleSignOnStep FullHandshake(FakeConnectionItems connection, string targetName)
+    {
+        var windows = SingleSignOn();
+        using var browser = new NegotiateAuthentication(new NegotiateAuthenticationClientOptions
+        {
+            Package = "NTLM",
+            Credential = CredentialCache.DefaultNetworkCredentials,
+            TargetName = targetName
+        });
+
+        Assert.Equal(SingleSignOnState.Challenge, windows.ContinueSingleSignOn(SignOnRequest(connection)).State);
+        var second = SignOnRequest(connection, "NTLM " + Convert.ToBase64String(browser.GetOutgoingBlob(ReadOnlySpan<byte>.Empty, out _)!));
+        Assert.Equal(SingleSignOnState.Continue, windows.ContinueSingleSignOn(second).State);
+        var authenticate = browser.GetOutgoingBlob(
+            Convert.FromBase64String(second.Response.Headers.WWWAuthenticate.ToString()["NTLM ".Length..]), out _)!;
+        return windows.ContinueSingleSignOn(SignOnRequest(connection, "NTLM " + Convert.ToBase64String(authenticate)));
     }
 }

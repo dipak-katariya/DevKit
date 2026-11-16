@@ -10,9 +10,10 @@ using Xunit;
 namespace DevKit.Tests;
 
 /// <summary>
-/// A shared-mode page opens once it knows who is signed in and has their settings from their own browser. A copy an
-/// earlier DevKit kept on the server, or before that in the browser's local storage, moves into the browser once and is
-/// then deleted, so the server keeps nothing; a copy that cannot move yet stays for the next visit.
+/// A shared-mode page opens once it knows who is signed in and has their settings from the server's settings folder.
+/// A copy an earlier DevKit kept elsewhere (in the browser's cookies, in an older server folder, or in the browser's
+/// local storage) moves into the settings folder once and is then deleted where DevKit can
+/// reach it; a copy that cannot move yet stays for the next visit.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class EarlierSettingsCopiesTests : SharedSettingsScratch
@@ -30,7 +31,7 @@ public sealed class EarlierSettingsCopiesTests : SharedSettingsScratch
         Assert.Equal(Alice.Id, page.Session.User!.Id);
         Assert.Equal(AlicePat, page.Settings.Tfs.Pat);
         Assert.False(page.Settings.AllowsWindowsSignIn);
-        Assert.Equal($"this browser, on this PC only, for {Alice.Name}", page.Settings.SettingsFilePath);
+        Assert.Equal($"the DevKit server, encrypted for {Alice.Name}", page.Settings.SettingsFilePath);
     }
 
     [Fact]
@@ -40,11 +41,11 @@ public sealed class EarlierSettingsCopiesTests : SharedSettingsScratch
 
         Assert.False(await page.Session.StartAsync());
         Assert.False(page.Session.IsReady);
-        Assert.Equal(0, Browser.VaultSaves);
+        Assert.Empty(Directory.GetFiles(ServerPath, "*.sealed*"));
     }
 
     [Fact]
-    public async Task Settings_kept_on_the_server_move_into_the_browser_once_and_leave_the_server()
+    public async Task Settings_kept_in_the_older_server_folder_move_into_the_settings_folder_once_and_leave_it()
     {
         PutServerCopy(Alice, "TEAM-A");
         var file = Folder.PathFor(Alice);
@@ -57,7 +58,7 @@ public sealed class EarlierSettingsCopiesTests : SharedSettingsScratch
         Assert.Equal("TEAM-A", alice.TeamName);
         Assert.Empty(Directory.GetFiles(UsersPath));
         // Sealed with the settings, not with this machine's DPAPI, so the next server reads it too.
-        Assert.Equal(AlicePat, JsonSerializer.Deserialize<UserSettings>(Vault.Open(Alice, Browser.Vault!).Text)!.Tfs.Pat);
+        Assert.Equal(AlicePat, JsonSerializer.Deserialize<UserSettings>(Vault.Open(Alice, KeptFor(Alice)!).Text)!.Tfs.Pat);
         var onTheNewServer = await SignedInAsync(Alice, vault: OtherServer());
         Assert.Equal(AlicePat, onTheNewServer.Tfs.Pat);
         Assert.Equal("TEAM-A", onTheNewServer.TeamName);
@@ -114,19 +115,20 @@ public sealed class EarlierSettingsCopiesTests : SharedSettingsScratch
     }
 
     [Fact]
-    public async Task A_move_the_browser_does_not_keep_leaves_the_earlier_copies_for_the_next_visit()
+    public async Task A_settings_folder_opened_to_others_takes_nothing_and_leaves_the_earlier_copies_for_the_next_visit()
     {
         PutServerCopy(Alice, "TEAM-A");
         await PutLocalStorageCopyAsync(Alice, "TEAM-OLD");
-        Browser.RefusesVault = true;
+        PersonVaultTests.OpenToEveryone(ServerPath);
 
         var refused = await SignedInAsync(Alice);
 
-        Assert.NotNull(refused.LastSaveError);
+        Assert.NotNull(refused.LoadProblem);
+        Assert.False(refused.Save());
         Assert.True(File.Exists(Folder.PathFor(Alice)));
         Assert.Single(Browser.Items);
 
-        Browser.RefusesVault = false;
+        Server.Secure();
         var later = await SignedInAsync(Alice);
         Assert.Equal("TEAM-A", later.TeamName);
         Assert.Empty(Directory.GetFiles(UsersPath));
@@ -144,7 +146,7 @@ public sealed class EarlierSettingsCopiesTests : SharedSettingsScratch
 
         Assert.Equal("", page.Settings.Tfs.Pat);
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error && e.Exception is CryptographicException);
-        Assert.Null(Browser.Vault);
+        Assert.Null(KeptFor(Alice));
     }
 
     [Fact]

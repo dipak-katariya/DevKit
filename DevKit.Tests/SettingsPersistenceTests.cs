@@ -80,6 +80,8 @@ public sealed class SettingsPersistenceTests : IDisposable
         planning.HoursPerDay = 7.5;
         planning.SprintWeeks = 3;
         settings.SaveCapacityPlanning(planning);
+        settings.DashboardView = DashboardView.List;
+        settings.GuideTourSeen = true;
         return settings;
     }
 
@@ -96,8 +98,8 @@ public sealed class SettingsPersistenceTests : IDisposable
         Assert.Equal(
             new[]
             {
-                "CapacityPlanning", "CodeMergingRepoIds", "CodeMergingTargetBranch", "DefaultAreaPath",
-                "DefaultRepoId", "DefaultSprint", "DefaultSprintMode", "DeliverableTags", "MostUsedRepoCount",
+                "CapacityPlanning", "CodeMergingRepoIds", "CodeMergingTargetBranch", "DashboardView", "DefaultAreaPath",
+                "DefaultRepoId", "DefaultSprint", "DefaultSprintMode", "DeliverableTags", "GuideTourSeen", "MostUsedRepoCount",
                 "MostUsedRepoIds", "RepoBranches", "RepoTargetBranches", "TeamName", "Tfs"
             },
             PropertyNames(root));
@@ -136,10 +138,82 @@ public sealed class SettingsPersistenceTests : IDisposable
         Assert.Equal(7.5, planning.HoursPerDay);
         Assert.Equal(3, planning.SprintWeeks);
         Assert.True(planning.TagRules.Single(r => r.Tag == "ALM").Deliverable);
+        Assert.Equal(DashboardView.List, reloaded.DashboardView);
+        Assert.True(reloaded.GuideTourSeen);
 
         // DeliverableTags is only observable on disk: re-saving from the reloaded service proves it was read.
         reloaded.Save();
         Assert.True(ReadFile().GetProperty("DeliverableTags").GetProperty("ALM").GetBoolean());
+    }
+
+    [Fact]
+    public void Settings_from_before_the_dashboard_choice_show_the_grid()
+    {
+        File.WriteAllText(SettingsPath, """{ "TeamName": "TEAMX" }""");
+
+        Assert.Equal(DashboardView.Grid, NewService().DashboardView);
+    }
+
+    [Fact]
+    public void Settings_from_before_the_tour_show_it_once()
+    {
+        File.WriteAllText(SettingsPath, """{ "TeamName": "TEAMX" }""");
+        var settings = NewService();
+
+        Assert.False(settings.GuideTourSeen);
+        settings.GuideTourSeen = true;
+        Assert.True(NewService().GuideTourSeen);
+    }
+
+    [Fact]
+    public void Fields_this_build_does_not_know_are_written_back_unchanged()
+    {
+        // As a later DevKit wrote them: an earlier package, gone back to, must not drop them when it saves.
+        File.WriteAllText(SettingsPath, $$"""
+            {
+              "Tfs": { "Url": "{{TfsUrl}}", "Pat": "{{Pat}}", "FromLater": "tfs" },
+              "TeamName": "TEAMX",
+              "RepoBranches": { "{{ApiRepoId}}": { "QaBranch": "qa", "FromLater": "branches" } },
+              "CapacityPlanning": { "HoursPerDay": 7.5, "FromLater": { "Nested": [1, 2] },
+                "TagRules": [ { "Tag": "ALM", "Deliverable": false, "FromLater": "rule" } ] },
+              "FromLater": { "Theme": "dark", "Pinned": ["a", "b"] }
+            }
+            """);
+        var settings = NewService();
+
+        settings.TeamName = "TEAMY";
+        var planning = settings.CapacityPlanning;
+        planning.SprintWeeks = 3;
+        settings.SaveCapacityPlanning(planning);
+
+        var root = ReadFile();
+        Assert.Equal("TEAMY", root.GetProperty("TeamName").GetString());
+        Assert.Equal(3, root.GetProperty("CapacityPlanning").GetProperty("SprintWeeks").GetInt32());
+        Assert.Equal("dark", root.GetProperty("FromLater").GetProperty("Theme").GetString());
+        Assert.Equal(2, root.GetProperty("FromLater").GetProperty("Pinned").GetArrayLength());
+        Assert.Equal("tfs", root.GetProperty("Tfs").GetProperty("FromLater").GetString());
+        Assert.Equal("branches", root.GetProperty("RepoBranches").GetProperty(ApiRepoId).GetProperty("FromLater").GetString());
+        Assert.Equal(2, root.GetProperty("CapacityPlanning").GetProperty("FromLater").GetProperty("Nested").GetArrayLength());
+        Assert.Equal("rule", root.GetProperty("CapacityPlanning").GetProperty("TagRules")[0].GetProperty("FromLater").GetString());
+        Assert.Equal(Pat, NewService().Tfs.Pat);
+    }
+
+    [Theory]
+    [InlineData("\"Tiles\"")]
+    [InlineData("7")]
+    public void A_choice_a_later_DevKit_added_reads_as_the_default_and_the_rest_still_loads(string view)
+    {
+        File.WriteAllText(SettingsPath, $$"""
+            { "TeamName": "TEAMX", "DashboardView": {{view}}, "DefaultSprintMode": "Upcoming", "Tfs": { "Auth": "Kerberos" } }
+            """);
+
+        var settings = NewService();
+
+        Assert.Null(settings.LoadProblem);
+        Assert.Equal("TEAMX", settings.TeamName);
+        Assert.Equal(DashboardView.Grid, settings.DashboardView);
+        Assert.Equal(TfsAuthMode.Pat, settings.Tfs.Auth);
+        Assert.True(settings.DefaultSprintIsCurrent);
     }
 
     [Fact]

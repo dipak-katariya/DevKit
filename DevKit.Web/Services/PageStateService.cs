@@ -58,7 +58,7 @@ public class BranchCreatorState
     public bool SortAsc { get; set; } = true;
 
     // Result
-    public string ResultMsg { get; set; } = "";
+    public BranchResult? Result { get; set; }
     public bool ResultOk { get; set; }
 }
 

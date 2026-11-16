@@ -2,7 +2,6 @@ using System.Buffers.Text;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
-using DevKit.Web.Components;
 using Microsoft.AspNetCore.Http.Extensions;
 
 namespace DevKit.Web.Services;
@@ -12,8 +11,9 @@ namespace DevKit.Web.Services;
 /// to the same machine, and by any web page open in the browser; all of them would act with the stored
 /// PAT. Each start makes a random key that only the starter sees, in the link DevKit prints and opens.
 /// The link swaps the key for a cookie, and every request without that cookie is refused. Requests from
-/// another machine, for another host name (DNS rebinding) or from another origin (a page talking to the
-/// app's WebSocket) are refused before the key is even looked at.
+/// another machine, for another host name (DNS rebinding), from a program another Windows account runs
+/// (which a copy of the cookie would otherwise let in: browsers send it to every port of localhost) or from
+/// another origin (a page talking to the app's WebSocket) are refused before the key is even looked at.
 /// </summary>
 public sealed class LocalAccessGate
 {
@@ -23,43 +23,29 @@ public sealed class LocalAccessGate
     private const string CookiePrefix = "devkit-access-";
     private const int KeyBytes = 32;
 
-    // The sign-in page's card, so a locked DevKit still reads as DevKit rather than as a bare browser page.
-    private const string LockedPage = $$"""
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-        <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>DevKit is locked</title>
-        <link rel="icon" type="image/svg+xml" href="/favicon.svg?v={{App.AssetVersion}}" />
-        <link rel="stylesheet" href="/app.css?v={{App.AssetVersion}}" />
-        <link rel="stylesheet" href="/signin.css?v={{App.AssetVersion}}" />
-        </head>
-        <body class="signin-page">
-        <main class="signin-card">
-          <div class="signin-brand"><span class="profile-avatar">DK</span><span>DevKit</span></div>
+    // The sign-in page's card, so a locked DevKit still reads as DevKit rather than as a bare browser page. The files it
+    // loads are served before the key is checked; every other file and page still needs the key.
+    private static readonly string LockedPage = CardPage.Render("DevKit is locked", """
           <h1>DevKit only opens for the person who started it</h1>
           <p class="signin-lead">Open DevKit from the link it printed in its window when it started; it also opens that link in your
           browser. A tab from before DevKit restarted needs the new link.</p>
-        </main>
-        </body>
-        </html>
-        """;
+        """);
 
     private static readonly PathString HealthPath = new("/healthz");
 
-    // What the locked page itself loads. They are public files of the repository, so serving them before the key is
-    // checked gives nothing away; every other file and page still needs the key.
-    private static readonly PathString[] LockedPageAssets = { new("/app.css"), new("/signin.css"), new("/favicon.svg") };
     /// <summary>The names this machine answers to locally; hosted mode starts its own list from them.</summary>
     internal static readonly string[] LocalHostNames = { "localhost", "127.0.0.1", "[::1]" };
 
     private readonly byte[] _key;
     private readonly ILogger<LocalAccessGate> _logger;
+    private readonly IConnectionAccounts _accounts;
 
-    public LocalAccessGate(ILogger<LocalAccessGate> logger)
+    /// <param name="logger">Receives every refusal.</param>
+    /// <param name="accounts">Tells whether a connection from this machine was opened by a program of DevKit's own account.</param>
+    public LocalAccessGate(ILogger<LocalAccessGate> logger, IConnectionAccounts accounts)
     {
         _logger = logger;
+        _accounts = accounts;
         Key = Base64Url.EncodeToString(RandomNumberGenerator.GetBytes(KeyBytes));
         _key = Encoding.ASCII.GetBytes(Key);
     }
@@ -87,6 +73,13 @@ public sealed class LocalAccessGate
             return Refuse(context, StatusCodes.Status400BadRequest);
         }
 
+        // A browser sends the cookie to every port of localhost, so another account's program could hold a copy of it.
+        if (!_accounts.IsThisAccount(context))
+        {
+            _logger.LogWarning("Refused a request from a program that another Windows account runs, or whose account Windows did not say");
+            return Refuse(context, StatusCodes.Status403Forbidden);
+        }
+
         if (RefusedOtherOrigin(context, _logger))
         {
             return Task.CompletedTask;
@@ -97,16 +90,13 @@ public sealed class LocalAccessGate
             return SignIn(context, offered.ToString());
         }
 
-        if (context.Request.Path.Equals(HealthPath) || IsLockedPageAsset(context.Request) || HasValidCookie(context))
+        if (context.Request.Path.Equals(HealthPath) || CardPage.IsAsset(context.Request) || HasValidCookie(context))
         {
             return next(context);
         }
 
         return ShowLocked(context);
     }
-
-    private static bool IsLockedPageAsset(HttpRequest request) =>
-        (HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method)) && LockedPageAssets.Contains(request.Path);
 
     /// <summary>
     /// The address the request came from, as the client itself has it. A listener on every address (http://*:port)

@@ -331,7 +331,7 @@ public partial class MergeVerificationService
         MergingPullRequest pr, string branch, DateTime? since, int skip, CancellationToken ct)
     {
         var url = _req.ProjectApi(pr.Project,
-            $"git/repositories/{pr.RepositoryId}/commits" +
+            $"git/repositories/{Uri.EscapeDataString(pr.RepositoryId)}/commits" +
             $"?searchCriteria.itemVersion.version={Uri.EscapeDataString(branch)}" +
             $"&searchCriteria.itemVersion.versionType=branch" +
             $"&searchCriteria.$top={CommitPageSize}&searchCriteria.$skip={skip}" +

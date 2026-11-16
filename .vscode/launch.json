@@ -1,7 +1,23 @@
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
-    "configurations": []
+    "configurations": [
+        {
+            // A test copy beside the live DevKit on 5850: its own port, and its own folder so it never reads the live
+            // devkit.json (https on 5850) or the real settings. Local mode: open the "DevKit is ready" link it prints.
+            "name": "DevKit test (5854)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build DevKit.Web",
+            "program": "${workspaceFolder}/DevKit.Web/bin/Debug/net10.0/DevKit.Web.dll",
+            "cwd": "${workspaceFolder}/DevKit.Web",
+            "launchSettingsProfile": null,
+            "env": {
+                "ASPNETCORE_ENVIRONMENT": "Development",
+                "ASPNETCORE_URLS": "http://localhost:5854",
+                "DEVKIT_SETTINGS_PATH": "${env:LOCALAPPDATA}\\DevKit-Test\\usersettings.json"
+            },
+            "console": "internalConsole",
+            "stopAtEntry": false
+        }
+    ]
 }

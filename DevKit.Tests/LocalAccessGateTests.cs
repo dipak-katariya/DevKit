@@ -16,7 +16,9 @@ public sealed class LocalAccessGateTests
     private const string Host = "localhost:5850";
     private const string LockedText = "only opens for the person who started it";
 
-    private readonly LocalAccessGate _gate = new(NullLogger<LocalAccessGate>.Instance);
+    private static readonly IConnectionAccounts ThisAccount = new FixedConnectionAccounts(true);
+
+    private readonly LocalAccessGate _gate = new(NullLogger<LocalAccessGate>.Instance, ThisAccount);
 
     private string ValidCookie => $"{LocalAccessGate.CookieName(Port)}={_gate.Key}";
 
@@ -170,7 +172,7 @@ public sealed class LocalAccessGateTests
     [Fact]
     public async Task A_cookie_from_another_run_or_for_another_port_is_refused()
     {
-        var previousRun = new LocalAccessGate(NullLogger<LocalAccessGate>.Instance);
+        var previousRun = new LocalAccessGate(NullLogger<LocalAccessGate>.Instance, ThisAccount);
         var fromPreviousRun = NewRequest();
         fromPreviousRun.Request.Headers.Cookie = $"{LocalAccessGate.CookieName(Port)}={previousRun.Key}";
         var forOtherPort = NewRequest();
@@ -251,10 +253,46 @@ public sealed class LocalAccessGateTests
     [Fact]
     public void Each_run_has_its_own_key_of_256_random_bits()
     {
-        var other = new LocalAccessGate(NullLogger<LocalAccessGate>.Instance);
+        var other = new LocalAccessGate(NullLogger<LocalAccessGate>.Instance, ThisAccount);
 
         Assert.NotEqual(_gate.Key, other.Key);
         Assert.Equal(43, _gate.Key.Length);
         Assert.Equal($"http://localhost:5850/?k={_gate.Key}", _gate.SignInLink("http://localhost:5850/"));
+    }
+
+    // Browsers send a localhost cookie to every port, so another account's program on this machine may hold a copy.
+    [Fact]
+    public async Task A_program_another_account_runs_is_refused_even_with_the_cookie_or_the_link()
+    {
+        var gate = new LocalAccessGate(NullLogger<LocalAccessGate>.Instance, new FixedConnectionAccounts(false));
+        var withCookie = NewRequest("/settings");
+        withCookie.Request.Headers.Cookie = $"{LocalAccessGate.CookieName(Port)}={gate.Key}";
+        var withLink = NewRequest("/", $"?k={gate.Key}");
+
+        var passed = false;
+        await gate.InvokeAsync(withCookie, _ => { passed = true; return Task.CompletedTask; });
+        await gate.InvokeAsync(withLink, _ => { passed = true; return Task.CompletedTask; });
+
+        Assert.False(passed);
+        Assert.Equal(StatusCodes.Status403Forbidden, withCookie.Response.StatusCode);
+        Assert.Equal(StatusCodes.Status403Forbidden, withLink.Response.StatusCode);
+        Assert.Empty(withLink.Response.Headers.SetCookie.ToString());
+    }
+
+    [Fact]
+    public async Task Not_even_the_health_probe_answers_another_account()
+    {
+        var gate = new LocalAccessGate(NullLogger<LocalAccessGate>.Instance, new FixedConnectionAccounts(false));
+        var probe = NewRequest("/healthz");
+
+        await gate.InvokeAsync(probe, _ => Task.CompletedTask);
+
+        Assert.Equal(StatusCodes.Status403Forbidden, probe.Response.StatusCode);
+    }
+
+    /// <summary>Says the same of every connection.</summary>
+    private sealed class FixedConnectionAccounts(bool isThisAccount) : IConnectionAccounts
+    {
+        public bool IsThisAccount(HttpContext context) => isThisAccount;
     }
 }

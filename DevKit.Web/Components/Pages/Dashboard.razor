@@ -1,5 +1,6 @@
 @page "/"
 @inject NavigationManager Nav
+@inject SettingsService Settings
 
 <div class="dash">
     <div class="dash-head">
@@ -8,18 +9,18 @@
             <p class="dash-sub">Tools for working with TFS: branches, sprints and code merging.</p>
         </div>
         <div class="dash-view" role="group" aria-label="View">
-            <button class="tb-btn @(grid ? "on" : "")" title="Grid view" aria-label="Grid view"
-                    aria-pressed="@(grid ? "true" : "false")" @onclick="() => grid = true">
+            <button class="tb-btn @(IsGrid ? "on" : "")" title="Grid view" aria-label="Grid view"
+                    aria-pressed="@(IsGrid ? "true" : "false")" @onclick="() => Show(DashboardView.Grid)">
                 <Icon Inner="@Icons.Dashboard" />
             </button>
-            <button class="tb-btn @(grid ? "" : "on")" title="List view" aria-label="List view"
-                    aria-pressed="@(grid ? "false" : "true")" @onclick="() => grid = false">
+            <button class="tb-btn @(IsGrid ? "" : "on")" title="List view" aria-label="List view"
+                    aria-pressed="@(IsGrid ? "false" : "true")" @onclick="() => Show(DashboardView.List)">
                 <Icon Inner="@Icons.List" />
             </button>
         </div>
     </div>
 
-    <div class="dash-groups @(grid ? "as-grid" : "")">
+    <div class="dash-groups @(IsGrid ? "as-grid" : "")">
         @* Each tile's place across both groups: the opening stagger brings them in in this order. *@
         @{ var order = 0; }
         @foreach (var group in ToolCatalog.Groups)
@@ -47,5 +48,15 @@
 </div>
 
 @code {
-    private bool grid = true;
+    // Kept with the person's settings rather than in the page, so the view chosen here outlasts reloads and every
+    // restart or update of DevKit.
+    private bool IsGrid => Settings.DashboardView == DashboardView.Grid;
+
+    private void Show(DashboardView view)
+    {
+        if (Settings.DashboardView != view)
+        {
+            Settings.DashboardView = view;
+        }
+    }
 }

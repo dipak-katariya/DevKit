@@ -491,6 +491,9 @@ table.bdel-table thead th{position:sticky;top:0;z-index:1;background:var(--surfa
 }
 #components-reconnect-modal h5,#devkit-startup-failed h5{font-size:var(--fs-name);font-weight:600;margin-bottom:8px;color:var(--text);}
 #components-reconnect-modal p,#devkit-startup-failed p{font-size:var(--fs-body);color:var(--muted2);line-height:1.6;}
+#components-reconnect-modal .reconnect-updating,
+#components-reconnect-modal.devkit-updating .reconnect-lost{display:none;}
+#components-reconnect-modal.devkit-updating .reconnect-updating{display:block;}
 #devkit-startup-failed>div{max-width:460px;}
 #devkit-startup-failed p+p{margin-top:6px;}
 #devkit-startup-failed code{font-family:var(--mono);font-size:var(--fs-meta);color:var(--text);}
