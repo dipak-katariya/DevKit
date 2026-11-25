@@ -39,6 +39,9 @@ public class MergingCommitTests
     // Neither of these opens with one of the two git prefixes.
     [InlineData("Merge pull request #42 from org/feature")]
     [InlineData("Merges branch data into the report")]
+    // "Merge branch" has to end at a space, as "Merge from" does.
+    [InlineData("Merge branches dropdown into one picker")]
+    [InlineData("Merge branch-name validation fix")]
     [InlineData("Revert \"Merge branch 'main' into feature/x\"")]
     public void Everything_else_still_has_to_reach_the_branch(string message)
     {

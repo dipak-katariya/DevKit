@@ -185,6 +185,34 @@ public sealed class TfsConnectionTests : IDisposable
             _tfs.Sent.Select(s => s.Authorization));
     }
 
+    [Fact]
+    public async Task A_saved_token_TFS_refuses_is_marked_until_a_new_one_is_saved()
+    {
+        var changes = 0;
+        _settings.Changed += () => changes++;
+        _tfs.Reply(HttpStatusCode.Unauthorized, """{"message":"TF400813: not authorized"}""");
+        _tfs.Reply(HttpStatusCode.Unauthorized, "");
+
+        await Assert.ThrowsAsync<HttpRequestException>(() => _api.GetProjectsAsync());
+        await Assert.ThrowsAsync<HttpRequestException>(() => _api.GetProjectsAsync());
+
+        Assert.True(_settings.SignInRefused);
+        Assert.Equal(1, changes);
+        Assert.Contains("Work Items: Read & write", _settings.SignInRefusedReason, StringComparison.Ordinal);
+        Assert.True(_settings.SaveTfs(StoredUrl, TriedPat));
+        Assert.False(_settings.SignInRefused);
+    }
+
+    [Fact]
+    public async Task A_connection_test_TFS_refuses_does_not_mark_the_saved_sign_in()
+    {
+        _tfs.Reply(HttpStatusCode.Unauthorized, "");
+
+        await Assert.ThrowsAsync<HttpRequestException>(() => _api.TestConnectionAsync(TriedUrl, TfsAuthMode.Pat, TriedPat));
+
+        Assert.False(_settings.SignInRefused);
+    }
+
     private sealed class CapturingHandler : HttpMessageHandler
     {
         private const string UserDataHeader = "X-VSS-UserData";

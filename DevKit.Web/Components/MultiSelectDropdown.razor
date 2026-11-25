@@ -21,9 +21,9 @@
         <div class="gdd-panel" @onclick:stopPropagation>
             <div class="gdd-search-wrap">
                 @* Keydown stops here, so Escape closes only this list and not a popover the dropdown sits in. *@
-                <input class="gdd-search" type="text" placeholder="@SearchPlaceholder" autocomplete="off"
+                <input class="gdd-search" type="text" placeholder="@SearchPlaceholder" autocomplete="off" value="@searchText"
                        role="combobox" aria-label="@Label" aria-autocomplete="list" aria-expanded="true"
-                       aria-controls="@PanelId" aria-activedescendant="@(highlightIdx >= 0 ? OptionId(highlightIdx) : null)"
+                       aria-controls="@PanelId" aria-activedescendant="@ActiveOptionId"
                        @oninput="OnSearchInput" @ref="searchInput" @onkeydown="OnKeyDown" @onkeydown:stopPropagation />
             </div>
 
@@ -38,7 +38,7 @@
                does the scrolling, with tabindex -1, because a list that scrolls is otherwise a Tab stop of its own
                in Chrome, and the arrows already move through it from the search box. *@
             @{ var optionIndex = 0; }
-            <div id="@PanelId" class="gdd-scroll" tabindex="-1" role="@(Visible().Count > 0 ? "listbox" : null)" aria-label="@Label" aria-multiselectable="true">
+            <div id="@PanelId" class="gdd-scroll" tabindex="-1" role="@(Visible().Count > 0 || CanCreate ? "listbox" : null)" aria-label="@Label" aria-multiselectable="true">
             <div class="gdd-list">
                 @foreach (var opt in Visible())
                 {
@@ -52,7 +52,17 @@
                         <span class="msd-label">@opt.Label</span>
                     </div>
                 }
-                @if (Visible().Count == 0)
+                @if (CanCreate)
+                {
+                    @* Only where the page takes new values, and only for text no option already has. The arrow keys reach
+                       it as the last row; Enter adds it once it is highlighted, or straight away when nothing else matches. *@
+                    <div class="gdd-item msd-item msd-create @(highlightIdx == Visible().Count ? "gdd-item-hl" : "")" role="option" aria-selected="false" id="@CreateId"
+                         @onmousedown:preventDefault @onclick="CreateAsync">
+                        <span class="msd-box" aria-hidden="true">+</span>
+                        <span class="msd-label">Add "@searchText.Trim()"</span>
+                    </div>
+                }
+                else if (Visible().Count == 0)
                 {
                     <div class="gdd-empty" role="status">No matches</div>
                 }
@@ -90,6 +100,60 @@
     /// <summary>What the field is, such as "Sprint". Screen readers then hear the trigger as "Sprint: value".</summary>
     [Parameter] public string? Label { get; set; }
 
+    /// <summary>
+    /// Set where a value the list does not have may be added, such as a new tag: the typed text is offered as "Add
+    /// …", and handed here to check and add. Unset, the list takes only its own options.
+    /// </summary>
+    [Parameter] public EventCallback<string> OnCreate { get; set; }
+
+    private bool CanCreate => OnCreate.HasDelegate && HasSearch && ExactMatch() is null;
+
+    // The search worked out once per change of the typed text or the options, since the markup and the keys read it
+    // many times over a list that can hold a project's every tag.
+    private List<Option>? matchedOptions;
+    private string matchedSearch = "";
+    private List<Option> matches = new();
+    private List<Option> visible = new();
+    private Option? exactMatch;
+
+    private void MatchSearch()
+    {
+        if (ReferenceEquals(matchedOptions, Options) && string.Equals(matchedSearch, searchText, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        matchedOptions = Options;
+        matchedSearch = searchText;
+        var typed = searchText.Trim();
+        matches = Options.Where(o => !HasSearch || o.Label.Contains(searchText, StringComparison.OrdinalIgnoreCase)).ToList();
+        visible = matches.Take(MaxRendered).ToList();
+        exactMatch = HasSearch ? Options.FirstOrDefault(o => string.Equals(o.Label, typed, StringComparison.OrdinalIgnoreCase)) : null;
+    }
+
+    /// <summary>The option whose label is the typed text, in any case.</summary>
+    private Option? ExactMatch()
+    {
+        MatchSearch();
+        return exactMatch;
+    }
+
+    private string CreateId => $"{PanelId}-new";
+
+    // The Add row counts as one past the last option, so the arrow keys and the screen reader reach it like the others.
+    private string? ActiveOptionId
+    {
+        get
+        {
+            if (highlightIdx < 0)
+            {
+                return null;
+            }
+
+            return highlightIdx == Visible().Count && CanCreate ? CreateId : OptionId(highlightIdx);
+        }
+    }
+
     private bool IsOpen;
     private string searchText = "";
     private ElementReference searchInput;
@@ -100,13 +164,20 @@
 
     private bool HasSearch => !string.IsNullOrWhiteSpace(searchText);
 
-    private List<Option> Matches() => Options
-        .Where(o => !HasSearch || o.Label.Contains(searchText, StringComparison.OrdinalIgnoreCase))
-        .ToList();
+    private List<Option> Visible()
+    {
+        MatchSearch();
+        return visible;
+    }
 
-    private List<Option> Visible() => Matches().Take(MaxRendered).ToList();
-
-    private int HiddenCount => Math.Max(0, Matches().Count - MaxRendered);
+    private int HiddenCount
+    {
+        get
+        {
+            MatchSearch();
+            return Math.Max(0, matches.Count - MaxRendered);
+        }
+    }
 
     private string TriggerLabel
     {
@@ -154,6 +225,13 @@
         return SelectedChanged.InvokeAsync(Selected);
     }
 
+    private Task TickAsync(string value)
+    {
+        searchText = "";
+        highlightIdx = -1;
+        return Selected.Add(value) ? SelectedChanged.InvokeAsync(Selected) : Task.CompletedTask;
+    }
+
     private Task SelectAllVisible()
     {
         Selected.UnionWith(Visible().Select(opt => opt.Value));
@@ -172,6 +250,15 @@
         highlightIdx = -1;
     }
 
+    /// <summary>Hands the typed text to the page to add, and clears the search so the list shows everything again.</summary>
+    private async Task CreateAsync()
+    {
+        var text = searchText.Trim();
+        searchText = "";
+        highlightIdx = -1;
+        await OnCreate.InvokeAsync(text);
+    }
+
     private async Task OnKeyDown(KeyboardEventArgs e)
     {
         if (e.Key == "Escape")
@@ -188,16 +275,27 @@
             {
                 await ToggleValue(visible[highlightIdx].Value);
             }
+            else if (highlightIdx < 0 && ExactMatch() is { } existing)
+            {
+                // "pt merged" typed for "PT Merged" ticks it rather than adding the same tag in another case.
+                await TickAsync(existing.Value);
+            }
+            else if (CanCreate && (highlightIdx == visible.Count || visible.Count == 0))
+            {
+                // A partial match typed to find "PT Merged" is not added as a tag of its own by an Enter meant to pick.
+                await CreateAsync();
+            }
             return;
         }
 
         var step = e.Key switch { "ArrowDown" => 1, "ArrowUp" => -1, _ => 0 };
-        if (step == 0 || visible.Count == 0)
+        var last = CanCreate ? visible.Count : visible.Count - 1;
+        if (step == 0 || last < 0)
         {
             return;
         }
-        highlightIdx = Math.Clamp(highlightIdx + step, 0, visible.Count - 1);
-        await RevealAsync(OptionId(highlightIdx));
+        highlightIdx = Math.Clamp(highlightIdx + step, 0, last);
+        await RevealAsync(ActiveOptionId!);
     }
 
     /// <summary>Closes from the keyboard. Focus goes back to the trigger, since the search box it was in is gone.</summary>

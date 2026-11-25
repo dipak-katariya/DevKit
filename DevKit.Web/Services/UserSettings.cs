@@ -75,8 +75,11 @@ public class UserSettings
     public Dictionary<string, RepoBranchDefaults> RepoBranches { get; set; } = new();
     public DashboardView DashboardView { get; set; }
 
-    /// <summary>False until the person finishes or skips the first-visit tour; a file without it shows the tour once.</summary>
+    /// <summary>False until the first-visit tour has opened for the person; a file without it shows the tour once.</summary>
     public bool GuideTourSeen { get; set; }
+
+    /// <summary>What the Code Merging Sheet's Update status button does; off until the person sets it up.</summary>
+    public StatusUpdateSettings StatusUpdate { get; set; } = new();
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? UnknownFields { get; set; }

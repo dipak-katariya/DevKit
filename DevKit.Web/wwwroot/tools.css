@@ -166,9 +166,13 @@
 .bc-f-pick{flex:1 1 140px;min-width:0;}
 .bc-page > .notice{margin:12px 0 0;}
 
-/* The table takes the width; the form keeps a steady column, wide enough for a long branch name. */
+/* The table takes the rest; the form keeps a steady column wide enough to read a branch name on one line where the
+   window allows (titles end in an ellipsis, whole in the tooltip). At 1280px the table still keeps its 600px. */
 .bc-content .content-left{flex:1 1 auto;}
-.bc-content .content-right{flex:0 0 clamp(340px,32%,460px);min-width:0;}
+.bc-content .content-right{flex:0 0 clamp(340px,36%,640px);min-width:0;}
+@media(min-width:1500px){
+  .bc-content .content-right{flex-basis:clamp(340px,40%,680px);}
+}
 .bc-page .gpanel{border:0;box-shadow:var(--rim),var(--elev-1);}
 .bc-page .phead{border-bottom:0;}
 .bc-page .ptitle{font-size:var(--fs-body);font-weight:600;text-transform:none;letter-spacing:0;color:var(--text);}
@@ -262,10 +266,15 @@ th[aria-sort="ascending"] .bc-sort::after,th[aria-sort="ascending"] .sc-sort::af
   background:color-mix(in srgb,var(--red) 8%,transparent);font-size:var(--fs-meta);color:var(--red-ink);
 }
 
-.bc-ref-row{display:flex;align-items:center;gap:6px;}
-.bc-ref-prefix{font-family:var(--mono);font-size:var(--fs-meta);color:var(--muted);white-space:nowrap;}
-/* A branch name is code, like the base branch picked below it. */
-.bc-page .bc-ref-input{font-family:var(--mono);font-size:var(--fs-meta);}
+/* Branch and PR names wrap rather than scroll out of sight: each field is as tall as its text, one line for a short
+   name, at most four. Without field-sizing the two rows of the markup hold it. */
+.bc-page textarea.bc-wrap{
+  display:block;width:100%;height:auto;min-height:38px;max-height:calc(4lh + 18px);field-sizing:content;
+  resize:none;line-height:1.5;overflow-wrap:anywhere;
+}
+/* A branch name is code, like the base branch picked below it; it has no spaces, so it breaks at any character. */
+.bc-page .bc-ref-input{font-family:var(--mono);font-size:var(--fs-meta);word-break:break-all;}
+.bc-hint .bc-ref{color:var(--muted2);}
 .bc-valid{font-size:var(--fs-meta);margin-top:3px;}
 .bc-valid.ok{color:var(--green);}
 .bc-valid.bad{color:var(--red);}
@@ -426,6 +435,23 @@ table.bdel-table thead th{position:sticky;top:0;z-index:1;background:var(--surfa
 .st-bar-tools{display:flex;gap:6px;margin-left:auto;}
 .st-import{cursor:pointer;}
 .st-import:focus-within{outline:2px solid var(--accent2);outline-offset:2px;}
+.st-import.st-off{opacity:.5;cursor:not-allowed;}
+/* The token field with its Show and Copy buttons beside it, at the field's height. */
+.st-secret{display:flex;align-items:center;gap:6px;}
+.st-secret .fi{flex:1;min-width:0;font-family:var(--mono);}
+.st-secret-btn{
+  flex-shrink:0;width:38px;height:38px;border:0;border-radius:var(--r2);
+  background:var(--surface);color:var(--muted2);cursor:pointer;box-shadow:var(--rim);
+  display:inline-flex;align-items:center;justify-content:center;transition:var(--tr-ui);
+}
+.st-secret-btn:hover{background:var(--surface2);color:var(--text);}
+.st-secret-btn[aria-pressed=true]{color:var(--accent2);}
+.st-secret-btn:focus-visible{outline:2px solid var(--accent2);outline-offset:2px;}
+.st-hint:empty{display:none;}
+/* A problem that has a way out: the message, then its button at the end of the line. */
+.st-problem{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;}
+.st-problem > span{flex:1 1 320px;}
+.st-refused{margin:0 0 12px;}
 .st-sec{border:0;box-shadow:var(--rim),var(--elev-1);}
 .st-sec .phead{padding:14px 16px 10px;border-bottom:0;justify-content:flex-start;gap:8px 12px;}
 .st-sec .ptitle{font-size:var(--fs-name);font-weight:600;text-transform:none;letter-spacing:0;color:var(--text);}
@@ -461,9 +487,24 @@ table.bdel-table thead th{position:sticky;top:0;z-index:1;background:var(--surfa
 .st-repo-project{font-size:var(--fs-meta);color:var(--muted);margin-top:1px;}
 /* "Most used" is a word in the accent, as Task Creation marks its default tasks, not a boxed badge. */
 .st-tag{margin-left:6px;font-size:var(--fs-meta);font-weight:600;color:var(--accent2);}
+/* Update Status: the project the lists come from at the heading's end, then each part as a switch beside its pickers,
+   on the same 180px column as the pinned repositories. */
+.st-status-from{margin-left:auto;display:flex;align-items:center;gap:8px;flex:0 1 320px;min-width:0;}
+.st-hint-inline{font-size:var(--fs-meta);color:var(--muted2);white-space:nowrap;}
+.st-status-from .gdd{flex:1;min-width:0;}
+.st-status-grid{display:grid;grid-template-columns:180px minmax(0,1fr);gap:12px;align-items:start;}
+.st-check{display:inline-flex;align-items:center;gap:8px;min-height:38px;font-size:var(--fs-body);font-weight:600;color:var(--text);cursor:pointer;user-select:none;}
+.st-check input{accent-color:var(--accent);width:15px;height:15px;cursor:pointer;}
+.st-status-pick{display:flex;flex-direction:column;gap:8px;min-width:0;}
+.st-status-field{flex-direction:row;align-items:center;}
+.st-status-field .gdd{flex:1;min-width:0;}
+.st-status-to{font-size:var(--fs-meta);color:var(--muted2);flex-shrink:0;}
 /* A message that a click brings fades in, as a load's results do; nothing else on the page moves. */
 .st-col .notice{animation:fade-in .15s var(--ease-out);}
 @media (max-width:600px){
+  .st-status-grid{grid-template-columns:1fr;gap:6px;}
+  .st-status-from{flex:1 1 100%;margin-left:0;}
+  .st-status-field{flex-wrap:wrap;}
   .st-bar{padding:8px 12px;}
   .st-pins-grid{grid-template-columns:1fr;}
   .st-filter{flex:1 1 100%;margin-left:0;}

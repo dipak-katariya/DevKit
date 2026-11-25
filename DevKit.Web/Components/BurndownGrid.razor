@@ -11,6 +11,7 @@
             <span><span class="bd-reg-red" aria-hidden="true">●</span> below them</span>
             <span><span class="bd-reg-none" aria-hidden="true">●</span> not due yet</span>
             <span><span class="bd-bug-red">+Nb</span> = bug hours</span>
+            <span><span class="bd-leave">Leave</span> = day off in TFS, no hours logged</span>
             <span class="bd-legend-note">@ThresholdLabel h expected per working day</span>
         </span>
     </div>
@@ -42,9 +43,16 @@ else
                             var expected = Expected(col.WorkingDays);
                             var overBug = expected is { } e && cell?.Bug < e;
                             <td class="bd-cell" title="@ExpectedTitle(col.WorkingDays)" @onclick="() => Show(row.MemberDisplay, col.Label, cell)">
-                                @if (cell is null || Math.Abs(cell.Total) < HalfHundredth)
+                                @if (cell is null || Math.Abs(cell.Total) < BurndownCalculator.HalfHundredth)
                                 {
-                                    <span class="bd-zero">·</span>
+                                    if (row.LeaveDays.TryGetValue(col.Key, out var leaveDays))
+                                    {
+                                        <span class="bd-leave" title="@LeaveTitle(leaveDays)">Leave</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="bd-zero">·</span>
+                                    }
                                 }
                                 else
                                 {
@@ -119,6 +127,10 @@ else
         ? $"{member}, {period}: {cell.Regular:0.#} h plus {cell.Bug:0.#} h on bugs. Show the work items"
         : $"{member}, {period}: {cell.Regular:0.#} h. Show the work items";
 
+    private static string LeaveTitle(int days) => days == 1
+        ? "On leave in TFS, and no hours logged"
+        : $"On leave in TFS for {days} working days, and no hours logged";
+
     private void CloseCell() => sel = null;
 
     private BurndownCell? sel;
@@ -129,9 +141,6 @@ else
         if (cell is null || cell.Items.Count == 0) return;
         sel = cell; selMember = member; selPeriod = period;
     }
-
-    // Cells hold hours rounded to hundredths, so a total nearer zero than half of one is no hours.
-    private const double HalfHundredth = 0.005;
 
     /// <summary>
     /// Hours expected over a period, so a week is measured against a week's working days, and

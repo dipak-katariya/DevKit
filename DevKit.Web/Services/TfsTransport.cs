@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace DevKit.Web.Services;
 
@@ -351,6 +352,10 @@ public static class TfsServiceCollectionExtensions
         services.AddTransient<MergeVerificationService>();
         services.AddScoped<ITfsMetadataSource>(sp => sp.GetRequiredService<TfsApiService>());
         services.AddScoped<SharedTfsData>();
+        // The app's clock, unless the host registered one.
+        services.TryAddSingleton(TimeProvider.System);
+        // Scoped: it keeps a person's tag and field lists for their circuit, aged by that clock.
+        services.AddScoped<StatusUpdateService>();
         return services;
     }
 

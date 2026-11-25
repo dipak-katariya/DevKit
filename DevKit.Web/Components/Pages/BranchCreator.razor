@@ -285,13 +285,13 @@
                         @* The check line, the length hint and the pattern describe the box, so a screen reader hears them
                            with it, and an invalid name is marked as such. *@
                         var nameInvalid = !string.IsNullOrWhiteSpace(branchName) && BranchNameError != null;
+                        @* The name wraps rather than scrolling out of sight, so a long one is read whole; it stays one line
+                           (BranchCreator.razor.cs drops line breaks). *@
                         <div class="f-row">
-                            <div class="f-label"><label for="bcBranchName">Branch Name</label> <span class="bc-hint" id="bcBranchHint">max @BranchNaming.MaxLength chars</span></div>
-                            <div class="bc-ref-row">
-                                <span class="bc-ref-prefix" aria-hidden="true">refs/heads/</span>
-                                <input class="fi bc-ref-input" id="bcBranchName" @bind="branchName" @bind:event="oninput" placeholder="auto-generated"
-                                       aria-invalid="@(nameInvalid ? "true" : null)" aria-describedby="bcBranchCheck bcBranchHint bcBranchPattern" />
-                            </div>
+                            <div class="f-label"><label for="bcBranchName">Branch Name</label> <span class="bc-hint" id="bcBranchHint">in <code class="bc-ref">refs/heads/</code> · max @BranchNaming.MaxLength chars</span></div>
+                            <textarea class="fi bc-wrap bc-ref-input" id="bcBranchName" rows="2" spellcheck="false" @bind="branchName" @bind:event="oninput"
+                                      placeholder="auto-generated" aria-invalid="@(nameInvalid ? "true" : null)"
+                                      aria-describedby="bcBranchCheck bcBranchHint bcBranchPattern"></textarea>
                             @if (!string.IsNullOrWhiteSpace(branchName))
                             {
                                 @if (BranchNameError == null)
@@ -312,7 +312,7 @@
                         <!-- PR Name -->
                         <div class="f-row">
                             <div class="f-label"><label for="bcPrName">PR Name Suggestion</label></div>
-                            <input class="fi" id="bcPrName" @bind="prName" />
+                            <textarea class="fi bc-wrap" id="bcPrName" rows="2" @bind="prName" @bind:event="oninput"></textarea>
                         </div>
 
                         <!-- Base Branch -->

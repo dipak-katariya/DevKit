@@ -25,7 +25,7 @@ public partial class BranchCreator
     {
         var team = !string.IsNullOrWhiteSpace(teamName) ? teamName : (selectedArea?.Name ?? "team");
         branchName = BranchNaming.Build(team, item.Sprint, item.Id, item.Title);
-        prName = $"{BranchNaming.TeamSegment(team)} : {item.Id} : {item.Title}";
+        prName = BranchNaming.PullRequestName(team, item.Id, item.Title);
     }
 
     /// <summary>

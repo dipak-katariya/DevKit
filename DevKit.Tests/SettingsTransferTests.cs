@@ -143,4 +143,118 @@ public sealed class SettingsTransferTests
 
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error && e.Exception is System.Text.Json.JsonException);
     }
+
+    [Fact]
+    public void A_whole_settings_file_from_an_earlier_DevKit_imports_its_preferences_and_never_its_connection()
+    {
+        var settings = NewSettings();
+        settings.SaveTfs(FixedUrl, TestPat);
+        // As a PC's usersettings.json holds them, computed fields and the PAT encrypted for that PC included.
+        const string earlierFile = """
+            {
+              "Tfs": { "Url": "https://old.example.test/tfs/Old", "Auth": "Pat", "Pat": "enc:v2:AAAA", "ApiVersion": "5.0", "IsConfigured": true },
+              "DefaultAreaPath": "Area|||Project\\Area|||Project",
+              "DefaultSprint": "Project\\PI-5_1",
+              "DefaultRepoId": "repo-1",
+              "MostUsedRepoCount": 3,
+              "MostUsedRepoIds": [ "repo-1" ],
+              "TeamName": "TEAM-OLD",
+              "DeliverableTags": {},
+              "CapacityPlanning": { "HoursPerDay": 7.5, "SprintWeeks": 3, "DaysPerWeek": 5, "FixedSprintDays": 15 },
+              "CodeMergingTargetBranch": "release/old",
+              "CodeMergingRepoIds": [ "repo-1" ],
+              "RepoTargetBranches": { "Old.Repo": "develop" },
+              "RepoBranches": { "repo-1": { "QaBranch": "develop", "MergingBranch": "release/cp-26.5.2", "IsEmpty": false } }
+            }
+            """;
+
+        var result = settings.ImportSettings(earlierFile);
+
+        Assert.True(result.Imported, result.Message);
+        Assert.Equal("TEAM-OLD", settings.TeamName);
+        Assert.Equal("Project\\PI-5_1", settings.DefaultSprint);
+        Assert.False(settings.DefaultSprintIsCurrent);
+        Assert.Equal(new[] { "repo-1" }, settings.MostUsedRepoIds);
+        Assert.Equal("release/cp-26.5.2", settings.GetRepoBranches("repo-1").MergingBranch);
+        Assert.Equal(7.5, settings.CapacityPlanning.HoursPerDay);
+        Assert.Equal("develop", settings.RepoTargetBranches["Old.Repo"]);
+        Assert.Equal(FixedUrl, settings.Tfs.Url);
+        Assert.Equal(TestPat, settings.Tfs.Pat);
+    }
+
+    [Fact]
+    public void An_import_keeps_every_setting_the_file_does_not_name()
+    {
+        var settings = Configured();
+
+        var result = settings.ImportSettings($$"""
+            { "Format": "{{PortableSettings.FormatName}}", "Version": 1, "TeamName": "TEAM-B",
+              "RepoBranches": { "repo-2": { "QaBranch": "main" } } }
+            """);
+
+        Assert.True(result.Imported, result.Message);
+        Assert.Equal("TEAM-B", settings.TeamName);
+        Assert.Equal("Project\\PI-5_1", settings.DefaultSprint);
+        Assert.False(settings.DefaultSprintIsCurrent);
+        Assert.Equal("repo-1", settings.DefaultRepoId);
+        Assert.Equal(new[] { "repo-1", "repo-2" }, settings.MostUsedRepoIds);
+        Assert.Equal("develop", settings.GetRepoBranches("repo-1").QaBranch);
+        Assert.Equal("main", settings.GetRepoBranches("repo-2").QaBranch);
+        Assert.Equal(TestPat, settings.Tfs.Pat);
+    }
+
+    [Fact]
+    public void A_file_edited_by_hand_with_other_letter_case_comments_and_trailing_commas_is_read()
+    {
+        var settings = NewSettings();
+
+        var result = settings.ImportSettings($$"""
+            {
+              // Typed by hand.
+              "format": "{{PortableSettings.FormatName}}",
+              "version": 1,
+              "teamName": "TEAM-C",
+            }
+            """);
+
+        Assert.True(result.Imported, result.Message);
+        Assert.Equal("TEAM-C", settings.TeamName);
+    }
+
+    [Fact]
+    public void The_settings_form_saves_only_what_it_changed()
+    {
+        var settings = Configured();
+        var form = settings.CurrentPreferences();
+        Assert.False(form.ChangesFrom(settings.CurrentPreferences()).HasChanges);
+
+        form.TeamName = "TEAM-B";
+        form.RepoBranches!["repo-1"] = new RepoBranchDefaults();
+        var changes = form.ChangesFrom(settings.CurrentPreferences());
+
+        Assert.Equal("TEAM-B", changes.TeamName);
+        Assert.Null(changes.DefaultAreaPath);
+        Assert.Null(changes.DefaultSprint);
+        Assert.Null(changes.MostUsedRepoIds);
+        Assert.True(settings.SavePreferences(changes));
+        Assert.Equal("TEAM-B", settings.TeamName);
+        Assert.True(settings.GetRepoBranches("repo-1").IsEmpty);
+        Assert.Equal("Project\\PI-5_1", settings.DefaultSprint);
+        Assert.Equal(new[] { "repo-1", "repo-2" }, settings.MostUsedRepoIds);
+        Assert.Equal(TestPat, settings.Tfs.Pat);
+        Assert.False(form.ChangesFrom(settings.CurrentPreferences()).HasChanges);
+    }
+
+    [Fact]
+    public void A_lower_pin_count_saved_from_the_form_trims_the_pinned_list()
+    {
+        var settings = Configured();
+        var form = settings.CurrentPreferences();
+
+        form.MostUsedRepoCount = 1;
+
+        Assert.True(settings.SavePreferences(form.ChangesFrom(settings.CurrentPreferences())));
+        Assert.Equal(1, settings.MostUsedRepoCount);
+        Assert.Equal(new[] { "repo-1" }, settings.MostUsedRepoIds);
+    }
 }

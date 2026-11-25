@@ -89,25 +89,41 @@
                 }
             </div>
         </td>
-        <td class="cm-c-act">
-            <div class="cm-act">
-                @if (Verified)
-                {
-                    <button class="cm-expander" title="Re-check this work item's commits against @BranchLabel"
-                            disabled="@Row.IsVerifying" @onclick="() => OnReverify.InvokeAsync(Row)" @onclick:stopPropagation>
-                        <Icon Inner="@Icons.Refresh" />
-                    </button>
-                }
-                @if (Row.PullRequests.Any(CanCompare))
-                {
-                    <button class="cm-expander cm-code-btn" title="Compare the code of this work item's pull requests with @BranchLabel"
-                            disabled="@(Code.Busy || Row.IsVerifying)" @onclick="() => OnCompareRow.InvokeAsync(Row)" @onclick:stopPropagation>
-                        <Icon Inner="@Icons.Code" />
-                    </button>
-                }
-            </div>
-        </td>
     }
+    @* The sheet's own two first, so they keep their place whether or not the checks below are on. *@
+    <td class="cm-c-act">
+        <div class="cm-act">
+            <button class="cm-expander @ActionClass(Row.CopyAction)" aria-label="Copy details of @Row.WorkItemId for the merge sheet"
+                    title="@CopyRowTitle" disabled="@(CopyablePrCount == 0)" aria-busy="@BusyAttribute(Row.CopyAction)" data-rich-copy="@RowCopyKey(Row)"
+                    @onclick="() => OnCopyRow.InvokeAsync(Row)" @onclick:stopPropagation>
+                @if (Row.CopyAction.IsBusy) { <span class="spin spin-sm"></span> } else { <Icon Inner="@ActionIcon(Row.CopyAction, Icons.Copy)" /> }
+            </button>
+            <button class="cm-expander @ActionClass(Row.StatusAction)" aria-label="Update status of @Row.WorkItemId"
+                    title="@StatusTitle" disabled="@(!Status.Enabled)" aria-busy="@BusyAttribute(Row.StatusAction)"
+                    @onclick="() => OnUpdateStatus.InvokeAsync(Row)" @onclick:stopPropagation>
+                @if (Row.StatusAction.IsBusy) { <span class="spin spin-sm"></span> } else { <Icon Inner="@ActionIcon(Row.StatusAction, Icons.Tag)" /> }
+            </button>
+            @if (Verified || canCompareRow)
+            {
+                <span class="cm-act-sep" aria-hidden="true"></span>
+            }
+            @if (Verified)
+            {
+                <button class="cm-expander" aria-label="Re-check @Row.WorkItemId" title="Re-check this work item's commits against @BranchLabel"
+                        disabled="@Row.IsVerifying" @onclick="() => OnReverify.InvokeAsync(Row)" @onclick:stopPropagation>
+                    <Icon Inner="@Icons.Refresh" />
+                </button>
+            }
+            @if (canCompareRow)
+            {
+                <button class="cm-expander cm-code-btn" aria-label="Compare the code of @Row.WorkItemId"
+                        title="Compare the code of this work item's pull requests with @BranchLabel"
+                        disabled="@(Code.Busy || Row.IsVerifying)" @onclick="() => OnCompareRow.InvokeAsync(Row)" @onclick:stopPropagation>
+                    <Icon Inner="@Icons.Code" />
+                </button>
+            }
+        </div>
+    </td>
 </tr>
 
 @if (Row.IsExpanded && VisiblePrCount > 0)
@@ -149,8 +165,15 @@
                                     </button>
                                 </td>
                                 <td class="cm-p-id" title="@pr.Title">
-                                    <a class="id-link" href="@pr.Url" target="_blank" rel="noopener"
-                                       title="Open pull request !@pr.PullRequestId in a new tab" @onclick:stopPropagation>!@pr.PullRequestId</a>
+                                    <div class="cm-pid">
+                                        <a class="id-link" href="@pr.Url" target="_blank" rel="noopener"
+                                           title="Open pull request !@pr.PullRequestId in a new tab" @onclick:stopPropagation>!@pr.PullRequestId</a>
+                                        <button class="cm-expander @ActionClass(Row.PrCopyAction(pr))" aria-label="Copy details of !@pr.PullRequestId for the merge sheet"
+                                                title="@CopyPrTitle(Row, pr)" disabled="@pr.IsAbandoned" aria-busy="@BusyAttribute(Row.PrCopyAction(pr))" data-rich-copy="@PrCopyKey(Row, pr)"
+                                                @onclick="() => OnCopyPr.InvokeAsync((Row, pr))" @onclick:stopPropagation>
+                                            @if (Row.PrCopyAction(pr).IsBusy) { <span class="spin spin-sm"></span> } else { <Icon Inner="@ActionIcon(Row.PrCopyAction(pr), Icons.Copy)" /> }
+                                        </button>
+                                    </div>
                                 </td>
                                 <td class="cm-p-repo" title="Repository: @pr.RepositoryName">@pr.RepositoryName</td>
                                 <td class="cm-p-branch">
@@ -288,7 +311,7 @@
     private bool ShowMergeColumns => Verified || Code.Available;
 
     private string BranchLabel => string.IsNullOrEmpty(TargetBranch) ? "the merging branch" : TargetBranch;
-    private int ColumnCount => ShowMergeColumns ? 10 : 8;
+    private int ColumnCount => ShowMergeColumns ? 10 : 9;
     private int PrColumnCount => 9 + (Verified ? 1 : 0) + (ShowMergeColumns ? 1 : 0);
     private int VisiblePrCount => VisiblePrs.Count;
 
@@ -320,6 +343,7 @@
         rollup = MergeRollupCalculator.For(Row, VisiblePrs);
         offQaKeys = Row.OffQaBranchPullRequests.Select(PrKey).ToHashSet(StringComparer.Ordinal);
         codeLostPrs = VisiblePrs.Count(p => p.CodeContradictsCommits);
+        canCompareRow = Row.PullRequests.Any(CanCompare);
     }
 
     private string CodeLostTooltip =>
@@ -385,7 +409,7 @@
         _ => Icons.HelpCircle
     };
 
-    public static string PrKey(MergingPullRequest pr) => $"{pr.RepositoryId}_{pr.PullRequestId}";
+    public static string PrKey(MergingPullRequest pr) => RequirementMergingRow.PrKey(pr);
 
     private Task ToggleRow() => VisiblePrCount == 0 ? Task.CompletedTask : OnToggleRow.InvokeAsync(Row);
 

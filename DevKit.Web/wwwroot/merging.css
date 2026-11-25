@@ -204,7 +204,7 @@ table.cm-grid .type-pill,table.cm-grid .state-pill,table.cm-grid .pr-badge,
 .cm-c-user{width:136px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-meta);}
 .cm-c-num{width:68px;text-align:right;}
 .cm-c-merged{width:190px;}
-.cm-c-act{width:46px;text-align:center;}
+.cm-c-act{width:70px;}
 /* One line per row, always: a type or state too long for its column ends in an ellipsis (the cell's
    tooltip has it in full) instead of wrapping and growing the row. */
 table.cm-grid td.cm-c-type,table.cm-grid td.cm-c-state{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -223,6 +223,7 @@ table.cm-grid td.cm-c-type,table.cm-grid td.cm-c-state{white-space:nowrap;overfl
   color:var(--muted2);cursor:pointer;transition:var(--tr-ui);padding:0;flex-shrink:0;
 }
 tr:hover > td > .cm-expander:not(:disabled),tr:hover > td > .cm-act > .cm-expander:not(:disabled),
+tr:hover > td > .cm-pid > .cm-expander:not(:disabled),
 .mr-hdr:hover > .cm-expander:not(:disabled),.cm-expander:focus-visible{background:var(--surface3);box-shadow:var(--rim);}
 .cm-expander:hover:not(:disabled){background:var(--surface3);color:var(--text);box-shadow:var(--rim),var(--elev-1);}
 .cm-expander:disabled{opacity:.22;cursor:default;}
@@ -262,7 +263,8 @@ table.cm-commit-table tbody tr:last-child{border-bottom:none;}
 .cm-commit-wrap{padding:8px 0 4px 26px;}
 .cm-empty-inline{padding:14px;text-align:center;font-size:var(--fs-meta);color:var(--muted);}
 
-.cm-p-id{width:74px;}
+.cm-p-id{width:100px;}
+.cm-pid{display:flex;align-items:center;gap:6px;}
 .cm-p-repo{width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-meta);color:var(--muted2);}
 .cm-p-branch{width:auto;min-width:0;}
 .cm-p-status{width:96px;}
@@ -340,6 +342,14 @@ a.cref-text{padding:5px 0;margin:-5px 0;}
   .cm-c-user{width:112px;}
   .cm-c-num{width:58px;}
   .cm-c-merged{width:170px;}
+  /* An open row's pull requests: the fixed columns give way so the two branch columns keep room for a name
+     (each one's tooltip and copy button have it in full). */
+  .cm-p-id{width:92px;}
+  .cm-p-repo{width:110px;}
+  .cm-p-status{width:84px;}
+  .cm-p-user{width:100px;}
+  .cm-p-date{width:96px;}
+  .cm-p-merged{width:112px;}
   /* Just after a load the grid header also carries the pending-commits chip; the counts step aside
      until the commits are read, so the header keeps one line and the grid its rows. */
   .cm-phead:has(.cm-pending-chip) .cm-counts{display:none;}

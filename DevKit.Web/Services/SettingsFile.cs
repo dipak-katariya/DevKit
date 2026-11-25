@@ -39,6 +39,12 @@ internal interface ISettingsStore
     /// </summary>
     string? UnparsableMessage => null;
 
+    /// <summary>Has the next <see cref="ReadText"/> read what is stored now; the settings file reads it every time anyway.</summary>
+    void Refresh()
+    {
+        // ReadText reads the file itself on every call.
+    }
+
     /// <summary>The stored text, or null when there is none yet.</summary>
     string? ReadText();
 

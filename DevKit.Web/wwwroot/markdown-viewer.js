@@ -160,29 +160,18 @@
             btn.classList.add('copied');
             setTimeout(function () { label.textContent = orig; btn.classList.remove('copied'); setText('mdAnnounce', ''); }, 2000);
         }
-        function fallback() {
-            var tmp = document.createElement('div');
-            tmp.setAttribute('contenteditable', 'true');
-            tmp.innerHTML = styledHtml;
-            tmp.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;';
-            document.body.appendChild(tmp);
-            var range = document.createRange();
-            range.selectNodeContents(tmp);
-            var sel = window.getSelection();
-            sel.removeAllRanges(); sel.addRange(range);
-            try { document.execCommand('copy'); } catch (e) { /* clipboard unavailable */ }
-            sel.removeAllRanges();
-            document.body.removeChild(tmp);
-            done();
+        // Emptied first and set a moment later, as done() does, so a second refusal in a row is read out again.
+        function refused() {
+            setText('mdAnnounce', '');
+            setTimeout(function () { setText('mdAnnounce', 'The browser did not allow copying. Try again.'); }, 50);
         }
-        if (navigator.clipboard && typeof ClipboardItem !== 'undefined') {
-            navigator.clipboard.write([new ClipboardItem({
-                'text/html': new Blob([styledHtml], { type: 'text/html' }),
-                'text/plain': new Blob([plain], { type: 'text/plain' })
-            })]).then(done).catch(fallback);
-        } else {
-            fallback();
-        }
+        window.devKit.copyRich(plain, styledHtml).then(function (copied) {
+            if (copied) {
+                done();
+            } else {
+                refused();
+            }
+        }, refused);
     }
 
     function bindClick(id, handler) {

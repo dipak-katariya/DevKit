@@ -4,6 +4,22 @@ using System.Security.Cryptography;
 namespace DevKit.Web.Services;
 
 /// <summary>
+/// Shared mode: tells every open page of a person that one of their pages saved their settings, so the others show and
+/// use them too instead of what they read when they opened. Pages hear the tag that names nobody, and act only on their own.
+/// </summary>
+[SupportedOSPlatform("windows")]
+internal sealed class PersonSettingsSaves
+{
+    /// <summary>
+    /// Raised on the saving page's thread with the person's tag and the id of the store that saved, never the store
+    /// itself, which holds that person's key; handlers must not wait on anything.
+    /// </summary>
+    public event Action<string, Guid>? Saved;
+
+    public void Announce(string person, Guid savedBy) => Saved?.Invoke(person, savedBy);
+}
+
+/// <summary>
 /// Shared mode: one person's settings, PAT included, kept on the DevKit server in <see cref="PersonVault"/>, sealed
 /// by <see cref="ClientVault"/> for them. Who they are comes from their sign-in, never from the page. Every page of
 /// theirs reads the same copy, so neither a browser that deletes its data, nor a redeploy, nor another port or PC, ever
@@ -22,8 +38,8 @@ internal sealed class PersonSettingsStore : ISettingsStore
         "under the account that saved them, before you save here.";
 
     private const string ReadFailedText =
-        "DevKit could not open your settings just now, so nothing is saved, to keep them from being overwritten. Reload the " +
-        "page in a minute; if it keeps happening, tell whoever runs DevKit.";
+        "DevKit could not open your settings just now, so nothing is saved, to keep them from being overwritten. Click Try " +
+        "again in a minute; if it keeps happening, tell whoever runs DevKit.";
 
     private const string UnparsableText =
         "Your saved settings were saved by a later version of DevKit, which this one cannot read, so nothing is saved here, " +
@@ -31,22 +47,38 @@ internal sealed class PersonSettingsStore : ISettingsStore
 
     private readonly PersonVault _vault;
     private readonly ClientVault _sealer;
+    private readonly PersonSettingsSaves _saves;
     private readonly ILogger<PersonSettingsStore> _logger;
+
+    // A reload reads and opens the stored copy on another thread than the page's saves; the kept copy changes under it.
+    private readonly object _gate = new();
+
+    // The vault replaces the settings file in place, which fails while a read of it is open, and a reload reads it
+    // without holding the settings: this page's reads and saves of the file take turns, as they did under the settings.
+    private readonly object _fileTurn = new();
     private SignedInUser? _user;
     private PersonKey? _key;
     private bool _unreadable;
 
-    // What this page last read from the server or saved there, sealed and as text. A save applies its changes to that
-    // text, unless the server keeps something else by then: what another page saved.
+    // What this page last read from the server or saved there, sealed and as text, always changed together. A save
+    // applies its changes to that text, unless the server keeps something else by then: what another page saved.
+    // _textKept is null until the sealed copy has been opened.
     private string? _sealedKept;
     private string? _textKept;
 
-    public PersonSettingsStore(PersonVault vault, ClientVault sealer, ILogger<PersonSettingsStore> logger)
+    public PersonSettingsStore(PersonVault vault, ClientVault sealer, PersonSettingsSaves saves, ILogger<PersonSettingsStore> logger)
     {
         _vault = vault;
         _sealer = sealer;
+        _saves = saves;
         _logger = logger;
     }
+
+    /// <summary>Tells this page's saves from another page's in <see cref="PersonSettingsSaves"/>, without handing the store out.</summary>
+    public Guid InstanceId { get; } = Guid.NewGuid();
+
+    /// <summary>Tests only: runs inside <see cref="Refresh"/> as it starts reading the stored copy, in this page's turn on the file.</summary>
+    internal Action? ReadingStored { get; set; }
 
     public string Location { get; private set; } = "the DevKit server";
 
@@ -85,22 +117,81 @@ internal sealed class PersonSettingsStore : ISettingsStore
         }
     }
 
+    /// <summary>
+    /// Reads the person's sealed settings from the server again, and opens them: what another of their pages saved
+    /// since, or what could not be read before. Throws when they cannot be read or opened now, which the caller logs;
+    /// what this page kept then stays as it was, so its next save still merges onto the copy it holds the text of.
+    /// A save by this page while the read ran is newer than what was read, so the read is then not kept.
+    /// </summary>
+    public void Refresh()
+    {
+        var user = Opened();
+        string? keptWhenStarted;
+        PersonKey? key;
+        lock (_gate)
+        {
+            keptWhenStarted = _sealedKept;
+            key = _key;
+        }
+
+        string? loaded;
+        lock (_fileTurn)
+        {
+            ReadingStored?.Invoke();
+            loaded = _vault.Load(user);
+        }
+
+        var opened = loaded is null ? null : _sealer.Open(user, loaded, key);
+        lock (_gate)
+        {
+            if (!string.Equals(_sealedKept, keptWhenStarted, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _sealedKept = loaded;
+            _textKept = opened?.Text;
+            _key = opened?.Key ?? _key;
+            _unreadable = false;
+        }
+    }
+
     /// <summary>The person's settings text, or null when the server keeps none; their key is kept for the saves that follow.</summary>
     public string? ReadText()
     {
-        if (_unreadable)
+        string? sealedKept;
+        PersonKey? key;
+        lock (_gate)
         {
-            throw new IOException("The settings could not be read when the page opened.");
+            if (_unreadable)
+            {
+                throw new IOException("The settings could not be read when the page opened.");
+            }
+
+            if (_sealedKept is null)
+            {
+                return null;
+            }
+
+            if (_textKept is not null)
+            {
+                return _textKept;
+            }
+
+            sealedKept = _sealedKept;
+            key = _key;
         }
 
-        if (_sealedKept is null)
+        var opened = _sealer.Open(Opened(), sealedKept, key);
+        lock (_gate)
         {
-            return null;
+            if (string.Equals(_sealedKept, sealedKept, StringComparison.Ordinal))
+            {
+                _key = opened.Key;
+                _textKept = opened.Text;
+            }
         }
 
-        var opened = _sealer.Open(Opened(), _sealedKept);
-        _key = opened.Key;
-        _textKept = opened.Text;
         return opened.Text;
     }
 
@@ -114,7 +205,11 @@ internal sealed class PersonSettingsStore : ISettingsStore
         }
 
         var opened = _sealer.Open(user, sealedBackup);
-        _key = opened.Key;
+        lock (_gate)
+        {
+            _key = opened.Key;
+        }
+
         return opened.Text;
     }
 
@@ -141,31 +236,69 @@ internal sealed class PersonSettingsStore : ISettingsStore
         var changes = previousText is null ? null : SettingsChanges.Between(previousText, text);
         string? sealedText = null;
         string? merged = null;
-        _vault.Update(user, kept =>
+        lock (_fileTurn)
         {
-            var basis = kept is null || changes is null ? null : BasisFrom(user, kept);
-            merged = basis is null ? text : SettingsChanges.Apply(basis, changes!);
-            _key ??= _sealer.NewKey();
-            sealedText = _sealer.Seal(user, _key, merged);
-            return sealedText;
-        });
-        _sealedKept = sealedText;
-        _textKept = merged;
+            _vault.Update(user, kept =>
+            {
+                var basis = kept is null || changes is null ? null : BasisFrom(user, kept);
+                merged = basis is null ? text : SettingsChanges.Apply(basis, changes!);
+                var key = KeyForSealing();
+                sealedText = _sealer.Seal(user, key, merged);
+                return sealedText;
+            });
+        }
+
+        lock (_gate)
+        {
+            _sealedKept = sealedText;
+            _textKept = merged;
+        }
+
+        _saves.Announce(ClientVault.PersonTag(user), InstanceId);
+    }
+
+    // Making a key locks it with DPAPI-NG, which can wait on the domain, so it is made without holding the gate: a reload
+    // or another read of this page never waits for it. When two saves race to make one, the first kept wins.
+    private PersonKey KeyForSealing()
+    {
+        lock (_gate)
+        {
+            if (_key is not null)
+            {
+                return _key;
+            }
+        }
+
+        var made = _sealer.NewKey();
+        lock (_gate)
+        {
+            return _key ??= made;
+        }
     }
 
     /// <summary>The text the kept copy holds: this page's own last copy, or another page's newer save opened.</summary>
     private string? BasisFrom(SignedInUser user, string kept)
     {
-        if (string.Equals(kept, _sealedKept, StringComparison.Ordinal))
+        PersonKey? key;
+        lock (_gate)
         {
-            return _textKept;
+            if (_textKept is not null && string.Equals(kept, _sealedKept, StringComparison.Ordinal))
+            {
+                return _textKept;
+            }
+
+            key = _key;
         }
 
         try
         {
-            var opened = _sealer.Open(user, kept);
-            // Another page may have made the person's first key; this one seals with it from now on.
-            _key = opened.Key;
+            var opened = _sealer.Open(user, kept, key);
+            lock (_gate)
+            {
+                // Another page may have made the person's first key; this one seals with it from now on.
+                _key = opened.Key;
+            }
+
             return opened.Text;
         }
         catch (CryptographicException ex)

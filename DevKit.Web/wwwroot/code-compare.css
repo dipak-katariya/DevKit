@@ -1,7 +1,7 @@
-/* The Code Merging Sheet's code comparison: the Compare Code action, the per-row and
-   per-pull-request check buttons, and the file and line detail under an opened pull request. Its
-   progress and last-run summary live in the insight strip (merging.css). Loaded after merging.css,
-   whose pills and grid it builds on. */
+/* The Code Merging Sheet's row actions and code comparison: Copy details, Update status and its
+   dialog, the Compare Code action, the per-row and per-pull-request check buttons, and the file and
+   line detail under an opened pull request. Its progress and last-run summary live in the insight
+   strip (merging.css). Loaded after merging.css, whose pills and grid it builds on. */
 
 /* Toolbar */
 /* Compare Code wears the same tint as Verify All, its sibling check, so Load Data stays the one filled button. */
@@ -18,11 +18,31 @@
 .cc-link:active:not(:disabled),.cc-toggle:active{transform:scale(var(--press));}
 .cc-link:disabled{opacity:.6;cursor:default;}
 
-/* Grid cells */
-.cm-grid .cm-c-act{width:70px;}
+/* Row actions: Copy details and Update status always, then Re-check and Compare past a divider once the sheet can
+   check. Kept to the left, so every row's first two buttons line up down the grid whichever checks it has. */
+table.cm-grid-merge .cm-c-act{width:130px;}
 .cm-act{display:inline-flex;gap:4px;align-items:center;}
+.cm-act-sep{width:1px;height:14px;margin:0 2px;background:var(--border2);flex-shrink:0;}
+/* A row button's last click: a tick once it worked, a warning when it did not (the tooltip says why). */
+.cm-act-done .ic{color:var(--green);animation:cm-tick .22s var(--ease-out);}
+.cm-act-failed .ic{color:var(--red);}
+@keyframes cm-tick{from{opacity:0;transform:scale(var(--tick-scale,.5));}}
+@media (prefers-reduced-motion:reduce){.cm-act-done .ic{--tick-scale:1;}}
+/* Update status: the work item, then one line for each part it writes. */
+.cm-dlg-item{font-size:var(--fs-body);color:var(--text);margin-bottom:12px;overflow-wrap:anywhere;}
+.cm-dlg-changes{margin-bottom:10px;}
+.cm-dlg-changes .modal-row{font-size:var(--fs-body);align-items:baseline;}
+.cm-dlg-changes .modal-row > span:last-child{min-width:0;overflow-wrap:anywhere;}
+.cm-status-dlg .btn-primary .ic{width:14px;height:14px;}
+
+/* Grid cells */
 .cm-code-btn .ic{color:var(--accent2);}
 .cm-p-code{width:168px;}
+/* Up to 1600px wide, Title and the branch columns need the room more. */
+@media(max-width:1600px){
+  .cm-p-code{width:140px;}
+  table.cm-grid-merge .cm-c-act{width:118px;padding-left:6px;padding-right:6px;}
+}
 .cm-code-cell{display:flex;align-items:center;gap:5px;min-width:0;}
 .cm-code-cell .merge-pill{min-width:0;}
 .cm-code-none{font-size:var(--fs-meta);color:var(--muted);padding:0 6px;}

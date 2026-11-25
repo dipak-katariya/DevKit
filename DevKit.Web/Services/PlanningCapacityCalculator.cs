@@ -83,6 +83,33 @@ public static partial class PlanningCapacityCalculator
     }
 
     /// <summary>
+    /// Working days in [start, finish] a member is away for all of their hours: days off, their own or their team's,
+    /// in every team that holds their hours, divided as <see cref="CapacityParts"/> divides them for the capacity
+    /// plan. A member split over two teams who is off in only one still owes the other team's hours that day.
+    /// </summary>
+    public static HashSet<DateTime> LeaveDates(MemberCapacity? member, IReadOnlyList<DateRange> sharedDaysOff,
+        DateTime start, DateTime finish, IReadOnlySet<DayOfWeek> workingDays)
+    {
+        HashSet<DateTime>? leave = null;
+        foreach (var part in CapacityParts(member, sharedDaysOff))
+        {
+            var days = DaysCovered(part.DaysOff, start, finish);
+            if (leave is null)
+            {
+                leave = days;
+            }
+            else
+            {
+                leave.IntersectWith(days);
+            }
+        }
+
+        leave ??= [];
+        leave.RemoveWhere(day => !workingDays.Contains(day.DayOfWeek));
+        return leave;
+    }
+
+    /// <summary>
     /// Builds the whole sprint's plan: every scope, every member, every team total, and progress
     /// to date.<paramref name="today"/> is a parameter rather than the clock so the result is
     /// reproducible, and so tests can stand on any day of a sprint.

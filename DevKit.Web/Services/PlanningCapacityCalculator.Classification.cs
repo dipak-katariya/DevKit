@@ -124,11 +124,7 @@ public static partial class PlanningCapacityCalculator
         }
 
         private static HashSet<string> Parse(string? raw) =>
-            string.IsNullOrWhiteSpace(raw)
-                ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                : new HashSet<string>(
-                    raw.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
-                    StringComparer.OrdinalIgnoreCase);
+            new(WorkItem.SplitTags(raw), StringComparer.OrdinalIgnoreCase);
     }
 
     // ─── Accumulators ───

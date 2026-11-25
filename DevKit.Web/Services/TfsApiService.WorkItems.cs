@@ -1,5 +1,7 @@
+using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using DevKit.Web.Models;
 
 namespace DevKit.Web.Services;
@@ -7,6 +9,14 @@ namespace DevKit.Web.Services;
 /// <summary>Reading work items by WIQL, and the field updates and task creation that write them back.</summary>
 public partial class TfsApiService
 {
+    /// <summary>The project tag list exists from API 6.0 on, so it is asked for at that version whatever the server's default.</summary>
+    private const string TagsApiVersion = "6.0-preview.1";
+
+    private const string JsonPatchMediaType = "application/json-patch+json";
+
+    /// <summary>The fields Update status reads before it writes; rev comes back with any field list.</summary>
+    private const string UpdateReadFields = "System.TeamProject,System.WorkItemType,System.Title,System.Tags";
+
     // ═══ WIQL + WORK ITEMS ═══
 
     /// <summary>
@@ -191,7 +201,7 @@ public partial class TfsApiService
         };
         using var req = new HttpRequestMessage(HttpMethod.Patch, ProjectApi(project, $"wit/workitems/{workItemId}?api-version={Ver}"))
         {
-            Content = new StringContent(JsonSerializer.Serialize(patchBody), Encoding.UTF8, "application/json-patch+json")
+            Content = new StringContent(JsonSerializer.Serialize(patchBody), Encoding.UTF8, JsonPatchMediaType)
         };
         using var resp = await SendAuthed(req, ct);
     }
@@ -219,11 +229,160 @@ public partial class TfsApiService
         patch.Add(new { op = "add", path = "/relations/-", value = new { rel = "System.LinkTypes.Hierarchy-Reverse", url = parentUrl } });
         using var req = new HttpRequestMessage(HttpMethod.Post, ProjectApi(task.Project, $"wit/workitems/$Task?api-version={Ver}"))
         {
-            Content = new StringContent(JsonSerializer.Serialize(patch), Encoding.UTF8, "application/json-patch+json")
+            Content = new StringContent(JsonSerializer.Serialize(patch), Encoding.UTF8, JsonPatchMediaType)
         };
         using var resp = await SendAuthed(req, ct);
         var el = JsonSerializer.Deserialize<JsonElement>(await resp.Content.ReadAsStringAsync(ct));
         return el.TryGetProperty("id", out var idEl) ? idEl.GetInt32() : 0;
     }
 
+    /// <summary>
+    /// The TFS connection the lists read here belong to, so a list kept for one server is never served for another.
+    /// </summary>
+    internal string ConnectionKey => Url;
+
+    /// <summary>The tags used in <paramref name="project"/>, by name, as TFS offers them when tagging a work item.</summary>
+    public async Task<List<string>> GetProjectTagsAsync(string project, CancellationToken ct = default)
+    {
+        var data = await GetJson(ProjectApi(project, $"wit/tags?api-version={TagsApiVersion}"), ct);
+        return TfsJson.ObjectValues(data)
+            .Select(tag => TfsJson.Str(tag, "name").Trim())
+            .Where(name => name.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    /// <summary>The names of the work item types <paramref name="project"/> has.</summary>
+    public async Task<List<string>> GetWorkItemTypeNamesAsync(string project, CancellationToken ct = default)
+    {
+        var data = await GetJson(ProjectApi(project, $"wit/workitemtypes?api-version={Ver}"), ct);
+        return TfsJson.ObjectValues(data).Select(type => TfsJson.Str(type, "name")).Where(name => name.Length > 0).ToList();
+    }
+
+    /// <summary>The fields of the work item type <paramref name="type"/>, each with the values it allows.</summary>
+    public async Task<List<WorkItemTypeField>> GetWorkItemTypeFieldsAsync(string project, string type, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(type);
+        var data = await GetJson(
+            ProjectApi(project, $"wit/workitemtypes/{Uri.EscapeDataString(type)}/fields?$expand=allowedValues&api-version={Ver}"), ct);
+        return TfsJson.ObjectValues(data)
+            .Select(field => new WorkItemTypeField(TfsJson.Str(field, "referenceName"), TfsJson.Str(field, "name"), AllowedValues(field)))
+            .Where(field => field.ReferenceName.Length > 0)
+            .ToList();
+    }
+
+    /// <summary>
+    /// One work item as Update status needs it before writing: its revision, project, type, title, tags and the value
+    /// of <paramref name="field"/> (empty when it has none, or no field is given). Only those fields are read. A field
+    /// the collection does not have is read as empty, as TFS refuses a field list that names one.
+    /// </summary>
+    public async Task<WorkItemForUpdate> GetWorkItemForUpdateAsync(int id, string? field, CancellationToken ct = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(id);
+        var asked = StatusUpdateSettings.IsFieldReference(field) ? field : null;
+        JsonElement data;
+        try
+        {
+            data = await GetJson(WorkItemForUpdateUrl(id, asked), ct);
+        }
+        catch (HttpRequestException ex) when (asked is not null && ex.StatusCode == HttpStatusCode.BadRequest)
+        {
+            _logger.LogError(ex, "TFS refused field {Field} when reading work item {WorkItemId} for Update status; it is read without it",
+                asked, id);
+            asked = null;
+            data = await GetJson(WorkItemForUpdateUrl(id, asked), ct);
+        }
+
+        return ReadForUpdate(id, data, asked);
+    }
+
+    private string WorkItemForUpdateUrl(int id, string? field)
+    {
+        var fields = field is null ? UpdateReadFields : $"{UpdateReadFields},{field}";
+        return Api($"wit/workitems/{id}?fields={Uri.EscapeDataString(fields)}&api-version={Ver}");
+    }
+
+    private static WorkItemForUpdate ReadForUpdate(int id, JsonElement data, string? field)
+    {
+        if (!data.TryGetProperty("fields", out var fields) || fields.ValueKind != JsonValueKind.Object)
+        {
+            throw new TfsResponseException($"TFS answered without the fields of work item #{id}.");
+        }
+
+        var rev = TfsJson.Int(data, "rev");
+        var project = TfsJson.Str(fields, "System.TeamProject");
+        var type = TfsJson.Str(fields, "System.WorkItemType");
+        if (rev <= 0 || project.Length == 0 || type.Length == 0)
+        {
+            throw new TfsResponseException($"TFS answered without the revision, project or type of work item #{id}.");
+        }
+
+        return new WorkItemForUpdate(id, rev, project, type, TfsJson.Str(fields, "System.Title"), TfsJson.Str(fields, "System.Tags"),
+            FieldText(fields, field));
+    }
+
+    /// <summary>
+    /// Writes what <paramref name="plan"/> changes in one request, guarded by the revision it was read at, so a change
+    /// someone made meanwhile is never overwritten: TFS then refuses the write (409 or 412) and nothing changes. A
+    /// success answer is enough: its body is not read, so a reply DevKit cannot parse never turns a write that was made
+    /// into a failure.
+    /// </summary>
+    public async Task UpdateWorkItemStatusAsync(StatusUpdatePlan plan, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(plan.Item.Id);
+        var operations = new JsonArray { PatchOperation("test", "/rev", plan.Item.Rev) };
+        if (plan.NewTags is { } tags)
+        {
+            operations.Add(PatchOperation("add", "/fields/System.Tags", tags));
+        }
+
+        if (plan.Field is { NewValue: { } value } field)
+        {
+            // The reference name goes into the path of the write, so only a real one passes.
+            if (!StatusUpdateSettings.IsFieldReference(field.Reference))
+            {
+                throw new ArgumentException($"\"{field.Reference}\" is not a field reference name.", nameof(plan));
+            }
+
+            operations.Add(PatchOperation("add", $"/fields/{field.Reference}", value));
+        }
+
+        using var req = new HttpRequestMessage(HttpMethod.Patch, ProjectApi(plan.Item.Project, $"wit/workitems/{plan.Item.Id}?api-version={Ver}"))
+        {
+            Content = new StringContent(operations.ToJsonString(), Encoding.UTF8, JsonPatchMediaType)
+        };
+        using var resp = await SendAuthed(req, ct);
+    }
+
+    private static JsonObject PatchOperation(string op, string path, JsonNode? value) =>
+        new() { ["op"] = op, ["path"] = path, ["value"] = value };
+
+    private static List<string> AllowedValues(JsonElement field) =>
+        field.TryGetProperty("allowedValues", out var values) && values.ValueKind == JsonValueKind.Array
+            ? values.EnumerateArray().Where(v => v.ValueKind == JsonValueKind.String).Select(v => v.GetString()!).ToList()
+            : new List<string>();
+
+    /// <summary>
+    /// A field's value as text: numbers and flags as TFS writes them, nothing as empty. The name is matched in any case,
+    /// as the planner and Settings match reference names.
+    /// </summary>
+    private static string FieldText(JsonElement fields, string? field)
+    {
+        if (string.IsNullOrEmpty(field))
+        {
+            return "";
+        }
+
+        var value = fields.EnumerateObject()
+            .FirstOrDefault(p => string.Equals(p.Name, field, StringComparison.OrdinalIgnoreCase))
+            .Value;
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString() ?? "",
+            JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False => value.GetRawText(),
+            _ => ""
+        };
+    }
 }

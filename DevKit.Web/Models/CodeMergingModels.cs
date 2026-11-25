@@ -1,3 +1,5 @@
+using DevKit.Web.Services;
+
 namespace DevKit.Web.Models;
 
 /// <summary>
@@ -183,6 +185,170 @@ public class RequirementMergingRow
 
     /// <summary>UI-only: this row's commits are being fetched right now.</summary>
     public bool IsLoadingCommits { get; set; }
+
+    /// <summary>UI-only: the last Copy details of this work item's pull requests.</summary>
+    public RowAction CopyAction { get; set; } = RowAction.Idle;
+
+    /// <summary>
+    /// UI-only: the last Update status of this work item; a finished one stays for the page, so its tooltip says what
+    /// was written, or that nothing needed writing.
+    /// </summary>
+    public RowAction StatusAction { get; set; } = RowAction.Idle;
+
+    // Kept per row, not on the pull request: one linked from two work items is the same instance in both rows, and a
+    // copy under one must not show, or block, the button under the other.
+    private readonly Dictionary<string, RowAction> _prCopyActions = new(StringComparer.Ordinal);
+
+    /// <summary>UI-only: the last Copy details of <paramref name="pr"/> in this row.</summary>
+    public RowAction PrCopyAction(MergingPullRequest pr) =>
+        _prCopyActions.TryGetValue(PrKey(pr), out var action) ? action : RowAction.Idle;
+
+    /// <summary>Records the last Copy details of <paramref name="pr"/> in this row.</summary>
+    public void SetPrCopyAction(MergingPullRequest pr, RowAction action) => _prCopyActions[PrKey(pr)] = action;
+
+    /// <summary>A pull request's key across repositories: its numbers are only unique within one.</summary>
+    public static string PrKey(MergingPullRequest pr) => $"{pr.RepositoryId}_{pr.PullRequestId}";
+}
+
+/// <summary>What Copy details says about the rows it is asked to copy, kept apart from the page so it can be tested.</summary>
+public static class MergeSheetCopy
+{
+    public const string NothingToCopy = "Nothing to copy: an abandoned pull request has no row in the sheet.";
+    public const string BrowserRefused = "The browser did not allow copying. Click the button again.";
+
+    /// <summary>
+    /// Why nothing may be copied: a pull request that is not abandoned still has a failed commit read, and an empty
+    /// Commit IDs cell would read as a pull request without commits. Null when the rows can be copied.
+    /// </summary>
+    public static string? Refusal(IEnumerable<MergingPullRequest> prs) =>
+        prs.FirstOrDefault(pr => pr.CommitsError is not null && !pr.IsAbandoned) is { } unread
+            ? $"The commits of !{unread.PullRequestId} could not be read, so nothing was copied. Click Copy details again to try again."
+            : null;
+
+    /// <summary>Pull requests whose Commit IDs cell is empty because every commit read was a merge or a rebase.</summary>
+    public static List<MergingPullRequest> WithoutOwnCommits(IEnumerable<MergingPullRequest> prs) =>
+        prs.Where(pr => !pr.IsAbandoned && !MergingSheetRows.HasOwnCommits(pr)).ToList();
+
+    /// <summary>The message after a copy: how many rows, where to paste, and which Commit IDs cells are empty and why.</summary>
+    public static string Copied(int rows, int workItemId, IReadOnlyCollection<MergingPullRequest> withoutOwnCommits)
+    {
+        var message = $"Copied {rows} {(rows == 1 ? "row" : "rows")} for #{workItemId}. Click the Name cell of an empty row in your sheet and paste.";
+        return withoutOwnCommits.Count == 0
+            ? message
+            : message + " " + string.Join(" ", withoutOwnCommits.Select(pr =>
+                $"Pull request !{pr.PullRequestId} has only merge or rebase commits, so its Commit IDs is empty."));
+    }
+}
+
+/// <summary>Where the Update status dialog stands. One value, so it cannot be reading and saving at once.</summary>
+public enum StatusDialogPhase
+{
+    Reading,
+    Ready,
+    Saving
+}
+
+/// <summary>
+/// The open Update status dialog: the row, the settings read when it opened, where it stands, and what each answer
+/// from TFS does to it and to the row's button. Kept apart from the page so every outcome can be tested.
+/// </summary>
+public sealed class StatusUpdateDialog(RequirementMergingRow row, StatusUpdateSettings settings)
+{
+    public RequirementMergingRow Row { get; } = row;
+    public StatusUpdateSettings Settings { get; } = settings;
+    public StatusDialogPhase Phase { get; private set; } = StatusDialogPhase.Reading;
+    public StatusUpdatePlan? Plan { get; private set; }
+    public string? Error { get; private set; }
+
+    public bool Reading => Phase == StatusDialogPhase.Reading;
+    public bool Saving => Phase == StatusDialogPhase.Saving;
+
+    /// <summary>Whether Update can be clicked: read, not saving, and something to write.</summary>
+    public bool CanConfirm => Phase == StatusDialogPhase.Ready && Plan is { HasChanges: true };
+
+    /// <summary>The work item was read: the dialog shows what Update would write.</summary>
+    public void ShowPlan(StatusUpdatePlan plan)
+    {
+        Plan = plan;
+        Phase = StatusDialogPhase.Ready;
+    }
+
+    /// <summary>The work item could not be read: the dialog shows why, and Update stays off.</summary>
+    public void ShowReadFailure(string error)
+    {
+        Error = error;
+        Phase = StatusDialogPhase.Ready;
+    }
+
+    /// <summary>The write starts: the dialog and the row button show it is at work.</summary>
+    public void StartSaving()
+    {
+        Phase = StatusDialogPhase.Saving;
+        Error = null;
+        Row.StatusAction = new RowAction(RowActionState.Busy, "Updating…");
+    }
+
+    /// <summary>
+    /// Takes the answer of the write. Written and NothingToChange finish the dialog, with the row button saying which.
+    /// When the work item changed in another way meanwhile, the dialog stays open with the new change for another click.
+    /// </summary>
+    /// <returns>The line for screen readers, and whether the dialog closes.</returns>
+    public (string Announcement, bool Closes) Finish(StatusUpdateOutcome outcome)
+    {
+        ArgumentNullException.ThrowIfNull(outcome);
+        Phase = StatusDialogPhase.Ready;
+        if (outcome.Result == StatusUpdateResult.ChangedMeanwhile)
+        {
+            Plan = outcome.Plan;
+            Error = $"#{Row.WorkItemId} changed after it was read. Check the new values, then click Update again.";
+            Row.StatusAction = RowAction.Idle;
+            return (Error, false);
+        }
+
+        var message = outcome.Result == StatusUpdateResult.Written
+            ? $"Updated #{Row.WorkItemId}: {outcome.Plan.Summary()}."
+            : $"{NothingToChange(outcome.Plan)} Nothing was written.";
+        Row.StatusAction = new RowAction(RowActionState.Done, message);
+        return (message, true);
+    }
+
+    /// <summary>
+    /// The write failed. When its answer never came it may have been applied, so the dialog says it is not sure and a
+    /// second click checks; otherwise it says it was not updated, with the reason. The dialog stays open.
+    /// </summary>
+    /// <returns>The line for screen readers.</returns>
+    public string Fail(Exception ex)
+    {
+        ArgumentNullException.ThrowIfNull(ex);
+        Phase = StatusDialogPhase.Ready;
+        Error = TfsErrors.AnswerNeverCame(ex)
+            ? $"Not sure #{Row.WorkItemId} was updated: {TfsErrors.Describe(ex)} Click Update again to check; nothing is written twice."
+            : $"Not updated: {TfsErrors.DescribeWrite(ex)}";
+        Row.StatusAction = new RowAction(RowActionState.Failed, Error);
+        return Error;
+    }
+
+    /// <summary>Why a click changes nothing: the work item already has it all, or the field cannot be set on it.</summary>
+    public static string NothingToChange(StatusUpdatePlan plan) => plan.Field?.Note is null
+        ? $"#{plan.Item.Id} already has these values."
+        : $"Update status has nothing it can change on #{plan.Item.Id}.";
+}
+
+/// <summary>Where a row button's last action stands.</summary>
+public enum RowActionState
+{
+    Idle,
+    Busy,
+    Done,
+    Failed
+}
+
+/// <summary>A row button's last action and what to say about it, for its icon, tooltip and the screen-reader line.</summary>
+public sealed record RowAction(RowActionState State, string Message)
+{
+    public static readonly RowAction Idle = new(RowActionState.Idle, "");
+
+    public bool IsBusy => State == RowActionState.Busy;
 }
 
 /// <summary>A discovery read that failed: what it was for, and what went wrong in words the page can show.</summary>

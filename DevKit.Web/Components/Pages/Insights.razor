@@ -66,7 +66,7 @@
         new("create", "Task Creation", Icons.TabTaskCreation, "Creates the standard child tasks for a Requirement, CHR or Bug in one step. Each task gets its discipline and the Product tag (Bug/Maintenance under a Bug)."),
         new("planning", "Capacity Planning", Icons.TabCapacity, "Shows each member's planned hours against capacity."),
         new("size", "Size Check", Icons.TabSize, "Compares Requirement and CHR sizes with the estimates on their child tasks, and applies the calculated size. Bugs are off by default; tick Bug in the Type filter to include them."),
-        new("burndown", "Burndown", Icons.Insights, "Shows the hours each member logged per day or week, from revision history. Regular and bug hours are shown apart and compared with the hours per day set in Capacity Planning."),
+        new("burndown", "Burndown", Icons.Insights, "Shows the hours each member logged per day or week, from revision history. Regular and bug hours are shown apart and compared with the hours per day set in Capacity Planning. A day off in TFS with no hours logged reads Leave."),
         new("tasks", "Tasks", Icons.TabTasks, "Checks tasks for missing discipline or estimates, wrong title prefixes, manual execution and unusual remaining or completed hours."),
         new("bugs", "Bugs", Icons.TabBugs, "Checks bugs for a missing root cause, proposed fix or dev task, and shows flag dates. Duplicate, Deferred, Cannot Reproduce and Rejected bugs are excluded."),
     };
@@ -131,6 +131,9 @@
     // Work items whose hours could not be read, and why the first one could not; the grid without them is partial.
     private IReadOnlyList<string> burndownUnread = Array.Empty<string>();
     private string? burndownProblem;
+
+    // Why some days off may not show as Leave: the team capacity, or some teams' days off, could not be read.
+    private string? burndownLeaveProblem;
     private BurndownMatrix burndownMatrix = new();
     private double burndownThreshold = CapacityPlanningSettings.DefaultHoursPerDay;
     private BurndownScope burndownScope = new();
@@ -265,6 +268,7 @@
         }
         burndownLoading = true; burndownLoaded = false; burndownError = null; burndownMatrix = new(); burndownAnnouncement = "";
         burndownContribs = Array.Empty<BurndownContribution>(); burndownUnread = Array.Empty<string>(); burndownProblem = null;
+        burndownLeaveProblem = null;
         burndownFor = (area, sprint);
         // Read per load, so a change in Capacity Planning shows on the next Load. The sprint's own
         // dates come from the iterations already in memory, so a short first or last week is held
@@ -272,22 +276,30 @@
         var planning = Settings.CapacityPlanning;
         var iteration = iterations.FirstOrDefault(i => i.Path == sprint);
         burndownThreshold = planning.HoursPerDay;
-        burndownScope = new BurndownScope
-        {
-            Start = iteration?.StartDate,
-            Finish = iteration?.FinishDate,
-            Today = DateTime.Today,
-            WorkingDays = planning.WorkingDays
-        };
         StateHasChanged();
         try
         {
             var iterPath = TfsApiService.ToWiqlPath(sprint);
             var areaPath = TfsApiService.ToWiqlPath(area.Path);
-            var load = await TfsApi.LoadBurndownAsync(area.Project, areaPath, iterPath, page.Token);
+            // The team capacity holds who is on leave. It reads side by side with the hours, and WhenAll first, so a
+            // failure in one never leaves the other's exception unobserved.
+            var hoursRead = TfsApi.LoadBurndownAsync(area.Project, areaPath, iterPath, page.Token);
+            var capacityRead = TfsApi.GetSprintCapacityAsync(area.Project, areaPath, iterPath, page.Token);
+            await Task.WhenAll(hoursRead, capacityRead);
+            var load = await hoursRead;
+            var capacity = await capacityRead;
             burndownContribs = load.Contributions;
             burndownUnread = load.UnreadItemIds;
             burndownProblem = load.FirstProblem;
+            burndownLeaveProblem = LeaveProblem(capacity);
+            burndownScope = new BurndownScope
+            {
+                Start = iteration?.StartDate,
+                Finish = iteration?.FinishDate,
+                Today = DateTime.Today,
+                WorkingDays = planning.WorkingDays,
+                Capacity = capacity
+            };
             burndownLoaded = true;
             RebuildBurndown();
             burndownArrival.Mark();
@@ -312,6 +324,18 @@
 
     private string BurndownUnreadNotice =>
         $"Hours from {WorkItems(burndownUnread.Count)} could not be read, so the totals may be low. {burndownProblem}";
+
+    private static string? LeaveProblem(SprintCapacity capacity)
+    {
+        if (capacity.ReadFailed)
+        {
+            return $"Leave could not be read from TFS, so days off are not marked. {capacity.Error}";
+        }
+
+        return capacity.TeamsUnread > 0
+            ? $"The days off of {capacity.TeamsUnread} team(s) could not be read, so some leave may not be marked."
+            : null;
+    }
 
     private static string WorkItems(int count) => count == 1 ? "1 work item" : $"{count} work items";
 
@@ -409,6 +433,10 @@
             @if (BurndownShowsSelection && burndownUnread.Count > 0)
             {
                 <div class="notice warn" title="@UnreadIdsText(burndownUnread)">⚠ @BurndownUnreadNotice</div>
+            }
+            @if (BurndownShowsSelection && burndownLeaveProblem is not null)
+            {
+                <div class="notice warn">⚠ @burndownLeaveProblem</div>
             }
             @if (burndownLoading)
             {

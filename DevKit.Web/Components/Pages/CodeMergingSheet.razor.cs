@@ -5,8 +5,8 @@ using DevKit.Web.Services;
 namespace DevKit.Web.Components.Pages;
 
 /// <summary>
-/// State, the restored defaults and everything that shapes the rows already loaded: filtering,
-/// expansion and the deferred commit reads. Choosing and loading a sprint lives in
+/// State, the restored defaults and the filtering of the rows already loaded. Opening a row and the
+/// deferred commit reads live in CodeMergingSheet.Commits.cs; choosing and loading a sprint in
 /// CodeMergingSheet.Loading.cs.
 /// </summary>
 public sealed partial class CodeMergingSheet
@@ -167,7 +167,12 @@ public sealed partial class CodeMergingSheet
 
     protected override async Task OnInitializedAsync()
     {
-        if (!Settings.IsConfigured) return;
+        // Update status is set up in Settings, perhaps in another tab: the row buttons follow each save.
+        Settings.Changed += OnSettingsChanged;
+        if (!Settings.IsConfigured)
+        {
+            return;
+        }
 
         var load = await PageState.TfsData.EnsureLoadedAsync(page.Token);
         if (load.Cancelled)
@@ -269,7 +274,11 @@ public sealed partial class CodeMergingSheet
     /// </summary>
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!pendingBranchLoad) return;
+        await FocusUpdateButtonAsync();
+        if (!pendingBranchLoad)
+        {
+            return;
+        }
 
         pendingBranchLoad = false;
         await LoadBranchesForSelectedRepos();
@@ -280,6 +289,7 @@ public sealed partial class CodeMergingSheet
 
     private void Refilter()
     {
+        refilterPending = false;
         visibleRows = filter.Apply(bundle.Requirements);
         scopeRows = filter.ApplyAllButMergeState(bundle.Requirements);
     }
@@ -335,105 +345,6 @@ public sealed partial class CodeMergingSheet
         Refilter();
     }
 
-    // ═══ DEFERRED COMMIT LOADING ═══
-
-    private bool loadingRest;
-
-    private int PendingRowCount => bundle.Requirements.Count(r => !r.CommitsLoaded);
-
-    private int LoadedRowCount => bundle.Requirements.Count - PendingRowCount;
-
-    /// <summary>Pending rows whose commit read failed rather than was put off; Load all reads them again.</summary>
-    private int FailedRowCount => bundle.Requirements.Count(r => r.CommitsError is not null);
-
-    private string PendingTooltip =>
-        $"Commits are loaded for {LoadedRowCount} work item(s). The other {PendingRowCount} load when " +
-        "you open them, or load them all now." +
-        (FailedRowCount > 0 ? $" {FailedRowCount} of them could not be read and are tried again." : "");
-
-    /// <summary>
-    /// Fills in every deferred row. Bounded concurrency rather than one big WhenAll: the rest
-    /// of a large sprint can be hundreds of pull requests, and the throttle is shared with
-    /// whatever else the page is doing. The rows are sorted and filtered again once, at the end,
-    /// rather than reshuffling under the reader after every chunk.
-    /// </summary>
-    private async Task LoadRemainingCommits()
-    {
-        if (loadingRest)
-        {
-            return;
-        }
-        loadingRest = true;
-        try
-        {
-            foreach (var chunk in bundle.Requirements.Where(r => !r.CommitsLoaded).Chunk(5))
-            {
-                await Task.WhenAll(chunk.Select(r => Merging.LoadRowCommitsAsync(r, page.Token)));
-                StateHasChanged();
-            }
-        }
-        catch (OperationCanceledException ex) when (page.Token.IsCancellationRequested)
-        {
-            Log.LogDebug(ex, "The remaining commits stopped loading because the page was left");
-        }
-        finally
-        {
-            loadingRest = false;
-            Refilter();
-        }
-    }
-
-    // ═══ EXPANSION ═══
-
-    private async Task ToggleRow(RequirementMergingRow row)
-    {
-        row.IsExpanded = !row.IsExpanded;
-        if (!row.IsExpanded)
-        {
-            expandedPrKey = null;
-            return;
-        }
-
-        // Rows past the eager batch have no commits yet; read them before verifying, or the
-        // check would run against an empty list and report the row as having nothing to merge.
-        await LoadRowCommits(row);
-
-        // Opening a row refreshes its merge status, so the sheet stays current without a reload.
-        await ReverifyRow(row);
-    }
-
-    /// <summary>
-    /// Reads one deferred row's commits, with the spinner in its Commits cell meanwhile. Their dates
-    /// can move the row in the commit-wise order, so the rows are sorted and filtered again after.
-    /// </summary>
-    private async Task LoadRowCommits(RequirementMergingRow row)
-    {
-        if (row.CommitsLoaded)
-        {
-            return;
-        }
-
-        row.IsLoadingCommits = true;
-        StateHasChanged();
-        try
-        {
-            await Merging.LoadRowCommitsAsync(row, page.Token);
-        }
-        catch (OperationCanceledException ex) when (page.Token.IsCancellationRequested)
-        {
-            Log.LogDebug(ex, "Commits of work item {WorkItemId} stopped loading because the page was left", row.WorkItemId);
-        }
-        finally
-        {
-            row.IsLoadingCommits = false;
-        }
-        Refilter();
-    }
-
-    // Only one pull request's commits are on screen at a time. A single nullable key is
-    // simpler state than a dictionary of booleans, and keeps the rendered tree small.
-    private void TogglePr(string key) => expandedPrKey = expandedPrKey == key ? null : key;
-
     // ═══ DROPDOWN OPTIONS ═══
 
     private List<GlassDropdown.DropdownGroup> AreaGroups => AreaSprintSelect.AreaGroups(areas);
@@ -464,6 +375,7 @@ public sealed partial class CodeMergingSheet
 
     public void Dispose()
     {
+        Settings.Changed -= OnSettingsChanged;
         searchDebounce?.Cancel();
         searchDebounce?.Dispose();
 

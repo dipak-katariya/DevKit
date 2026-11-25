@@ -19,13 +19,14 @@ public class BurndownCalculatorTests
     private static readonly DayOfWeek[] MonToFri =
         { DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday };
 
-    private static BurndownContribution Logged(DateTime date, double hours, string who = "Dipak Katariya", bool bug = false) =>
+    private static BurndownContribution Logged(DateTime date, double hours, string who = "Dipak Katariya", bool bug = false,
+        string item = "1") =>
         new()
         {
             Date = date,
             MemberDisplay = who,
             MemberKey = PlanningCapacityCalculator.NormalizeMemberName(who),
-            ItemId = "1",
+            ItemId = item,
             ItemTitle = "Task",
             IsBug = bug,
             Delta = hours
@@ -253,9 +254,57 @@ public class BurndownCalculatorTests
         var first = row.Cells[FirstMonday.ToString("yyyy-MM-dd")];
         Assert.Equal(5.01, first.Regular);
         Assert.Equal(1.5, first.Bug);
-        Assert.Equal(3, first.Items.Count);
+        // Both regular updates are to item 1, so they are one line; the bug work stays its own line.
+        Assert.Equal(new[] { 5.01, 1.5 }, first.Items.Select(i => i.Delta));
         Assert.Equal(9.01, row.TotalRegular);
         Assert.Equal(1.5, row.TotalBug);
+    }
+
+    [Fact]
+    public void Two_updates_to_one_task_in_a_day_are_one_line_with_their_sum()
+    {
+        var matrix = BurndownCalculator.Build(
+            new[] { Logged(FirstMonday, 2), Logged(FirstMonday, 2), Logged(FirstMonday, 4.5, item: "2") },
+            weekly: false, memberFilter: null, Sprint(FirstMonday, SprintFinish));
+
+        var cell = Assert.Single(matrix.Rows).Cells[FirstMonday.ToString("yyyy-MM-dd")];
+        Assert.Equal(8.5, cell.Total);
+        Assert.Equal(new[] { ("1", 4.0), ("2", 4.5) }, cell.Items.Select(i => (i.ItemId, i.Delta)));
+    }
+
+    [Fact]
+    public void A_week_sums_a_tasks_updates_from_every_day_of_it()
+    {
+        var matrix = BurndownCalculator.Build(
+            new[] { Logged(FirstMonday, 2), Logged(FirstMonday.AddDays(1), 3) },
+            weekly: true, memberFilter: null, Sprint(FirstMonday, SprintFinish));
+
+        var item = Assert.Single(Assert.Single(Assert.Single(matrix.Rows).Cells.Values).Items);
+        Assert.Equal(5, item.Delta);
+    }
+
+    [Fact]
+    public void Updates_that_cancel_out_leave_no_line()
+    {
+        var matrix = BurndownCalculator.Build(
+            new[] { Logged(FirstMonday, 2), Logged(FirstMonday, -2), Logged(FirstMonday, 1, item: "2") },
+            weekly: false, memberFilter: null, Sprint(FirstMonday, SprintFinish));
+
+        var cell = Assert.Single(matrix.Rows).Cells[FirstMonday.ToString("yyyy-MM-dd")];
+        Assert.Equal("2", Assert.Single(cell.Items).ItemId);
+    }
+
+    [Fact]
+    public void Summing_leaves_the_loaded_changes_as_they_were_so_a_rebuild_gives_the_same_lines()
+    {
+        var logged = new[] { Logged(FirstMonday, 2), Logged(FirstMonday, 2) };
+        var scope = Sprint(FirstMonday, SprintFinish);
+
+        BurndownCalculator.Build(logged, weekly: false, memberFilter: null, scope);
+        var rebuilt = BurndownCalculator.Build(logged, weekly: true, memberFilter: null, scope);
+
+        Assert.Equal(new[] { 2.0, 2.0 }, logged.Select(c => c.Delta));
+        Assert.Equal(4, Assert.Single(Assert.Single(Assert.Single(rebuilt.Rows).Cells.Values).Items).Delta);
     }
 
     [Fact]
@@ -273,6 +322,89 @@ public class BurndownCalculatorTests
 
         Assert.Equal(new[] { "Bhavesh Rajpurohit", "Sunil Balas" }, all.Rows.Select(r => r.MemberDisplay));
         Assert.Equal("Sunil Balas", Assert.Single(filtered.Rows).MemberDisplay);
+    }
+
+    private static DateRange Off(DateTime from, DateTime? to = null) => new() { Start = from, End = to ?? from };
+
+    private static TeamMemberCapacity InTeam(string team, double hours, params DateRange[] daysOff) =>
+        new() { Team = team, CapacityPerDay = hours, DaysOff = daysOff.ToList() };
+
+    /// <summary>The sprint with its team capacity: Dipak's records in his teams, and the days every team takes off.</summary>
+    private static BurndownScope WithCapacity(IEnumerable<TeamMemberCapacity> dipaksTeams, params DateRange[] sharedDaysOff)
+    {
+        var capacity = new SprintCapacity { Start = FirstMonday, Finish = SprintFinish, SharedDaysOff = sharedDaysOff.ToList() };
+        capacity.Members[PlanningCapacityCalculator.NormalizeMemberName("Dipak Katariya")] =
+            new MemberCapacity { DisplayName = "Dipak Katariya", Teams = dipaksTeams.ToList() };
+        return new BurndownScope
+        {
+            Start = FirstMonday,
+            Finish = SprintFinish,
+            Today = SprintFinish.AddDays(1),
+            WorkingDays = MonToFri,
+            Capacity = capacity
+        };
+    }
+
+    private static string Day(DateTime d) => d.ToString("yyyy-MM-dd");
+
+    [Fact]
+    public void A_day_off_in_tfs_is_marked_as_leave_for_that_member_only()
+    {
+        var tuesday = FirstMonday.AddDays(1);
+        var matrix = BurndownCalculator.Build(
+            new[] { Logged(FirstMonday, 8.5), Logged(tuesday, 8.5, "Sunil Balas") },
+            weekly: false, memberFilter: null, WithCapacity([InTeam("Dev", 8.5, Off(tuesday))]));
+
+        var dipak = matrix.Rows.Single(r => r.MemberDisplay == "Dipak Katariya");
+        var sunil = matrix.Rows.Single(r => r.MemberDisplay == "Sunil Balas");
+        Assert.Equal(1, dipak.LeaveDays[Day(tuesday)]);
+        Assert.False(dipak.Cells.ContainsKey(Day(tuesday)));
+        Assert.Empty(sunil.LeaveDays);
+    }
+
+    [Fact]
+    public void A_week_counts_the_working_days_of_leave_in_it_and_skips_the_weekend()
+    {
+        var wednesday = FirstMonday.AddDays(2);
+        var matrix = BurndownCalculator.Build(
+            new[] { Logged(SecondMonday, 8.5) },
+            weekly: true, memberFilter: null, WithCapacity([InTeam("Dev", 8.5, Off(wednesday, wednesday.AddDays(4)))]));
+
+        var row = Assert.Single(matrix.Rows);
+        // Wednesday to Sunday: Wed, Thu and Fri are working days, Saturday and Sunday are not.
+        Assert.Equal(3, Assert.Single(row.LeaveDays).Value);
+    }
+
+    [Fact]
+    public void A_member_off_in_only_one_of_the_teams_that_hold_their_hours_is_not_on_leave()
+    {
+        var tuesday = FirstMonday.AddDays(1);
+        var matrix = BurndownCalculator.Build(
+            new[] { Logged(tuesday, 4) },
+            weekly: false, memberFilter: null,
+            WithCapacity([InTeam("Dev", 4.5, Off(tuesday)), InTeam("QA", 4)]));
+
+        Assert.Empty(Assert.Single(matrix.Rows).LeaveDays);
+    }
+
+    [Fact]
+    public void A_member_no_team_lists_takes_the_days_every_team_is_off()
+    {
+        var friday = FirstMonday.AddDays(4);
+        var matrix = BurndownCalculator.Build(
+            new[] { Logged(FirstMonday, 8.5, "Sunil Balas") },
+            weekly: false, memberFilter: null, WithCapacity([], Off(friday)));
+
+        Assert.Equal(1, Assert.Single(matrix.Rows).LeaveDays[Day(friday)]);
+    }
+
+    [Fact]
+    public void Without_the_team_capacity_no_day_is_marked_as_leave()
+    {
+        var matrix = BurndownCalculator.Build(
+            new[] { Logged(FirstMonday, 8.5) }, weekly: false, memberFilter: null, Sprint(FirstMonday, SprintFinish));
+
+        Assert.Empty(Assert.Single(matrix.Rows).LeaveDays);
     }
 
     [Fact]

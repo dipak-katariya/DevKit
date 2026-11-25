@@ -89,10 +89,15 @@ public class WorkItem
         RevisedEstimateField is > 0 ? RevisedEstimateField!.Value : (OriginalEstimate ?? 0);
 
     /// <summary>Case-insensitive check whether System.Tags contains the given tag.</summary>
-    public bool HasTag(string tag) =>
-        !string.IsNullOrEmpty(Tags)
-        && Tags.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-               .Any(t => string.Equals(t, tag, StringComparison.OrdinalIgnoreCase));
+    public bool HasTag(string tag) => TagsContain(Tags, tag);
+
+    /// <summary>The tags of a System.Tags value, in its order, trimmed and without blanks.</summary>
+    public static List<string> SplitTags(string? tags) =>
+        (tags ?? "").Split(StatusUpdateSettings.TagSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+
+    /// <summary>Whether a System.Tags value has <paramref name="tag"/>, in any case.</summary>
+    public static bool TagsContain(string? tags, string tag) =>
+        SplitTags(tags).Any(t => string.Equals(t, tag, StringComparison.OrdinalIgnoreCase));
 }
 
 public class PlanningItem
@@ -245,6 +250,12 @@ public sealed record ChildTaskRequest(
 
     public string Tag { get; init; } = PlanningTaskCatalog.ProductTag;
 }
+
+/// <summary>
+/// A field of a work item type, with the values it allows; an empty list means it takes any value. Update status never
+/// sets a field with an empty list.
+/// </summary>
+public sealed record WorkItemTypeField(string ReferenceName, string Name, IReadOnlyList<string> AllowedValues);
 
 public class ClassificationNode
 {

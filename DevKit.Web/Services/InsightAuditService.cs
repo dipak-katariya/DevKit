@@ -31,11 +31,6 @@ public static class InsightAuditService
 
     // ─────────────── shared helpers ───────────────
 
-    private static bool TagsContain(string? tags, string tag) =>
-        !string.IsNullOrEmpty(tags)
-        && tags.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-               .Any(t => string.Equals(t, tag, StringComparison.OrdinalIgnoreCase));
-
     private static bool StateIn(WorkItem w, params string[] states) =>
         states.Any(s => string.Equals(w.State, s, StringComparison.OrdinalIgnoreCase));
 
@@ -55,7 +50,7 @@ public static class InsightAuditService
     {
         if (PrefixExemptTags.Any(task.HasTag)) return true;
         if (!string.IsNullOrEmpty(task.ParentId) && parentTags.TryGetValue(task.ParentId, out var pt))
-            return PrefixExemptTags.Any(tag => TagsContain(pt, tag));
+            return PrefixExemptTags.Any(tag => WorkItem.TagsContain(pt, tag));
         return false;
     }
 

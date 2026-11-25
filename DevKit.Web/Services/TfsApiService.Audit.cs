@@ -97,7 +97,7 @@ public partial class TfsApiService
                 when = ParsedDate(rd.GetString());
             }
 
-            var both = string.Equals(state, "Resolved", StringComparison.OrdinalIgnoreCase) && TagsContain(tags, "Published");
+            var both = string.Equals(state, "Resolved", StringComparison.OrdinalIgnoreCase) && WorkItem.TagsContain(tags, "Published");
             if (both && !prevBoth && when.HasValue)
             {
                 flag = when;
@@ -117,7 +117,8 @@ public partial class TfsApiService
     private const int BurndownConcurrency = TfsGate.MaxParallelRequests;
 
     private const string UnreturnedItemProblem = "TFS did not return some of the work items: deleted, moved, or not readable with this token.";
-    private static readonly TimeSpan IstOffset = TimeSpan.FromMinutes(330);
+    /// <summary>The team's zone (India, no daylight saving): the day a date falls on for the team, wherever DevKit runs.</summary>
+    internal static readonly TimeSpan IstOffset = TimeSpan.FromMinutes(330);
 
     /// <summary>
     /// Per-member CompletedWork deltas for the current iteration's tasks + bugs, classified
@@ -402,11 +403,6 @@ public partial class TfsApiService
     private static string? FieldNewValue(JsonElement fields, string prop)
         => fields.TryGetProperty(prop, out var fld) && fld.TryGetProperty("newValue", out var nv) && nv.ValueKind == JsonValueKind.String
             ? nv.GetString() : null;
-
-    private static bool TagsContain(string? tags, string tag) =>
-        !string.IsNullOrEmpty(tags)
-        && tags.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-               .Any(t => string.Equals(t, tag, StringComparison.OrdinalIgnoreCase));
 
     private static string GetStr(JsonElement el, string prop, string fallback) =>
         el.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? fallback : fallback;
