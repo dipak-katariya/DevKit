@@ -165,6 +165,27 @@ public sealed class PersonVaultTests : SharedSettingsScratch
     }
 
     [Fact]
+    public void Reads_while_saves_run_never_make_a_save_fail()
+    {
+        // Another page reads the settings right after every save; an open read used to make the save's replace fail.
+        Keep(Alice, SealedNumber(0));
+
+        Parallel.For(0, 200, turn =>
+        {
+            if (turn % 2 == 0)
+            {
+                Server.Update(Alice, kept => SealedNumber(NumberIn(kept!) + 1));
+            }
+            else
+            {
+                Assert.NotNull(Server.Load(Alice));
+            }
+        });
+
+        Assert.Equal(100, NumberIn(Server.Load(Alice)!));
+    }
+
+    [Fact]
     public async Task Settings_survive_a_redeploy_a_package_switch_another_port_and_a_browser_that_deleted_everything()
     {
         var alice = await SignedInAsync(Alice);

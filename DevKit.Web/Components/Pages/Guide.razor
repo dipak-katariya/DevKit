@@ -1,5 +1,4 @@
 @page "/guide"
-@inject SettingsService Settings
 @inject IJSRuntime JS
 @inject ILogger<Guide> Logger
 @implements IAsyncDisposable
@@ -143,8 +142,13 @@
         return false;
     }
 
-    // MainLayout shows the tour while this is false, so turning it off brings the tour back on this page.
-    private void ShowTourAgain() => Settings.GuideTourSeen = false;
+    // MainLayout opens the tour when this is false, and marks it as seen again as it opens.
+    /// <summary>Opens the tour in this tab, from the layout around this page; set while the page is in it.</summary>
+    [CascadingParameter(Name = "StartGuideTour")]
+    public Action? StartGuideTour { get; set; }
+
+    // The tour opens in this tab only, through the layout: a saved flag would be heard by every tab of the person.
+    private void ShowTourAgain() => StartGuideTour?.Invoke();
 
     // Relative to the base address; the Dashboard's own path, "/", is the base itself.
     private static string Href(string path) => path == "/" ? "./" : path.TrimStart('/');
@@ -312,7 +316,7 @@
                     <span class="gb-len" id="gb-len">@(workItemId.Length == 0 ? 0 : BuiltName.Length) of @BranchNaming.MaxLength characters</span>
                 </div>
                 <span class="gb-out-label">PR Name Suggestion</span>
-                <div class="gb-pr">@BranchNaming.TeamSegment(team) : @workItemId : @title</div>
+                <div class="gb-pr">@BranchNaming.PullRequestName(team, workItemId, title)</div>
             </div>
         </div>
         <figcaption>Built by the same code Branch Creator uses, so what you see here is the name you get.</figcaption>

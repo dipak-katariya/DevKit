@@ -40,6 +40,9 @@ public partial class CodeMergingService
     private static readonly string[] AlwaysIncludedTypes = { "Bug", "Change Request" };
     private static readonly string[] PullRequestStatuses = { "completed", "active" };
 
+    /// <summary>Every work item type the sheet can list, whichever scope is chosen.</summary>
+    public static IReadOnlyList<string> SheetWorkItemTypes { get; } = TaggedWorkItemTypes.Concat(AlwaysIncludedTypes).ToArray();
+
     private readonly TfsRequestClient _req;
     private readonly ILogger<CodeMergingService> _logger;
 

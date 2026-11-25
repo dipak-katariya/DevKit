@@ -416,26 +416,148 @@
         }
     }
 
+    // The older way to copy, for a page on plain http or a browser that refuses the clipboard API: the copy command on
+    // a selected hidden text box, since Safari fires no copy event without a selection. The copy event sets the HTML
+    // form too when there is one. False when the browser did not copy, never an exception.
+    function copyByCommand(text, html) {
+        var copied = false;
+        var previous = document.activeElement;
+        var box = document.createElement('textarea');
+        box.value = text;
+        box.setAttribute('readonly', '');
+        box.style.position = 'fixed';
+        box.style.top = '0';
+        box.style.left = '-9999px';
+        box.style.opacity = '0';
+        function fill(e) {
+            if (!e.clipboardData) {
+                return;
+            }
+            if (html) {
+                e.clipboardData.setData('text/html', html);
+            }
+            e.clipboardData.setData('text/plain', text);
+            e.preventDefault();
+            copied = true;
+        }
+        document.body.appendChild(box);
+        document.addEventListener('copy', fill);
+        try {
+            box.select();
+            // Without the event (an older browser), the command still copies the selected text.
+            copied = document.execCommand('copy') || copied;
+        } catch (e) {
+            copied = false;
+        } finally {
+            document.removeEventListener('copy', fill);
+            document.body.removeChild(box);
+            if (previous && typeof previous.focus === 'function') {
+                previous.focus();
+            }
+        }
+        return copied;
+    }
+
+    // A copy whose content the server works out after the click (Copy details may read commits from TFS first). By
+    // then the browser no longer counts it as the person's action and refuses the clipboard, so the write is started
+    // on the click itself, with the content still to come, and copyRichAfterClick fills it in by the button's key.
+    var richCopies = {};
+    var richCopyWaitMs = 120000;
+
+    function settleRichCopy(key, content) {
+        var pending = richCopies[key];
+        if (!pending) {
+            return null;
+        }
+        delete richCopies[key];
+        clearTimeout(pending.timer);
+        if (content) {
+            pending.fill(content);
+        } else {
+            pending.drop();
+        }
+        return pending.written;
+    }
+
+    function startRichCopy(key) {
+        if (!navigator.clipboard || typeof ClipboardItem === 'undefined' || !window.isSecureContext) {
+            return;
+        }
+        settleRichCopy(key, null);
+        var fill, drop;
+        var content = new Promise(function (resolve, reject) { fill = resolve; drop = reject; });
+        var written;
+        try {
+            written = navigator.clipboard.write([new ClipboardItem({
+                'text/html': content.then(function (c) { return new Blob([c.html], { type: 'text/html' }); }),
+                'text/plain': content.then(function (c) { return new Blob([c.text], { type: 'text/plain' }); })
+            })]).then(function () { return true; }, function () { return false; });
+        } catch (e) {
+            // This browser takes no content that is still to come; copyRichAfterClick then writes it directly.
+            return;
+        }
+        content.catch(function () { return null; });
+        richCopies[key] = {
+            fill: fill,
+            drop: function () { drop(new Error('dropped')); },
+            written: written,
+            timer: setTimeout(function () { settleRichCopy(key, null); }, richCopyWaitMs)
+        };
+    }
+
+    document.addEventListener('click', function (e) {
+        var button = e.target && e.target.closest ? e.target.closest('[data-rich-copy]') : null;
+        if (button && !button.disabled && button.getAttribute('aria-busy') !== 'true') {
+            startRichCopy(button.getAttribute('data-rich-copy'));
+        }
+    }, true);
+
+    function copyRichNow(text, html) {
+        if (!navigator.clipboard || typeof ClipboardItem === 'undefined') {
+            return Promise.resolve(copyByCommand(text, html));
+        }
+        try {
+            return navigator.clipboard.write([new ClipboardItem({
+                'text/html': new Blob([html], { type: 'text/html' }),
+                'text/plain': new Blob([text], { type: 'text/plain' })
+            })]).then(function () { return true; }, function () { return copyByCommand(text, html); });
+        } catch (e) {
+            return Promise.resolve(copyByCommand(text, html));
+        }
+    }
+
     // ─── Public API ───
 
     var commandKeyBound = false;
 
     window.devKit = {
-        copyToClipboard: async function (text) {
+        // Resolves true once the text is on the clipboard and false when the browser refused, so the page can say so.
+        copyToClipboard: function (text) {
             try {
-                await navigator.clipboard.writeText(text);
-                return true;
-            } catch {
-                const ta = document.createElement('textarea');
-                ta.value = text;
-                ta.style.position = 'fixed';
-                ta.style.opacity = '0';
-                document.body.appendChild(ta);
-                ta.select();
-                document.execCommand('copy');
-                document.body.removeChild(ta);
-                return true;
+                return navigator.clipboard.writeText(text).then(function () { return true; },
+                    function () { return copyByCommand(text, null); });
+            } catch (e) {
+                return Promise.resolve(copyByCommand(text, null));
             }
+        },
+
+        // Copies two forms at once: HTML, which Excel and Word paste with its cells and links, and plain text for
+        // everything else. Always resolves, false when the browser allows neither way, so the page can say so.
+        copyRich: copyRichNow,
+
+        // copyRich for a button marked data-rich-copy: fills in the write its click started, which keeps the browser's
+        // permission however long the page took to work out the content.
+        copyRichAfterClick: function (key, text, html) {
+            var written = settleRichCopy(key, { text: text, html: html });
+            if (!written) {
+                return copyRichNow(text, html);
+            }
+            return written.then(function (copied) { return copied || copyByCommand(text, html); });
+        },
+
+        // Ends a write a click started when the page decides to copy nothing, so nothing reaches the clipboard.
+        dropRichCopy: function (key) {
+            settleRichCopy(key, null);
         },
 
         downloadFile: function (filename, contentType, base64) {
@@ -473,6 +595,16 @@
 
         historyBack: function () { window.history.back(); },
         historyForward: function () { window.history.forward(); },
+
+        // Moves focus to a dialog's button once it has something to act on, unless the person has moved it already.
+        focusInDialog: function (id) {
+            var el = document.getElementById(id);
+            var panel = el ? el.closest('[role="dialog"]') : null;
+            var active = document.activeElement;
+            if (panel && (active === panel || active === null || active === document.body)) {
+                el.focus();
+            }
+        },
 
         focusById: function (id) {
             var el = document.getElementById(id);

@@ -602,6 +602,7 @@ internal sealed class HostedAccess : DevKitAccess
 
         services.AddSingleton(NewClientVault);
         services.AddSingleton(NewPersonVault);
+        services.AddSingleton<PersonSettingsSaves>();
         services.AddScoped<PersonSettingsStore>();
         services.AddScoped(NewSharedSettings);
         // The files an even earlier DevKit kept on this server, moved into the settings folder on each person's next visit.

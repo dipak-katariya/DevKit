@@ -19,6 +19,21 @@ public partial class SettingsService
     /// <summary>Repository ids last selected on the merging sheet.</summary>
     public List<string> CodeMergingRepoIds => _settings.CodeMergingRepoIds;
 
+    /// <summary>
+    /// What the sheet's Update status button does, cleaned. A copy, read when the button is pressed, so a change saved
+    /// in another tab applies at once and a caller cannot change the settings by editing it.
+    /// </summary>
+    public StatusUpdateSettings StatusUpdate
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _settings.StatusUpdate.Normalized();
+            }
+        }
+    }
+
     public void SetCodeMergingRepoIds(IEnumerable<string> repoIds) =>
         Update(() => _settings.CodeMergingRepoIds = repoIds.Distinct().ToList());
 

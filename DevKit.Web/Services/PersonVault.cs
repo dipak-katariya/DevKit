@@ -85,11 +85,20 @@ internal sealed class PersonVault
         EnsureSecure();
     }
 
-    /// <summary>The sealed settings kept for <paramref name="user"/>; null when none are.</summary>
-    public string? Load(SignedInUser user) => ReadKept(PathFor(user));
+    /// <summary>
+    /// The sealed settings kept for <paramref name="user"/>; null when none are. Read in the same turn saves take: an open
+    /// read would make a save's replace of the file fail, and another page reads right after each save.
+    /// </summary>
+    public string? Load(SignedInUser user) => ReadInTurn(user, PathFor(user));
 
     /// <summary>The sealed settings kept for <paramref name="user"/> before the last save; null when none are.</summary>
-    public string? LoadBackup(SignedInUser user) => ReadKept(PathFor(user) + BackupExtension);
+    public string? LoadBackup(SignedInUser user) => ReadInTurn(user, PathFor(user) + BackupExtension);
+
+    private string? ReadInTurn(SignedInUser user, string path)
+    {
+        using var turn = TakeTurn(user);
+        return ReadKept(path);
+    }
 
     /// <summary>
     /// Replaces <paramref name="user"/>'s settings with what <paramref name="next"/> makes of those kept now (null for

@@ -64,10 +64,11 @@ public static class GuideContent
             new("Set Team Name and defaults", "Default Area Path, Default Sprint (the current one, or one you choose) and Default Repository."),
             new("Pin your most-used repositories", "They come first in every repository list."),
             new("Set merging branches if you need to", "QA branch and merging target for each repository. Leave them empty and DevKit picks them."),
+            new("Set up Update status if your team uses it", "Under Code Merging Sheet: Update Status, pick the tags to add and the field to set, for example PT Merged and Status In PT."),
         },
         new[]
         {
-            "Saves everything except the connection as soon as you change it.",
+            "Opens with your saved settings every time you sign in, and saves only what you changed when you click Save settings.",
             "Puts your Team Name at the start of every branch name and uses it as Branch Cleanup's team.",
             "Opens Sprint Insights and Code Merging Sheet with your area and sprint already picked.",
             "Works out the current sprint from today's date and the sprint dates in TFS.",
@@ -145,7 +146,7 @@ public static class GuideContent
             "Compares each requirement's size with the hours of its tasks and shows the ones that do not match.",
             "Works out the right size and writes it to TFS, for one row or all of them with Apply All Sizes."),
         new("Burndown", Icons.Insights, GuidePhase.DuringSprint,
-            "Hours each member logged per day or per week. Bug hours are shown apart.",
+            "Hours each member logged per day or per week. Bug hours are shown apart, and a day off in TFS with no hours reads Leave.",
             "Reads every change to Completed Work from task history and compares each day with the member's hours per day."),
         new("Tasks", Icons.TabTasks, GuidePhase.DuringSprint,
             "Tasks with no discipline or estimate, a wrong title prefix, or hours that do not add up.",
@@ -165,6 +166,8 @@ public static class GuideContent
             new("Click Load Data", "Each work item is listed with its pull requests and commits."),
             new("Click Verify All", "The quick check: are the commits on the merging branch?"),
             new("Click Compare Code", "The sure check: each pull request's code against the merging branch, file by file. Stop keeps what is done."),
+            new("Copy details into your merge sheet", "A work item's copy button copies one row per pull request, and the one beside a pull request copies its row. Click the Name cell of an empty row in the sheet and paste."),
+            new("Click Update status once it is merged", "It shows what will change first: the tags and the field set up in Settings. Update writes them to the work item."),
         },
         new[]
         {
@@ -173,7 +176,9 @@ public static class GuideContent
             "Finds commits even when they were cherry-picked, and takes reverts into account.",
             "Checks a row again when you open it.",
             "Picks the branches when none are saved: the newest release branch as target, main as QA.",
-            "Only reads TFS; nothing is changed.",
+            "Copy details fills DATE (the day the pull request was merged), REQ/CHR TFS ID, Pull Request, Branch Name and Commit IDs, and leaves the other columns empty.",
+            "Leaves merges from other branches and rebase commits out of Commit IDs, and abandoned pull requests out of the copy.",
+            "Writes to TFS only when you click Update in Update status, and then only the tags and field it showed. The work item keeps its other tags.",
         },
         Array.Empty<GuideChipGroup>());
 

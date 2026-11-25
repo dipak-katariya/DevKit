@@ -1,4 +1,5 @@
 @inject IJSRuntime JS
+@inject ILogger<CopyableRef> Log
 @implements IDisposable
 
 @* A git ref or SHA: opens in a new tab when it has a URL, and always copies from the icon. *@
@@ -21,8 +22,6 @@
 </span>
 
 @code {
-    private const int CopiedFeedbackMs = 1400;
-
     /// <summary>The exact value placed on the clipboard.</summary>
     [Parameter, EditorRequired] public string Text { get; set; } = "";
 
@@ -46,10 +45,20 @@
     {
         try
         {
-            await JS.InvokeVoidAsync("devKit.copyToClipboard", Text);
+            // False when the browser refused: no tick for a copy that did not happen.
+            if (!await JS.InvokeAsync<bool>("devKit.copyToClipboard", Text))
+            {
+                return;
+            }
         }
-        catch (JSException)
+        catch (JSDisconnectedException ex)
         {
+            Log.LogDebug(ex, "The page closed before a {Label} was copied", Label);
+            return;
+        }
+        catch (JSException ex)
+        {
+            Log.LogError(ex, "The browser could not copy a {Label}", Label);
             return;
         }
 
@@ -64,13 +73,13 @@
         {
             try
             {
-                await Task.Delay(CopiedFeedbackMs, token);
+                await Task.Delay(CopyFeedback.TickMs, token);
                 copied = false;
                 await InvokeAsync(StateHasChanged);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException ex)
             {
-                // Superseded by a newer copy, or the component went away.
+                Log.LogDebug(ex, "A {Label} copy tick was superseded by a newer copy, or the component went away", Label);
             }
         }, token);
     }

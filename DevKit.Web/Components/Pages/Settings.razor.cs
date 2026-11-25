@@ -4,22 +4,27 @@ using DevKit.Web.Models;
 using DevKit.Web.Services;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Forms;
+using Microsoft.AspNetCore.Components.Routing;
 using Microsoft.JSInterop;
 
 namespace DevKit.Web.Components.Pages;
 
-/// <summary>The settings form: connection, defaults and repositories.</summary>
+/// <summary>
+/// The settings form: connection (Settings.Connection.cs), defaults, repositories (Settings.Repositories.cs) and the
+/// Code Merging Sheet's Update status (Settings.StatusUpdate.cs). Everything on it is shown as saved, and edits stay on
+/// the page until Save settings, which is enabled while something differs from what is saved or a save failed, and
+/// keeps everything else as it is.
+/// </summary>
 public sealed partial class Settings : IDisposable
 {
+    private const string LeaveUnsavedQuestion = "Your changes on the Settings page are not saved. Leave without saving them?";
+
     // The connection checks and branch lists stop when the page closes. Closing only ends the page's wait for the
     // shared metadata: that load goes on for the next page.
     private readonly PageLifetime page = new();
 
-    private string tfsUrl = "";
-    private TfsAuthMode tfsAuth;
-    // Only ever what the user types: the stored PAT is never sent to the browser.
-    private string tfsPat = "";
-    private bool hasStoredPat;
+    // The preferences as saved, which the form started from; the fields below are the form as edited.
+    private PortableSettings saved = new();
     private string defaultAreaPath = "";
     private string defaultSprint = "";
     private bool defaultSprintIsCurrent;
@@ -28,10 +33,8 @@ public sealed partial class Settings : IDisposable
     private int mostUsedCount;
     private List<string> mostUsedRepoIds = new();
     private HashSet<string> mostUsedSelection = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, RepoBranchDefaults> repoBranches = new(StringComparer.OrdinalIgnoreCase);
     private string mostUsedMsg = "";
-    private bool saving, testing;
-    private string statusMsg = "";
-    private bool statusOk;
 
     // The circuit's shared lists, so what Settings reloads every other page sees too.
     private IReadOnlyList<TfsRepo> repos => PageState.TfsData.Repos;
@@ -46,10 +49,9 @@ public sealed partial class Settings : IDisposable
 
     protected override async Task OnInitializedAsync()
     {
-        tfsUrl = SettingsSvc.FixedTfsUrl ?? SettingsSvc.Tfs.Url;
-        tfsAuth = SettingsSvc.IsConfigured ? SettingsSvc.Tfs.Auth : FirstSignIn;
-        hasStoredPat = SettingsSvc.HasStoredPat;
+        ReadConnection();
         ReadPreferences();
+        SettingsSvc.Changed += OnSettingsChanged;
 
         if (!SettingsSvc.IsConfigured)
         {
@@ -65,40 +67,237 @@ public sealed partial class Settings : IDisposable
         {
             metadataError = load.ErrorMessage;
         }
+
+        await EnsureStatusListsAsync();
     }
 
-    /// <summary>Fills the form's preferences from Settings, at start and after an import.</summary>
+    /// <summary>Fills the form's preferences from what is saved: at start, after a save or an import, and to discard edits.</summary>
     private void ReadPreferences()
     {
-        defaultAreaPath = SettingsSvc.DefaultAreaPath;
-        defaultSprint = SettingsSvc.DefaultSprint;
-        defaultSprintIsCurrent = SettingsSvc.DefaultSprintIsCurrent;
-        defaultRepoId = SettingsSvc.DefaultRepoId;
-        teamName = SettingsSvc.TeamName;
-        mostUsedCount = SettingsSvc.MostUsedRepoCount;
-        SyncMostUsedFromSettings();
+        saved = ShownPreferences();
+        teamName = saved.TeamName ?? "";
+        defaultAreaPath = saved.DefaultAreaPath ?? "";
+        defaultSprint = saved.DefaultSprint ?? "";
+        defaultSprintIsCurrent = saved.DefaultSprintMode == DefaultSprintMode.Current;
+        defaultRepoId = saved.DefaultRepoId ?? "";
+        mostUsedCount = saved.MostUsedRepoCount ?? 0;
+        SetMostUsed(saved.MostUsedRepoIds ?? new List<string>());
+        repoBranches = (saved.RepoBranches ?? new Dictionary<string, RepoBranchDefaults>()).ToDictionary(
+            pair => pair.Key,
+            pair => new RepoBranchDefaults { QaBranch = pair.Value.QaBranch, MergingBranch = pair.Value.MergingBranch },
+            StringComparer.OrdinalIgnoreCase);
+        ReadStatusUpdate();
     }
 
-    // ─── Save, export and import ───
+    /// <summary>
+    /// The saved preferences this form shows: not the Code Merging Sheet's repositories nor Capacity Planning, which
+    /// other pages change, so a change there is not taken for one made to this form.
+    /// </summary>
+    private PortableSettings ShownPreferences()
+    {
+        var preferences = SettingsSvc.CurrentPreferences();
+        preferences.CodeMergingRepoIds = null;
+        preferences.CapacityPlanning = null;
+        return preferences;
+    }
+
+    /// <summary>The preferences as the form holds them now.</summary>
+    private PortableSettings Edited() => new PortableSettings
+    {
+        TeamName = teamName,
+        DefaultAreaPath = defaultAreaPath,
+        DefaultSprint = defaultSprint,
+        DefaultSprintMode = defaultSprintIsCurrent ? DefaultSprintMode.Current : DefaultSprintMode.Chosen,
+        DefaultRepoId = defaultRepoId,
+        MostUsedRepoCount = mostUsedCount,
+        MostUsedRepoIds = mostUsedRepoIds,
+        RepoBranches = repoBranches
+    }.WithStatusUpdate(statusForm);
+
+    private bool HasPreferenceChanges => Edited().ChangesFrom(saved).HasChanges;
+
+    /// <summary>Worked out afresh; the markup reads <see cref="unsavedShown"/>, worked out once per render.</summary>
+    private bool HasUnsavedChanges => HasPreferenceChanges || ConnectionChanged;
+
+    // HasUnsavedChanges as of this render: a full diff of the form, read by several parts of the markup.
+    private bool unsavedShown;
+
+    private string SaveLabel() => (confirming, unsavedShown) switch
+    {
+        (true, _) => "Saving...",
+        (false, true) => "Save settings",
+        _ when SettingsSvc.LastSaveError is not null => "Save again",
+        _ => "Saved"
+    };
+
+    private string SaveTitle() => (SettingsSvc.SavingBlocked, unsavedShown) switch
+    {
+        (true, _) => "Nothing can be saved until your settings open again. Click Try again.",
+        (false, true) => "Save the changes on this page. Everything else stays as it is.",
+        _ when SettingsSvc.LastSaveError is not null => "The last save failed. Try it again.",
+        _ => "Nothing to save: the form shows your saved settings."
+    };
+
+    // An import replaces the form's values, and saves: not over changes made here, nor over settings that did not open.
+    private bool ImportLocked => unsavedShown || SettingsSvc.SavingBlocked;
+
+    private string ImportTitle() => (SettingsSvc.SavingBlocked, unsavedShown) switch
+    {
+        (true, _) => "Nothing can be imported until your settings open again. Click Try again.",
+        (false, true) => "Save or discard your changes first, then import the file.",
+        _ => "Load settings from a DevKit file: an export, or an earlier usersettings.json. What the file does not name is kept, and your TFS connection is not changed."
+    };
+
+    private bool retrying;
+
+    // A save made elsewhere arrived while this page was saving or trying again; it is followed once that is done.
+    private bool missedSave;
+
+    /// <summary>
+    /// Raised on the thread that saved: another page of the person (shared mode, once this page has read it again), or in
+    /// local mode any page. The form follows what is saved and keeps the edits made here. While this page saves or tries
+    /// again, the save is followed afterwards (<see cref="FollowMissedSave"/>), so it is never lost.
+    /// </summary>
+    private void OnSettingsChanged() => _ = InvokeAsync(() =>
+    {
+        if (confirming || saving || retrying)
+        {
+            missedSave = true;
+            return;
+        }
+
+        FollowSaveElsewhere();
+        StateHasChanged();
+    });
+
+    private void FollowSaveElsewhere()
+    {
+        FollowSavedConnection();
+        if (FollowSavedPreferences())
+        {
+            ShowTransfer("Your settings were saved on another page and show here now. Your changes on this page are kept, not saved yet.", ok: true);
+        }
+    }
+
+    /// <summary>Follows a save made elsewhere while this page was busy, once nothing of its own is running.</summary>
+    private void FollowMissedSave()
+    {
+        if (!missedSave || confirming || saving || retrying)
+        {
+            return;
+        }
+
+        missedSave = false;
+        FollowSaveElsewhere();
+    }
+
+    /// <summary>Takes what is saved now into the form, keeping the edits made here. True when there were edits to keep.</summary>
+    private bool FollowSavedPreferences()
+    {
+        if (!ShownPreferences().ChangesFrom(saved).HasChanges)
+        {
+            return false;
+        }
+
+        var edits = Edited().ChangesFrom(saved);
+        ReadPreferences();
+        if (!edits.HasChanges)
+        {
+            return false;
+        }
+
+        teamName = edits.TeamName ?? teamName;
+        defaultAreaPath = edits.DefaultAreaPath ?? defaultAreaPath;
+        defaultSprint = edits.DefaultSprint ?? defaultSprint;
+        defaultSprintIsCurrent = edits.DefaultSprintMode is { } mode ? mode == DefaultSprintMode.Current : defaultSprintIsCurrent;
+        defaultRepoId = edits.DefaultRepoId ?? defaultRepoId;
+        mostUsedCount = edits.MostUsedRepoCount ?? mostUsedCount;
+        SetMostUsed((edits.MostUsedRepoIds ?? mostUsedRepoIds).Take(mostUsedCount));
+        foreach (var (id, branches) in edits.RepoBranches ?? new Dictionary<string, RepoBranchDefaults>())
+        {
+            repoBranches[id] = branches;
+        }
+
+        KeepStatusEdits(edits);
+        return true;
+    }
+
+    /// <summary>
+    /// Reads the settings again once they could not be opened; saving is allowed again when they open. Edits made here
+    /// meanwhile are kept, and the message says so, or says what to do when they still do not open.
+    /// </summary>
+    private async Task RetryLoadAsync()
+    {
+        retrying = true;
+        SettingsReload outcome;
+        try
+        {
+            // Off the page's thread: the domain can take a while to answer.
+            outcome = await Task.Run(SettingsSvc.ReloadFromStore);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Trying again to open the settings failed");
+            ShowTransfer("Your settings still could not be opened. Reload the page; if it keeps happening, tell whoever runs DevKit.", ok: false);
+            return;
+        }
+        finally
+        {
+            retrying = false;
+            missedSave = false;
+        }
+
+        ShowRetryOutcome(outcome);
+    }
+
+    private void ShowRetryOutcome(SettingsReload outcome)
+    {
+        if (SettingsSvc.SavingBlocked)
+        {
+            ShowTransfer(outcome == SettingsReload.NotReadable
+                ? "Your settings opened, but this DevKit cannot read them, so nothing is saved here."
+                : "Your settings still could not be opened. Try again in a minute, or reload the page.", ok: false);
+            return;
+        }
+
+        FollowSavedConnection();
+        FollowSavedPreferences();
+        unsavedShown = HasUnsavedChanges;
+        ShowTransfer(unsavedShown
+            ? "Your settings opened. Your changes on this page are kept, not saved yet."
+            : "Your settings opened. You can change and save them again.", ok: true);
+    }
+
     private string transferMsg = "";
     private bool transferOk;
     private bool confirming;
 
     /// <summary>
-    /// Every change is already saved as it is made; this waits until the settings are kept, and says so. Local mode names
-    /// the settings file; shared mode does not say where it keeps them.
+    /// Saves what the form changed, and nothing else: a changed connection first, checked with TFS, then the preferences
+    /// in one save. With nothing changed it only tries again a save that failed. Local mode names the settings file.
     /// </summary>
     private async Task SaveSettings()
     {
         confirming = true;
         try
         {
-            if (!await SettingsSvc.SaveAndConfirmAsync())
+            if (ConnectionChanged && await SaveConnectionAsync() is var connection && connection != ConnectionSave.Saved)
+            {
+                ShowConnectionNotSaved(connection);
+                return;
+            }
+
+            var changes = Edited().ChangesFrom(saved);
+            var kept = changes.HasChanges
+                ? SettingsSvc.SavePreferences(changes)
+                : SettingsSvc.LastSaveError is null || await SettingsSvc.SaveAndConfirmAsync();
+            if (!kept)
             {
                 ShowTransfer(SettingsSvc.LastSaveError ?? "Settings could not be saved. Reload the page and try again.", ok: false);
                 return;
             }
 
+            ReadPreferences();
             ShowTransfer(Session.IsShared
                 ? "Settings saved."
                 : $"Settings saved in {SettingsSvc.SettingsFilePath}.", ok: true);
@@ -106,10 +305,75 @@ public sealed partial class Settings : IDisposable
         finally
         {
             confirming = false;
+            FollowMissedSave();
         }
     }
 
-    /// <summary>Hands the settings file to the browser to save; it holds no TFS connection or token.</summary>
+    private void ShowConnectionNotSaved(ConnectionSave connection)
+    {
+        switch (connection)
+        {
+            case ConnectionSave.Refused:
+                ShowTransfer("Nothing was saved: the TFS connection was not accepted. The message under it says why.", ok: false);
+                break;
+            case ConnectionSave.NotKept:
+                ShowTransfer($"Nothing was saved: TFS accepted the connection, but it could not be kept. {SettingsSvc.LastSaveError}", ok: false);
+                break;
+            default:
+                // The page was left, or the form was not filled in: the connection section says so, if anyone is there.
+                break;
+        }
+    }
+
+    /// <summary>Puts the form back as saved.</summary>
+    private void DiscardChanges()
+    {
+        ReadConnection();
+        ReadPreferences();
+        mostUsedMsg = "";
+        ShowStatus("", ok: false);
+        ShowTransfer("Your changes were discarded. The form shows your saved settings.", ok: true);
+    }
+
+    /// <summary>Leaving with changes not saved asks first, so they are not lost by a stray click.</summary>
+    private async Task ConfirmLeavingAsync(LocationChangingContext context)
+    {
+        if (!HasUnsavedChanges)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!await JS.InvokeAsync<bool>("confirm", LeaveUnsavedQuestion))
+            {
+                context.PreventNavigation();
+            }
+        }
+        catch (JSDisconnectedException ex)
+        {
+            Logger.LogDebug(ex, "The page closed while asking whether to leave without saving");
+        }
+        catch (JSException ex)
+        {
+            Logger.LogError(ex, "The browser could not ask whether to leave the Settings page without saving; it stays open");
+            StayWithUnsavedChanges(context);
+        }
+        catch (TaskCanceledException ex)
+        {
+            Logger.LogError(ex, "The question whether to leave the Settings page without saving got no answer in time; it stays open");
+            StayWithUnsavedChanges(context);
+        }
+    }
+
+    private void StayWithUnsavedChanges(LocationChangingContext context)
+    {
+        context.PreventNavigation();
+        ShowTransfer("Your changes are not saved, so the page stayed open. Save or discard them, then leave.", ok: false);
+        StateHasChanged();
+    }
+
+    /// <summary>Hands the saved settings to the browser as a file; it holds no TFS connection or token.</summary>
     private async Task ExportSettings()
     {
         var file = Encoding.UTF8.GetBytes(SettingsSvc.ExportSettings());
@@ -118,7 +382,9 @@ public sealed partial class Settings : IDisposable
             await JS.InvokeVoidAsync("devKit.downloadFile",
                 $"devkit-settings-{DateTime.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}.json",
                 "application/json", Convert.ToBase64String(file));
-            ShowTransfer("Settings exported. The file does not include your TFS connection or token.", ok: true);
+            ShowTransfer(HasUnsavedChanges
+                ? "Your saved settings were exported; changes not saved yet are not in the file. It does not include your TFS connection or token."
+                : "Settings exported. The file does not include your TFS connection or token.", ok: true);
         }
         catch (JSDisconnectedException ex)
         {
@@ -131,9 +397,19 @@ public sealed partial class Settings : IDisposable
         }
     }
 
-    /// <summary>Loads a settings file the person picked; the TFS connection is never part of it.</summary>
+    /// <summary>
+    /// Loads a settings file the person picked: an export, or an earlier DevKit's whole settings file. What it does not
+    /// name is kept, and the TFS connection is never part of it. Not while the form has changes, which it would replace.
+    /// </summary>
     private async Task ImportSettings(InputFileChangeEventArgs e)
     {
+        unsavedShown = HasUnsavedChanges;
+        if (ImportLocked)
+        {
+            ShowTransfer(ImportTitle(), ok: false);
+            return;
+        }
+
         try
         {
             await using var stream = e.File.OpenReadStream(SettingsService.MaxImportBytes, page.Token);
@@ -163,152 +439,15 @@ public sealed partial class Settings : IDisposable
         transferOk = ok;
     }
 
-    /// <summary>A connection not set up yet starts on Windows sign-in where it is allowed, since it needs no token.</summary>
-    private TfsAuthMode FirstSignIn => SettingsSvc.AllowsWindowsSignIn ? TfsAuthMode.Windows : TfsAuthMode.Pat;
+    private void OnTeamNameChange(ChangeEventArgs e) => teamName = e.Value?.ToString()?.Trim() ?? "";
 
-    /// <summary>The Windows account DevKit runs as, which is the one Windows sign-in presents to TFS.</summary>
-    private static string WindowsAccount => $@"{Environment.UserDomainName}\{Environment.UserName}";
+    private void OnDefaultAreaChange(ChangeEventArgs e) => defaultAreaPath = e.Value?.ToString() ?? "";
 
-    /// <summary>Switches how the form signs in. A token typed for the other sign-in is not kept.</summary>
-    private void SetSignIn(TfsAuthMode auth)
-    {
-        tfsAuth = auth;
-        tfsPat = "";
-        ShowStatus("", ok: false);
-    }
+    private void OnDefaultSprintChange(ChangeEventArgs e) => defaultSprint = e.Value?.ToString() ?? "";
 
-    /// <summary>What the form asks TFS with, for the sign-in chosen above it.</summary>
-    private TfsConnectionForm.Candidate FormCandidate() => tfsAuth == TfsAuthMode.Windows
-        ? TfsConnectionForm.ChooseWindowsSignIn(tfsUrl)
-        : TfsConnectionForm.Choose(tfsUrl, tfsPat, SettingsSvc);
+    private void SetDefaultSprintMode(bool current) => defaultSprintIsCurrent = current;
 
-    /// <summary>Names the account TFS ran the check as, when TFS said, so the status shows who DevKit signed in as.</summary>
-    private static string SignedInAs(TfsConnectionCheck check) =>
-        check.Account.Length == 0 ? "" : $" as {check.Account}";
-
-    /// <summary>
-    /// Checks the server and sign-in first and saves them only when TFS accepts them, so a mistyped token never
-    /// replaces a working one. The status says what TFS answered, or why the settings were not saved.
-    /// </summary>
-    private async Task SaveAndConnect()
-    {
-        var (url, pat, error, auth) = FormCandidate();
-        if (error.Length > 0)
-        {
-            ShowStatus($"✕ {error}", ok: false);
-            return;
-        }
-
-        saving = true;
-        ShowStatus("", ok: false);
-        StateHasChanged();
-        try
-        {
-            // Nothing is saved until TFS has answered, so leaving before then saves nothing.
-            var check = await TfsApi.TestConnectionAsync(url, auth, pat, page.Token);
-            if (!SettingsSvc.SaveTfs(url, pat, auth))
-            {
-                ShowStatus($"✕ TFS accepted the sign-in, but it was not saved. {SettingsSvc.LastSaveError}", ok: false);
-                return;
-            }
-
-            Logger.LogInformation("TFS connection saved; DevKit signs in with {SignIn}", auth);
-            tfsPat = "";
-            hasStoredPat = SettingsSvc.HasStoredPat;
-
-            // The lists belonged to the server just replaced, so every page of the circuit now reads the new one's.
-            // A list that fails to load is shown in the notice: the settings are saved either way.
-            PageState.TfsData.Invalidate();
-            listsLoading = true;
-            StateHasChanged();
-            var load = await PageState.TfsData.EnsureLoadedAsync(page.Token);
-            listsLoading = false;
-            if (load.Cancelled)
-            {
-                return;
-            }
-            metadataError = load.ErrorMessage;
-            ShowStatus($"✓ Saved and connected{SignedInAs(check)}. Found {check.ProjectCount} project(s) and {repos.Count} repositories.{TfsConnectionForm.InsecureUrlWarning(url, auth)}", ok: true);
-        }
-        catch (OperationCanceledException ex) when (page.Token.IsCancellationRequested)
-        {
-            Logger.LogDebug(ex, "Save & Connect stopped because the page was left before TFS answered; nothing was saved");
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "The TFS connection check with {SignIn} sign-in failed, so the connection was not saved", auth);
-            ShowStatus($"✕ Not saved: {TfsErrors.Describe(ex)}", ok: false);
-        }
-        finally
-        {
-            saving = false;
-        }
-    }
-
-    /// <summary>Tries the server and sign-in in the form without saving anything.</summary>
-    private async Task TestConnection()
-    {
-        var (url, pat, error, auth) = FormCandidate();
-        if (error.Length > 0)
-        {
-            ShowStatus($"✕ {error}", ok: false);
-            return;
-        }
-
-        testing = true;
-        ShowStatus("", ok: false);
-        StateHasChanged();
-        try
-        {
-            var check = await TfsApi.TestConnectionAsync(url, auth, pat, page.Token);
-            ShowStatus($"✓ Connected{SignedInAs(check)}. Found {check.ProjectCount} project(s). Nothing was saved.{TfsConnectionForm.InsecureUrlWarning(url, auth)}", ok: true);
-        }
-        catch (OperationCanceledException ex) when (page.Token.IsCancellationRequested)
-        {
-            Logger.LogDebug(ex, "The connection test stopped because the page was left");
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "The TFS connection test with {SignIn} sign-in failed", auth);
-            ShowStatus($"✕ Connection failed: {TfsErrors.Describe(ex)}", ok: false);
-        }
-        finally
-        {
-            testing = false;
-        }
-    }
-
-    private void ShowStatus(string message, bool ok)
-    {
-        statusMsg = message;
-        statusOk = ok;
-    }
-
-    // ─── Team Name ───
-    private void OnTeamNameChange(ChangeEventArgs e)
-    {
-        teamName = e.Value?.ToString()?.Trim() ?? "";
-        SettingsSvc.TeamName = teamName;
-    }
-
-    // ─── Default Selection Handlers ───
-    private void OnDefaultAreaChange(ChangeEventArgs e)
-    {
-        defaultAreaPath = e.Value?.ToString() ?? "";
-        SettingsSvc.DefaultAreaPath = defaultAreaPath;
-    }
-
-    private void OnDefaultSprintChange(ChangeEventArgs e)
-    {
-        defaultSprint = e.Value?.ToString() ?? "";
-        SettingsSvc.DefaultSprint = defaultSprint;
-    }
-
-    private void SetDefaultSprintMode(bool current)
-    {
-        defaultSprintIsCurrent = current;
-        SettingsSvc.DefaultSprintIsCurrent = current;
-    }
+    private void OnDefaultRepoChange(ChangeEventArgs e) => defaultRepoId = e.Value?.ToString() ?? "";
 
     /// <summary>The sprint "current sprint" means today, in the default area's project.</summary>
     private string CurrentSprintLabel
@@ -327,150 +466,16 @@ public sealed partial class Settings : IDisposable
         }
     }
 
-    // ─── Code merging branch defaults ───
-
-    private string repoBranchFilter = "";
-
-    /// <summary>
-    /// Repositories shown in the branch table: the most-used ones first, in the order they were pinned, then the rest
-    /// by project and name. Unfiltered it is every repository across every project, long enough to need the filter.
-    /// </summary>
-    private List<TfsRepo> BranchRepos => RepoOrdering.Prioritize(
-        repos.Where(r => string.IsNullOrWhiteSpace(repoBranchFilter)
-                         || r.Name.Contains(repoBranchFilter, StringComparison.OrdinalIgnoreCase)
-                         || r.Project.Contains(repoBranchFilter, StringComparison.OrdinalIgnoreCase)),
-        mostUsedRepoIds);
-
-    /// <summary>
-    /// What an empty picker means: the automatic branch, named once the repository's branches have loaded.
-    /// </summary>
-    private string AutomaticBranch(TfsRepo repo, Func<IReadOnlyCollection<string>, string?, string> rule, string beforeLoad)
-    {
-        var branches = BranchesFor(repo.Id);
-        return branches.Count == 0 ? $"Automatic ({beforeLoad})" : $"Automatic: {rule(branches, repo.DefaultBranch)}";
-    }
-
-    private int ConfiguredBranchCount => repos.Count(r => !SettingsSvc.GetRepoBranches(r.Id).IsEmpty);
-
-    private void OnRepoBranchFilter(ChangeEventArgs e) => repoBranchFilter = e.Value?.ToString() ?? "";
-
-    private void OnQaBranchChange(string repoId, string branch) =>
-        SettingsSvc.SetRepoQaBranch(repoId, branch ?? "");
-
-    private void OnMergingBranchChange(string repoId, string branch) =>
-        SettingsSvc.SetRepoMergingBranch(repoId, branch ?? "");
-
-    // Branch lists are fetched per repository the first time one of its pickers is opened.
-    // There are ~50 repositories here and each listing is several paged requests, so loading
-    // them up front would cost far more than anyone configuring one repository needs.
-    // BranchCacheService holds the results, shared with every other page in this circuit.
-    private string? loadingBranchRepoId;
-
-    private IReadOnlyList<string> BranchesFor(string repoId) =>
-        BranchCache.Peek(repoId) ?? Array.Empty<string>();
-
-    private async Task LoadBranchesFor(TfsRepo repo)
-    {
-        if (BranchCache.Peek(repo.Id) != null || loadingBranchRepoId == repo.Id) return;
-
-        loadingBranchRepoId = repo.Id;
-        StateHasChanged();
-        try
-        {
-            // Only this page's wait stops when it closes; the shared listing goes on for any other page.
-            await BranchCache.GetAsync(repo, page.Token);
-        }
-        catch (OperationCanceledException ex) when (page.Token.IsCancellationRequested)
-        {
-            Logger.LogDebug(ex, "The page was left while the branches of {Repo} were loading", repo.Name);
-        }
-        catch (Exception ex)
-        {
-            if (!TfsErrors.IsLogged(ex))
-            {
-                Logger.LogError(ex, "Could not load branches for repo {Repo}", repo.Name);
-            }
-        }
-        finally
-        {
-            loadingBranchRepoId = null;
-            StateHasChanged();
-        }
-    }
-
-    private void OnDefaultRepoChange(ChangeEventArgs e)
-    {
-        defaultRepoId = e.Value?.ToString() ?? "";
-        SettingsSvc.DefaultRepoId = defaultRepoId;
-    }
-
-    // ─── Most-used repositories ───
-
-    private static readonly int[] MostUsedCountChoices = { 0, 3, 5, 8, 10 };
-
-    private static List<GlassDropdown.DropdownOption> MostUsedCountOptions() => MostUsedCountChoices
-        .Select(n => new GlassDropdown.DropdownOption
-        {
-            Value = n.ToString(),
-            Label = n == 0 ? "Off" : $"Top {n}"
-        }).ToList();
-
-    private void OnMostUsedCountChange(ChangeEventArgs e)
-    {
-        mostUsedCount = int.TryParse(e.Value?.ToString(), out var n) ? n : 0;
-        mostUsedMsg = "";
-
-        // The service trims the pinned list to the new count, so read it back rather than
-        // trimming here as well and risking the two drifting apart.
-        SettingsSvc.MostUsedRepoCount = mostUsedCount;
-        SyncMostUsedFromSettings();
-    }
-
-    /// <summary>
-    /// The multi-select works with an unordered set, but pin order is the display order. Existing
-    /// pins keep their position, newly ticked repositories are appended, and unticked ones drop out.
-    /// </summary>
-    private void OnMostUsedReposChanged(HashSet<string> selected)
-    {
-        var ordered = mostUsedRepoIds.Where(selected.Contains).ToList();
-        ordered.AddRange(selected.Except(ordered, StringComparer.OrdinalIgnoreCase).ToList());
-
-        mostUsedMsg = ordered.Count > mostUsedCount
-            ? $"Only the first {mostUsedCount} were kept. Raise the count above, or unpin one first."
-            : "";
-
-        SettingsSvc.SetMostUsedRepoIds(ordered);
-        SyncMostUsedFromSettings();
-    }
-
-    private void UnpinMostUsedRepo(string repoId)
-    {
-        mostUsedMsg = "";
-        SettingsSvc.SetMostUsedRepoIds(mostUsedRepoIds.Where(id => id != repoId));
-        SyncMostUsedFromSettings();
-    }
-
-    /// <summary>Settings is the single source of truth; the page mirrors it after every write.</summary>
-    private void SyncMostUsedFromSettings()
-    {
-        mostUsedRepoIds = SettingsSvc.MostUsedRepoIds.ToList();
-        mostUsedSelection = new HashSet<string>(mostUsedRepoIds, StringComparer.OrdinalIgnoreCase);
-    }
-
-    private string MostUsedRepoLabel(string repoId)
-    {
-        var repo = repos.FirstOrDefault(r => r.Id == repoId);
-        return repo != null ? repo.Name : "(unknown repository)";
-    }
-
-    private List<MultiSelectDropdown.Option> AllRepoOptions => RepoSelect.Options(repos, mostUsedRepoIds);
-
-    // ─── Dropdown Data ───
     private List<GlassDropdown.DropdownGroup> AreaGroups => AreaSprintSelect.AreaGroups(areas);
 
     private List<GlassDropdown.DropdownGroup> SprintGroups => AreaSprintSelect.SprintGroups(iterations);
 
     private List<GlassDropdown.DropdownGroup> RepoGroups => RepoSelect.Groups(repos, mostUsedRepoIds);
 
-    public void Dispose() => page.Dispose();
+    public void Dispose()
+    {
+        SettingsSvc.Changed -= OnSettingsChanged;
+        CancellationSources.CancelAndDispose(ref patHide);
+        page.Dispose();
+    }
 }

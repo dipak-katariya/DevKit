@@ -65,6 +65,9 @@ public abstract class SharedSettingsScratch : IDisposable
     /// <summary>This DevKit server's settings folder, where everyone's sealed settings are kept.</summary>
     private protected PersonVault Server { get; }
 
+    /// <summary>How this DevKit server's open pages hear that a page of the same person saved.</summary>
+    private protected PersonSettingsSaves Saves { get; } = new();
+
     protected string ServerPath => Path.Combine(Root, PersonVault.FolderName);
 
     /// <summary>The sealed settings the server keeps for <paramref name="user"/>; null when none.</summary>
@@ -95,7 +98,7 @@ public abstract class SharedSettingsScratch : IDisposable
     {
         var inBrowser = browser ?? Browser;
         var sealer = vault ?? Vault;
-        var store = new PersonSettingsStore(server ?? Server, sealer, NullLogger<PersonSettingsStore>.Instance);
+        var store = new PersonSettingsStore(server ?? Server, sealer, Saves, NullLogger<PersonSettingsStore>.Instance);
         var settings = new SettingsService(NullLogger<SettingsService>.Instance, store, fixedUrl);
         var earlier = new EarlierSettingsCopies(
             Folder, new ProtectedLocalStorage(inBrowser, Keys), inBrowser, logger ?? NullLogger<EarlierSettingsCopies>.Instance);
@@ -103,7 +106,7 @@ public abstract class SharedSettingsScratch : IDisposable
             ? new ClaimsPrincipal(new ClaimsIdentity())
             : new SessionRegistry(new ManualClock()).Start(user, "windows", TimeSpan.FromDays(5), IPAddress.Loopback).Principal;
         var session = new SharedUserSession(
-            new FixedAuthenticationState(principal), store, earlier, settings, RunsDevKit);
+            new FixedAuthenticationState(principal), store, earlier, settings, RunsDevKit, Saves, NullLogger<SharedUserSession>.Instance);
         return new Page(session, settings, store);
     }
 
@@ -165,8 +168,29 @@ public abstract class SharedSettingsScratch : IDisposable
             link.Delete();
         }
 
-        Directory.Delete(Root, recursive: true);
+        DeleteRoot();
     }
+
+    // A page reads another page's save on a background thread nobody waits on, so the last of those reads may still have
+    // a settings file open when the test ends; the folder is deleted once it has closed.
+    private void DeleteRoot()
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                Directory.Delete(Root, recursive: true);
+                return;
+            }
+            catch (IOException) when (attempt < MaxDeleteAttempts)
+            {
+                Thread.Sleep(DeleteRetryDelay);
+            }
+        }
+    }
+
+    private const int MaxDeleteAttempts = 20;
+    private static readonly TimeSpan DeleteRetryDelay = TimeSpan.FromMilliseconds(50);
 
     /// <summary>Settings an earlier DevKit wrote for <paramref name="user"/>: their PAT encrypted with DPAPI on this machine, for its server.</summary>
     private static string EarlierSettingsText(SignedInUser user, string team)

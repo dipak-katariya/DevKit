@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Authentication;
 using System.Text.Json;
 using DevKit.Web.Models;
 
@@ -24,6 +25,7 @@ public static class TfsErrors
     private const int FirstServerError = 500;
     private const string LoggedKey = "DevKit.TfsErrors.Logged";
     private const string SignInKey = "DevKit.TfsErrors.SignIn";
+    private const string WriteSentKey = "DevKit.TfsErrors.WriteSent";
 
     /// <summary>
     /// Notes on the exception that it has been logged at Error, so a handler further out that catches it
@@ -87,4 +89,56 @@ public static class TfsErrors
         JsonException => "TFS sent a reply DevKit couldn't read.",
         _ => "Something unexpected went wrong. The DevKit log has the details."
     };
+
+    /// <summary>
+    /// <see cref="Describe"/> for a click that writes: a 403 the write itself got (see <see cref="NoteWriteSent"/>) is
+    /// about changing the work item; one from a read before or after it is about reading it.
+    /// </summary>
+    public static string DescribeWrite(Exception ex) => ex switch
+    {
+        HttpRequestException { StatusCode: HttpStatusCode.Forbidden } when WriteSent(ex) && SignedInAsWindowsAccount(ex) =>
+            "TFS says your Windows account may not change it (403). Check your permissions in TFS.",
+        HttpRequestException { StatusCode: HttpStatusCode.Forbidden } when WriteSent(ex) =>
+            "TFS says this token may not change it (403). A token needs Work Items: Read & write.",
+        _ => Describe(ex)
+    };
+
+    private static bool WriteSent(Exception ex) => ex.Data[WriteSentKey] is true;
+
+    /// <summary>
+    /// Notes on <paramref name="ex"/> that it came from sending a write itself, not from a read before or after it.
+    /// Returns false, so it can sit in an exception filter that marks the exception without catching it.
+    /// </summary>
+    public static bool NoteWriteSent(Exception ex)
+    {
+        ArgumentNullException.ThrowIfNull(ex);
+        ex.Data[WriteSentKey] = true;
+        return false;
+    }
+
+    /// <summary>
+    /// Whether a write that failed this way may have been applied all the same: the write itself was sent (see
+    /// <see cref="NoteWriteSent"/>) and its answer never came, because it took too long or the connection broke, so
+    /// TFS may have done it before the failure. A failure before the request left (the name did not resolve, the
+    /// connection or its TLS handshake was refused) is not one: TFS never saw the write.
+    /// </summary>
+    public static bool AnswerNeverCame(Exception ex)
+    {
+        ArgumentNullException.ThrowIfNull(ex);
+        if (!WriteSent(ex))
+        {
+            return false;
+        }
+
+        return ex switch
+        {
+            OperationCanceledException or TimeoutException => true,
+            HttpRequestException { StatusCode: null } http => !NeverLeft(http),
+            _ => false
+        };
+    }
+
+    private static bool NeverLeft(HttpRequestException ex) =>
+        ex.HttpRequestError is HttpRequestError.NameResolutionError or HttpRequestError.ConnectionError or HttpRequestError.SecureConnectionError
+        || ex.InnerException is AuthenticationException;
 }

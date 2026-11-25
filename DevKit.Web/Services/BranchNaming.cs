@@ -45,6 +45,13 @@ public static class BranchNaming
             : string.Concat(words.Select(w => w[0])).ToUpperInvariant();
     }
 
+    /// <summary>
+    /// A work item's name the team way, "TEAM : id : title": the pull request name Branch Creator suggests, and the
+    /// work item as the merge sheet's REQ/CHR TFS ID column shows it.
+    /// </summary>
+    public static string PullRequestName(string? team, string workItemId, string? title) =>
+        $"{TeamSegment(team)} : {workItemId} : {title}";
+
     /// <summary>A sprint as it appears in a branch: separators become underscores and "PI_2026" becomes "PI2026".</summary>
     public static string SprintSegment(string? sprint)
     {

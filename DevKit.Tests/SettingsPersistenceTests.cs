@@ -82,6 +82,15 @@ public sealed class SettingsPersistenceTests : IDisposable
         settings.SaveCapacityPlanning(planning);
         settings.DashboardView = DashboardView.List;
         settings.GuideTourSeen = true;
+        settings.SavePreferences(new PortableSettings().WithStatusUpdate(new StatusUpdateSettings
+        {
+            AddTags = true,
+            Tags = new List<string> { "PT Merged" },
+            SetField = true,
+            Field = "Casepoint.TFS.CustomFields.Status",
+            FieldName = "Status",
+            Value = "In PT"
+        }));
         return settings;
     }
 
@@ -100,9 +109,10 @@ public sealed class SettingsPersistenceTests : IDisposable
             {
                 "CapacityPlanning", "CodeMergingRepoIds", "CodeMergingTargetBranch", "DashboardView", "DefaultAreaPath",
                 "DefaultRepoId", "DefaultSprint", "DefaultSprintMode", "DeliverableTags", "GuideTourSeen", "MostUsedRepoCount",
-                "MostUsedRepoIds", "RepoBranches", "RepoTargetBranches", "TeamName", "Tfs"
+                "MostUsedRepoIds", "RepoBranches", "RepoTargetBranches", "StatusUpdate", "TeamName", "Tfs"
             },
             PropertyNames(root));
+        Assert.Equal(new[] { "AddTags", "Field", "FieldName", "SetField", "Tags", "Value" }, PropertyNames(root.GetProperty("StatusUpdate")));
         // IsConfigured is computed, yet it is written to the file and ignored when read back.
         Assert.Equal(new[] { "ApiVersion", "Auth", "IsConfigured", "Pat", "Url" }, PropertyNames(root.GetProperty("Tfs")));
         Assert.Equal("Pat", root.GetProperty("Tfs").GetProperty("Auth").GetString());
@@ -140,6 +150,13 @@ public sealed class SettingsPersistenceTests : IDisposable
         Assert.True(planning.TagRules.Single(r => r.Tag == "ALM").Deliverable);
         Assert.Equal(DashboardView.List, reloaded.DashboardView);
         Assert.True(reloaded.GuideTourSeen);
+        var status = reloaded.StatusUpdate;
+        Assert.True(status.AddTags);
+        Assert.Equal(new[] { "PT Merged" }, status.Tags);
+        Assert.True(status.SetField);
+        Assert.Equal("Casepoint.TFS.CustomFields.Status", status.Field);
+        Assert.Equal("Status", status.FieldName);
+        Assert.Equal("In PT", status.Value);
 
         // DeliverableTags is only observable on disk: re-saving from the reloaded service proves it was read.
         reloaded.Save();
@@ -162,6 +179,22 @@ public sealed class SettingsPersistenceTests : IDisposable
 
         Assert.False(settings.GuideTourSeen);
         settings.GuideTourSeen = true;
+        Assert.True(NewService().GuideTourSeen);
+    }
+
+    [Fact]
+    public void The_tour_opens_once_and_is_marked_as_seen_as_it_opens()
+    {
+        var settings = NewService();
+
+        Assert.True(settings.TryStartGuideTour());
+        Assert.False(settings.TryStartGuideTour());
+        // Never finished or skipped, as when the tab is closed during it: the next start still does not open it.
+        Assert.False(NewService().TryStartGuideTour());
+
+        // The Guide's "Show the tour again".
+        settings.GuideTourSeen = false;
+        Assert.True(settings.TryStartGuideTour());
         Assert.True(NewService().GuideTourSeen);
     }
 

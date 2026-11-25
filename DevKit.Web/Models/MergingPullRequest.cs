@@ -94,6 +94,8 @@ public class MergingPullRequest
 
     public bool IsCompleted => string.Equals(Status, "completed", StringComparison.OrdinalIgnoreCase);
 
+    public bool IsAbandoned => string.Equals(Status, "abandoned", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>When work on this PR actually started: earliest commit, else the creation date.</summary>
     public DateTime? FirstActivityDate
     {
@@ -138,6 +140,21 @@ public class MergingCommit
 
     private const int ShortIdLength = 8;
 
+    /// <summary>
+    /// Longest team code ("FXCPMGR" in "FXCPMGR : ...") a commit subject may open with before the words
+    /// <see cref="IsRebaseCommit"/> and <see cref="IsMergeFromCommit"/> look for.
+    /// </summary>
+    private const int MaxPrefixLength = 30;
+
+    /// <summary>Between the parts of the team's "TEAM : id : title" form.</summary>
+    private const char PrefixSeparator = ':';
+
+    /// <summary>How a rebase commit's subject starts, after any team prefix.</summary>
+    private static readonly HashSet<string> RebaseWords = new(StringComparer.OrdinalIgnoreCase) { "rebase", "rebased", "rebasing" };
+
+    private const string MergeFromWords = "Merge from";
+    private const string CompletedPullRequestOpening = "Merged PR ";
+
     public string CommitId { get; set; } = "";
     public string Message { get; set; } = "";
     public string Author { get; set; } = "";
@@ -176,15 +193,114 @@ public class MergingCommit
     /// source branch's history rather than work of its own, and neither can be cherry-picked to
     /// a release branch independently, so requiring them would report such a pull request
     /// unmerged forever. They are treated as optional instead. Missing this would be the single largest
-    /// source of false negatives.
+    /// source of false negatives. Only the subject as written counts, the same opening
+    /// <see cref="IsMergeFromCommit"/> starts from.
     /// </summary>
-    public bool IsBranchMergeCommit
+    public bool IsBranchMergeCommit => OpensWithGitMerge(Subject());
+
+    /// <summary>
+    /// True for a commit made while rebasing the branch onto another, such as "FXCPMGR : Rebase branch" or "Rebase
+    /// Conflict Resolve": its first line starts with the word rebase, as written or after the team's code and a colon
+    /// ("FXCPMGR : "). An ordinary word before a colon ("fix: rebase of the import") is not a team code, and a subject
+    /// that only mentions a rebase further on ("Fix rebase of the import") is the developer's own work: both stay. So
+    /// does "FXCPMGR : 1001 : Rebase button", a work item whose title opens with the word.
+    /// Copy details leaves a rebase commit out; verification still requires it (see <see cref="IsMergeFromCommit"/>).
+    /// </summary>
+    public bool IsRebaseCommit
     {
         get
         {
-            var message = Message.TrimStart();
-            return MergeCommitPrefixes.Any(p => message.StartsWith(p, StringComparison.OrdinalIgnoreCase));
+            var subject = Subject();
+            return RebaseWords.Contains(FirstWord(subject)) || RebaseWords.Contains(FirstWord(AfterTeamCode(subject)));
         }
+    }
+
+    /// <summary>
+    /// True for a commit that brought another branch in, which the sheet's copied Commit IDs leave out: git's own merge
+    /// subjects, a hand-written "Merge from ...", each as written, after the team's code ("FXCPMGR : Merge branch
+    /// 'main'") or after the team's "TEAM : id :" form ("FXCPMGR : 92599 : Merge from QA"), and "Merged PR 123: ...",
+    /// the commit another pull request left on a branch that was then merged in. Only the first line is read.
+    /// Verification (<see cref="IsBranchMergeCommit"/>) still requires every one of these but git's own merges, because
+    /// the change such a commit carries has to reach the target branch either way; the sheet leaves it out because it
+    /// is not this pull request's work, and the merger brings it in with the pull request that made it.
+    /// </summary>
+    public bool IsMergeFromCommit
+    {
+        get
+        {
+            var subject = Subject();
+            var afterTeam = AfterTeamCode(subject);
+            return BringsBranchIn(subject) || BringsBranchIn(afterTeam) || BringsBranchIn(AfterWorkItemId(afterTeam));
+        }
+    }
+
+    /// <summary>The first line of the message: git's subject. A colon on a later line says nothing about the commit.</summary>
+    private string Subject()
+    {
+        var message = Message.TrimStart();
+        var lineEnd = message.IndexOfAny(['\r', '\n']);
+        return lineEnd < 0 ? message : message[..lineEnd];
+    }
+
+    private static bool BringsBranchIn(string subject) =>
+        OpensWithGitMerge(subject) || OpensWithWords(subject, MergeFromWords) || IsCompletedPullRequestSubject(subject);
+
+    private static bool OpensWithGitMerge(string subject) =>
+        MergeCommitPrefixes.Any(prefix => OpensWithWords(subject, prefix));
+
+    /// <summary>
+    /// The subject after the team's code and colon ("FXCPMGR : Rebase" gives "Rebase"); empty when it does not open
+    /// with one. A team code is what <c>BranchNaming.TeamSegment</c> writes: upper-case letters and digits, with at
+    /// least one letter, then a space and the colon, as in "TEAM : id : title". That leaves out the lower- or
+    /// mixed-case types of a conventional commit ("fix:", "Bug:") and an upper-case one written without the space
+    /// ("UI:"), so the developer's own work is never mistaken for a merge or a rebase.
+    /// </summary>
+    private static string AfterTeamCode(string subject)
+    {
+        var colon = subject.IndexOf(PrefixSeparator);
+        if (colon <= 1 || colon > MaxPrefixLength + 1 || !char.IsWhiteSpace(subject[colon - 1]))
+        {
+            return "";
+        }
+
+        var code = subject[..colon].TrimEnd();
+        return code.All(c => char.IsAsciiLetterUpper(c) || char.IsAsciiDigit(c)) && code.Any(char.IsAsciiLetterUpper)
+            ? subject[(colon + 1)..].TrimStart()
+            : "";
+    }
+
+    /// <summary>The subject after a work item id and colon ("92599 : Merge from QA" gives "Merge from QA"); empty otherwise.</summary>
+    private static string AfterWorkItemId(string subject)
+    {
+        var digits = subject.TakeWhile(char.IsAsciiDigit).Count();
+        if (digits == 0)
+        {
+            return "";
+        }
+
+        var rest = subject[digits..].TrimStart();
+        return rest.Length > 0 && rest[0] == PrefixSeparator ? rest[1..].TrimStart() : "";
+    }
+
+    private static string FirstWord(string text) => new(text.TakeWhile(char.IsLetter).ToArray());
+
+    // "Merge from dev" but not "Merge fromDate fields", and "Merge branch 'main'" but not "Merge branches dropdown":
+    // the words end where the subject does, or at a space.
+    private static bool OpensWithWords(string subject, string words) =>
+        subject.StartsWith(words, StringComparison.OrdinalIgnoreCase)
+        && (subject.Length == words.Length || char.IsWhiteSpace(subject[words.Length]));
+
+    // "Merged PR 92599: ...", as TFS titles the commit a completed pull request leaves on its target.
+    private static bool IsCompletedPullRequestSubject(string subject)
+    {
+        if (!subject.StartsWith(CompletedPullRequestOpening, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var digits = subject.Skip(CompletedPullRequestOpening.Length).TakeWhile(char.IsAsciiDigit).Count();
+        var colon = CompletedPullRequestOpening.Length + digits;
+        return digits > 0 && colon < subject.Length && subject[colon] == ':';
     }
 }
 

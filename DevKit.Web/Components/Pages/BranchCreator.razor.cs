@@ -26,8 +26,9 @@ public sealed partial class BranchCreator
     private string? selectedSprint { get => S.SelectedSprint; set => S.SelectedSprint = value; }
     private TfsRepo? selectedRepo { get => S.SelectedRepo; set => S.SelectedRepo = value; }
     private WorkItem? selectedItem { get => S.SelectedItem; set => S.SelectedItem = value; }
-    private string branchName { get => S.BranchName; set => S.BranchName = value; }
-    private string prName { get => S.PrName; set => S.PrName = value; }
+    // Their fields wrap a long name over lines, but each name is one line: Enter or a pasted line break adds nothing.
+    private string branchName { get => S.BranchName; set => S.BranchName = (value ?? "").ReplaceLineEndings(""); }
+    private string prName { get => S.PrName; set => S.PrName = (value ?? "").ReplaceLineEndings(""); }
     private string baseBranch { get => S.BaseBranch; set => S.BaseBranch = value; }
     private List<WorkItemBranchLink> existingBranches { get => S.ExistingBranches; set => S.ExistingBranches = value; }
     private string searchQ { get => S.SearchQ; set => S.SearchQ = value; }

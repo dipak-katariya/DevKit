@@ -4,8 +4,8 @@
 
 @* The first-visit tour. Each step lights up the real part of the screen it talks about (devKit.tour in app.js finds
    it and places the note beside it); a step whose part is not on screen, such as the sidebar inside the closed menu
-   on a phone, falls back to the part that opens it, or to a note on its own. MainLayout shows the tour until it is
-   finished or skipped; Escape skips it. A click outside does nothing, so a stray click does not lose the tour. *@
+   on a phone, falls back to the part that opens it, or to a note on its own. MainLayout opens the tour once per person
+   and marks it as seen as it opens; Escape closes it. A click outside does nothing, so a stray click does not lose it. *@
 
 <div class="tour">
     <div class="tour-veil"></div>

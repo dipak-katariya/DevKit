@@ -5,6 +5,8 @@
 @inject ILogger<CodeMergingSheet> Log
 @inject SettingsService Settings
 @inject PageStateService PageState
+@inject StatusUpdateService StatusUpdates
+@inject IJSRuntime JS
 @implements IDisposable
 
 <div class="cm-page">
@@ -235,7 +237,7 @@
                 else
                 {
                 <div class="cm-grid-wrap">
-                    <table class="cm-grid">
+                    <table class="cm-grid @(ShowMergeColumns ? "cm-grid-merge" : "")">
                         <thead>
                             <tr>
                                 <th class="cm-c-exp"></th>
@@ -249,8 +251,8 @@
                                 @if (ShowMergeColumns)
                                 {
                                     <th class="cm-c-merged" title="Whether this work item's work reached @(bundle.TargetBranchName ?? "its merging branch"). Decided by its code once compared, and by its commits until then.">Merged</th>
-                                    <th class="cm-c-act"></th>
                                 }
+                                <th class="cm-c-act"><span class="sr-only">Actions</span></th>
                             </tr>
                         </thead>
                         <tbody>
@@ -264,14 +266,18 @@
                                     </td>
                                 </tr>
                             }
-                            @{ var codeState = RowCodeState; }
+                            @{
+                                var codeState = RowCodeState;
+                                var statusButton = StatusUpdateButton;
+                            }
                             @foreach (var row in visibleRows)
                             {
                                 <MergingRow @key="row.WorkItemId" Row="row" VisiblePrs="@filter.VisiblePrs(row)"
                                             TargetBranch="@bundle.TargetBranchName" ExpandedPrKey="@expandedPrKey"
-                                            ShowingAllPrs="@filter.ShowAllPrs" Code="@codeState"
+                                            ShowingAllPrs="@filter.ShowAllPrs" Code="@codeState" Status="@statusButton"
                                             OnToggleRow="ToggleRow" OnTogglePr="TogglePr" OnReverify="ReverifyRow"
-                                            OnCompareRow="CompareRowCode" OnComparePr="ComparePrCode" OnExplainFile="ExplainFile" />
+                                            OnCompareRow="CompareRowCode" OnComparePr="ComparePrCode" OnExplainFile="ExplainFile"
+                                            OnCopyRow="CopyRowDetails" OnCopyPr="CopyPrDetails" OnUpdateStatus="OpenStatusUpdate" />
                             }
                         </tbody>
                     </table>
@@ -303,4 +309,61 @@
             </div>
         }
     </div>
+
+    @* Update status shows what it will write, read from TFS just now, and writes only on Update. *@
+    @if (statusDialog is { } dialog)
+    {
+        <ModalDialog OnClose="CloseStatusDialog" CssClass="cm-status-dlg">
+            <Title>Update status of #@dialog.Row.WorkItemId?</Title>
+            <ChildContent>
+                <p class="cm-dlg-item">@dialog.Row.Title</p>
+                @if (dialog.Reading)
+                {
+                    <div class="loading-line" role="status"><span class="spin spin-sm"></span> Reading #@dialog.Row.WorkItemId from TFS…</div>
+                }
+                else if (dialog.Plan is { } plan)
+                {
+                    @* Named as the Update button's description, so a screen reader reads the change with the button. *@
+                    <div id="@ChangesId">
+                    <div class="cm-dlg-changes">
+                        @if (dialog.Settings.HasTagsToAdd())
+                        {
+                            <div class="modal-row">
+                                <span class="label">Tags</span>
+                                <span>@(plan.TagsToAdd.Count > 0 ? $"Add {string.Join(", ", plan.TagsToAdd)}" : "Already has them") · keeps its other tags</span>
+                            </div>
+                        }
+                        @if (plan.Field is { } field)
+                        {
+                            <div class="modal-row">
+                                <span class="label">@field.Name</span>
+                                <span>@StatusFieldLine(field)</span>
+                            </div>
+                        }
+                    </div>
+                    @if (!plan.HasChanges)
+                    {
+                        <div class="notice info">Nothing to change: @StatusUpdateDialog.NothingToChange(plan)</div>
+                    }
+                    </div>
+                }
+                <div role="status">
+                    @if (dialog.Error is { } error)
+                    {
+                        <div class="notice bad">✕ @error</div>
+                    }
+                </div>
+            </ChildContent>
+            <Actions>
+                @* While it writes, both stay enabled but say so and ignore a click, so focus is not lost to the page. *@
+                <button class="btn-ghost" @onclick="CloseStatusDialog" aria-disabled="@(dialog.Saving ? "true" : null)">Cancel</button>
+                <button class="btn-primary" id="@UpdateButtonId" @onclick="ConfirmStatusUpdate"
+                        aria-disabled="@(dialog.Saving ? "true" : null)" aria-describedby="@(dialog.Plan is null ? null : ChangesId)"
+                        disabled="@(dialog.Reading || dialog.Plan is not { HasChanges: true })">
+                    @if (dialog.Saving) { <span class="spin spin-sm"></span> <span>Updating…</span> }
+                    else { <Icon Inner="@Icons.Tag" /> <span>Update</span> }
+                </button>
+            </Actions>
+        </ModalDialog>
+    }
 </div>

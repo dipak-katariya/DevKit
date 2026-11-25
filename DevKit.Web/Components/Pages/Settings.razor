@@ -6,9 +6,13 @@
 @inject IJSRuntime JS
 @inject ILogger<Settings> Logger
 @inject UserSession Session
+@inject NavigationManager Nav
+@inject StatusUpdateService StatusUpdates
 
-@* One column of raised sections. Every choice is saved as it is made, except the TFS connection: that one is checked
-   with TFS first and saved only when TFS accepts it. *@
+@* One column of raised sections, filled with what is saved. Edits stay on the page until Save settings, which only
+   saves what changed; the TFS connection is checked with TFS first and saved only when TFS accepts it. *@
+@{ unsavedShown = HasUnsavedChanges; }
+<NavigationLock ConfirmExternalNavigation="@unsavedShown" OnBeforeInternalNavigation="ConfirmLeavingAsync" />
 <div class="st-page">
     <h1 class="sr-only">Settings</h1>
     <div class="st-col">
@@ -17,18 +21,27 @@
         {
             <p class="st-where" title="@SettingsSvc.SettingsFilePath">Saved in <code>@SettingsSvc.SettingsFilePath</code></p>
         }
+        else
+        {
+            <p class="st-where">@(unsavedShown ? "You have changes that are not saved yet." : "Your saved settings. They load every time you sign in.")</p>
+        }
         <div class="st-bar-tools">
-            <button type="button" class="btn-sm btn-sm-active" @onclick="SaveSettings" disabled="@confirming"
-                    title="Changes are saved as you make them. Click to check that they are saved.">
-                <span aria-hidden="true">💾</span> @(confirming ? "Saving..." : "Save settings")
+            @if (unsavedShown)
+            {
+                <button type="button" class="btn-sm" @onclick="DiscardChanges" disabled="@confirming"
+                        title="Put the form back as it is saved.">Discard changes</button>
+            }
+            <button type="button" class="btn-sm btn-sm-active" @onclick="SaveSettings"
+                    disabled="@(confirming || saving || SettingsSvc.SavingBlocked || !(unsavedShown || SettingsSvc.LastSaveError is not null))"
+                    title="@SaveTitle()">
+                <span aria-hidden="true">💾</span> @SaveLabel()
             </button>
             <button type="button" class="btn-sm" @onclick="ExportSettings"
-                    title="Download your settings as a file. The TFS connection and token are not included."><span aria-hidden="true">📤</span> Export</button>
+                    title="Download your saved settings as a file. The TFS connection and token are not included."><span aria-hidden="true">📤</span> Export</button>
             @* The file input stays in the Tab order, hidden only from sight, so Import works from the keyboard too. *@
-            <label class="btn-sm st-import"
-                   title="Load settings from a file exported by DevKit. Your TFS connection is not changed.">
+            <label class="btn-sm st-import @(ImportLocked ? "st-off" : "")" title="@ImportTitle()">
                 <span aria-hidden="true">📥</span> Import
-                <InputFile OnChange="ImportSettings" accept=".json,application/json" class="sr-only" />
+                <InputFile OnChange="ImportSettings" accept=".json,application/json" class="sr-only" disabled="@ImportLocked" />
             </label>
         </div>
     </div>
@@ -40,12 +53,22 @@
     </div>
     @foreach (var problem in new[] { SettingsSvc.LoadProblem, SettingsSvc.LastSaveError }.OfType<string>().Distinct())
     {
-        <div class="notice bad" role="alert">@problem</div>
+        <div class="notice bad st-problem" role="alert">
+            <span>@problem</span>
+            @if (SettingsSvc.SavingBlocked && problem == SettingsSvc.LoadProblem)
+            {
+                <button type="button" class="btn-sm" @onclick="RetryLoadAsync" disabled="@retrying">@(retrying ? "Trying again..." : "Try again")</button>
+            }
+        </div>
     }
 
     <section class="gpanel st-sec" aria-labelledby="stTfsTitle">
         <div class="phead"><h2 class="ptitle" id="stTfsTitle">TFS / Azure DevOps Connection</h2></div>
         <div class="pbody">
+            @if (SettingsSvc.SignInRefused)
+            {
+                <div class="notice bad st-refused" role="alert">⚠ @SettingsSvc.SignInRefusedReason</div>
+            }
             @* Windows sign-in to TFS acts as the account DevKit runs as, so shared DevKit offers it to that account alone. *@
             @if (SettingsSvc.AllowsWindowsSignIn)
             {
@@ -82,13 +105,43 @@
                 {
                     <div class="f-row">
                         <label class="f-label" for="stPat">Personal Access Token <span class="req-badge">required</span></label>
-                        <input id="stPat" class="fi" type="password" autocomplete="new-password" @bind="tfsPat"
-                               placeholder="@(hasStoredPat ? "Saved. Leave blank to keep it" : "Enter PAT")" />
+                        @* The saved token is never sent with the page: the mask stands in for it until Show or Copy asks the server. *@
+                        <div class="st-secret">
+                            <input id="stPat" class="fi" type="@(patVisible ? "text" : "password")" autocomplete="new-password"
+                                   spellcheck="false" value="@PatFieldValue" @oninput="OnPatInput" aria-describedby="stPatHint"
+                                   placeholder="@(hasStoredPat ? StoredPatMask : "Enter PAT")" />
+                            @if (hasStoredPat || (patEdited && tfsPat.Length > 0))
+                            {
+                                <button type="button" class="st-secret-btn" @onclick="TogglePat" aria-pressed="@(patVisible ? "true" : "false")"
+                                        aria-label="@(patVisible ? "Hide the token" : "Show the token")" title="@(patVisible ? "Hide the token" : "Show the token")">
+                                    <Icon Inner="@(patVisible ? Icons.EyeOff : Icons.Eye)" />
+                                </button>
+                            }
+                            @if (hasStoredPat && !patEdited)
+                            {
+                                <button type="button" class="st-secret-btn" @onclick="CopyPatAsync"
+                                        aria-label="Copy the saved token" title="Copy the saved token">
+                                    <Icon Inner="@Icons.Copy" />
+                                </button>
+                            }
+                        </div>
+                        <p id="stPatHint" class="st-hint">
+                            @if (patEdited && tfsPat.Trim().Length > 0)
+                            {
+                                <text>A new token. Save & Connect checks it with TFS before it replaces the saved one.</text>
+                            }
+                            else if (hasStoredPat)
+                            {
+                                <text>Saved and encrypted. Leave blank to keep it, or type a new token to replace it. Show hides it again after 30 seconds.</text>
+                            }
+                        </p>
                     </div>
                 }
             </div>
             <div class="st-actions">
-                <button type="button" class="btn-primary" @onclick="SaveAndConnect" disabled="@saving">
+                <button type="button" class="btn-primary" @onclick="() => SaveConnectionAsync()"
+                        disabled="@(saving || SettingsSvc.SavingBlocked || (SettingsSvc.IsConfigured && !ConnectionChanged && !SettingsSvc.SignInRefused))"
+                        title="@(SettingsSvc.IsConfigured && !ConnectionChanged && !SettingsSvc.SignInRefused ? "The connection is saved. Change it above to save it again." : "Check the connection with TFS, then save it.")">
                     @if (saving) { <span class="spin spin-sm"></span> } else { <span aria-hidden="true">💾</span> }
                     Save & Connect
                 </button>
@@ -287,7 +340,7 @@
                     <tbody>
                         @foreach (var repo in BranchRepos)
                         {
-                            var saved = SettingsSvc.GetRepoBranches(repo.Id);
+                            var branches = BranchesOf(repo.Id);
                             <tr @key="repo.Id">
                                 <td>
                                     <div class="st-repo">
@@ -300,14 +353,14 @@
                                     <div class="st-repo-project">@repo.Project</div>
                                 </td>
                                 <td>
-                                    <BranchPicker Branches="@BranchesFor(repo.Id)" Value="@saved.QaBranch" Label="@($"QA branch for {repo.Name}")"
+                                    <BranchPicker Branches="@BranchesFor(repo.Id)" Value="@branches.QaBranch" Label="@($"QA branch for {repo.Name}")"
                                                   ValueChanged="@(b => OnQaBranchChange(repo.Id, b))"
                                                   OnOpened="@(() => LoadBranchesFor(repo))"
                                                   Loading="@(loadingBranchRepoId == repo.Id)"
                                                   Placeholder="@AutomaticBranch(repo, MergingBranchDefaults.QaBranch, "main")" />
                                 </td>
                                 <td>
-                                    <BranchPicker Branches="@BranchesFor(repo.Id)" Value="@saved.MergingBranch" Label="@($"Merging target for {repo.Name}")"
+                                    <BranchPicker Branches="@BranchesFor(repo.Id)" Value="@branches.MergingBranch" Label="@($"Merging target for {repo.Name}")"
                                                   ValueChanged="@(b => OnMergingBranchChange(repo.Id, b))"
                                                   OnOpened="@(() => LoadBranchesFor(repo))"
                                                   Loading="@(loadingBranchRepoId == repo.Id)"
@@ -319,6 +372,86 @@
                 </table>
                 </div>
             }
+        </div>
+    </section>
+
+    @* What the Code Merging Sheet's Update status button writes. Each part has its own switch; a part that is off has
+       its pickers off too. The lists come from TFS, for the project named in the heading. *@
+    <section class="gpanel st-sec" aria-labelledby="stStatusTitle">
+        <div class="phead">
+            <h2 class="ptitle" id="stStatusTitle">Code Merging Sheet: Update Status</h2>
+            @if (statusListsLoading)
+            {
+                <span class="spin spin-sm" role="status" aria-label="Reading tags and fields"></span>
+            }
+            <div class="st-status-from">
+                <span class="st-hint-inline" id="stStatusFrom">Tags and fields from</span>
+                <GlassDropdown CssClass="fi-size st-status-project" Label="Project the tags and fields come from"
+                               Value="@statusProject" ShowEmptyOption="false" Placeholder="Project"
+                               Disabled="@(!SettingsSvc.IsConfigured || PageState.TfsData.Projects.Count == 0)"
+                               Options="@StatusProjectOptions()" OnChange="OnStatusProjectChange" />
+            </div>
+        </div>
+        <div class="pbody">
+            <p class="st-desc">
+                What <b>Update status</b> on a work item of the Code Merging Sheet writes once its pull requests are
+                merged. The sheet shows what will change and asks before it writes anything.
+            </p>
+            @if (!SettingsSvc.IsConfigured)
+            {
+                <p class="st-hint">Connect to TFS above to pick from the project's tags and fields.</p>
+            }
+            @if (!string.IsNullOrEmpty(statusListsError))
+            {
+                <div class="notice warn" role="alert">⚠ @statusListsError</div>
+            }
+            <div class="st-status-grid">
+                <label class="st-check">
+                    <input type="checkbox" checked="@statusForm.AddTags" @onchange="OnStatusAddTagsChanged" />
+                    <span>Add tags</span>
+                </label>
+                <div class="st-status-pick">
+                    <MultiSelectDropdown Options="@StatusTagOptions()" Selected="@statusTagSet" Label="Tags to add"
+                                         SelectedChanged="OnStatusTagsChanged" OnCreate="OnStatusTagCreated" ItemNoun="tag"
+                                         Disabled="@(!statusForm.AddTags)"
+                                         Placeholder="@(statusForm.AddTags ? "Select tags" : "Turned off")"
+                                         SearchPlaceholder="Search tags, or type a new one…" />
+                    @if (statusForm.HasTagsToAdd())
+                    {
+                        <ul class="st-pins" aria-label="Tags to add">
+                            @foreach (var tag in statusForm.Tags)
+                            {
+                                <li class="st-pin" @key="tag">
+                                    @tag
+                                    <button type="button" class="bpk-clear" title="Remove" aria-label="Remove the tag @tag"
+                                            @onclick="() => RemoveStatusTag(tag)">✕</button>
+                                </li>
+                            }
+                        </ul>
+                    }
+                </div>
+                <label class="st-check">
+                    <input type="checkbox" checked="@statusForm.SetField" @onchange="OnStatusSetFieldChanged" />
+                    <span>Set a field</span>
+                </label>
+                <div class="st-status-pick st-status-field">
+                    <GlassDropdown CssClass="fi-size" Label="Field to set" Value="@statusForm.Field" ShowEmptyOption="false"
+                                   Placeholder="@(statusForm.SetField ? "Select field" : "Turned off")"
+                                   Disabled="@(!statusForm.SetField || (statusFieldChoices.Count == 0 && statusForm.Field.Length == 0))"
+                                   Options="@StatusFieldOptions()" OnChange="OnStatusFieldChange" />
+                    <span class="st-status-to" aria-hidden="true">to</span>
+                    <GlassDropdown CssClass="fi-size" Label="Value to set" Value="@statusForm.Value" ShowEmptyOption="false"
+                                   Placeholder="Select value" Disabled="@(!statusForm.SetField || statusForm.Field.Length == 0)"
+                                   Options="@StatusValueOptions()" OnChange="OnStatusValueChange" />
+                </div>
+            </div>
+            <div role="status">
+                @if (!string.IsNullOrEmpty(statusTagMsg))
+                {
+                    <div class="notice warn">⚠ @statusTagMsg</div>
+                }
+            </div>
+            <p class="st-hint">@StatusSummary</p>
         </div>
     </section>
     </div>

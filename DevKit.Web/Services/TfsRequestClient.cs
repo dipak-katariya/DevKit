@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Diagnostics;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -106,8 +107,8 @@ public sealed class TfsRequestClient
     /// it (in shared mode, for that account's owner alone); anyone else goes through the PAT client.
     /// </summary>
     private SignIn SignInWith(TfsAuthMode auth, string pat) => auth == TfsAuthMode.Windows && _settings.AllowsWindowsSignIn
-        ? new SignIn(_windowsHttp, null, TfsAuthMode.Windows)
-        : new SignIn(_http, BasicAuth(pat), TfsAuthMode.Pat);
+        ? new SignIn(_windowsHttp, null, TfsAuthMode.Windows, Saved: null)
+        : new SignIn(_http, BasicAuth(pat), TfsAuthMode.Pat, Saved: null);
 
     /// <summary>
     /// Asks the server at <paramref name="url"/> for its projects, signing in as <paramref name="auth"/> says and
@@ -145,7 +146,18 @@ public sealed class TfsRequestClient
     public Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage req, CancellationToken ct = default,
         HttpCompletionOption completion = HttpCompletionOption.ResponseContentRead) =>
-        SendAuthorizedAsync(req, SignInWith(_settings.Tfs.Auth, _settings.Tfs.Pat), completion, ct);
+        SendAuthorizedAsync(req, SavedSignIn(), completion, ct);
+
+    /// <summary>
+    /// The sign-in saved now, read once, so the request's refusal or success is put down to the sign-in it was sent
+    /// with, even when another is saved before the answer comes.
+    /// </summary>
+    private SignIn SavedSignIn()
+    {
+        var tfs = _settings.Tfs;
+        var saved = new SignInUsed(tfs.Auth, tfs.Pat ?? "");
+        return SignInWith(saved.Auth, saved.Pat) with { Saved = saved };
+    }
 
     private async Task<HttpResponseMessage> SendAuthorizedAsync(
         HttpRequestMessage req, SignIn signIn, HttpCompletionOption completion, CancellationToken ct)
@@ -167,6 +179,12 @@ public sealed class TfsRequestClient
         }
 
         var resp = await signIn.Client.SendAsync(req, completion, ct);
+        // A connection test tries a sign-in that is not saved, and says itself what TFS answered.
+        if (signIn.Saved is { } saved)
+        {
+            NoteSavedSignIn(resp.StatusCode, saved);
+        }
+
         var succeeded = false;
         try
         {
@@ -292,7 +310,35 @@ public sealed class TfsRequestClient
             auth);
     }
 
-    private readonly record struct SignIn(HttpClient Client, AuthenticationHeaderValue? Header, TfsAuthMode Auth);
+    /// <summary>Tells Settings whether TFS took the saved sign-in a request was sent with.</summary>
+    private void NoteSavedSignIn(HttpStatusCode status, SignInUsed saved)
+    {
+        if (status == HttpStatusCode.Unauthorized)
+        {
+            _settings.NoteSignInRefused(saved.Auth, saved.Pat);
+        }
+        else if (status < HttpStatusCode.BadRequest)
+        {
+            _settings.NoteSignInAccepted(saved.Auth, saved.Pat);
+        }
+    }
+
+    /// <param name="Saved">The saved sign-in the request was sent with; null for one a connection test tries.</param>
+    private readonly record struct SignIn(HttpClient Client, AuthenticationHeaderValue? Header, TfsAuthMode Auth, SignInUsed? Saved);
+
+    /// <summary>A saved sign-in as it was when a request was sent: how DevKit signed in, and the token (empty for Windows sign-in).</summary>
+    private readonly struct SignInUsed
+    {
+        public SignInUsed(TfsAuthMode auth, string pat)
+        {
+            Auth = auth;
+            Pat = pat;
+        }
+
+        public TfsAuthMode Auth { get; }
+
+        public string Pat { get; }
+    }
 }
 
 /// <summary>

@@ -36,6 +36,182 @@ public sealed class SharedSettingsTests : SharedSettingsScratch
     }
 
     [Fact]
+    public async Task The_tour_opens_once_per_person_even_when_it_was_never_finished()
+    {
+        var first = await SignedInAsync(Alice);
+        Assert.True(first.TryStartGuideTour());
+
+        var nextSignIn = await SignedInAsync(Alice, new FakeBrowserStorage());
+        var bob = await SignedInAsync(Bob);
+
+        Assert.False(nextSignIn.TryStartGuideTour());
+        Assert.True(bob.TryStartGuideTour());
+    }
+
+    [Fact]
+    public async Task The_tour_does_not_open_while_the_settings_could_not_be_read()
+    {
+        (await SignedInAsync(Alice)).TeamName = "TEAM-A";
+        KeyLock.Unavailable = true;
+
+        var page = OpenPage(Alice);
+        await page.Session.StartAsync();
+
+        Assert.NotNull(page.Settings.LoadProblem);
+        Assert.False(page.Settings.TryStartGuideTour());
+    }
+
+    [Fact]
+    public async Task A_save_from_the_settings_form_keeps_what_another_tab_saved_meanwhile()
+    {
+        (await SignedInAsync(Alice)).SaveTfs(FixedUrl, AlicePat);
+        var formTab = await SignedInAsync(Alice);
+        var form = formTab.CurrentPreferences();
+        (await SignedInAsync(Alice)).TeamName = "TEAM-B";
+
+        form.DefaultRepoId = "repo-9";
+        Assert.True(formTab.SavePreferences(form.ChangesFrom(formTab.CurrentPreferences())));
+
+        var later = await SignedInAsync(Alice);
+        Assert.Equal("TEAM-B", later.TeamName);
+        Assert.Equal("repo-9", later.DefaultRepoId);
+        Assert.Equal(AlicePat, later.Tfs.Pat);
+    }
+
+    [Fact]
+    public async Task Two_tabs_saving_different_update_status_settings_keep_both()
+    {
+        var valueTab = await SignedInAsync(Alice);
+        var tagsTab = await SignedInAsync(Alice);
+
+        Assert.True(valueTab.SavePreferences(new PortableSettings { StatusValue = "Done" }));
+        Assert.True(tagsTab.SavePreferences(new PortableSettings { StatusTags = new List<string> { "QA Done" } }));
+
+        var later = (await SignedInAsync(Alice)).StatusUpdate;
+        Assert.Equal("Done", later.Value);
+        Assert.Equal(new[] { "QA Done" }, later.Tags);
+    }
+
+    [Fact]
+    public async Task A_page_closed_while_it_started_does_not_go_on_hearing_saves()
+    {
+        (await SignedInAsync(Alice)).TeamName = "TEAM-A";
+        var closed = OpenPage(Alice);
+
+        closed.Session.Dispose();
+
+        Assert.False(await closed.Session.StartAsync());
+        (await SignedInAsync(Alice)).TeamName = "TEAM-B";
+        await Task.Delay(TimeSpan.FromMilliseconds(300));
+        Assert.Equal("TEAM-A", closed.Settings.TeamName);
+    }
+
+    [Fact]
+    public async Task Another_open_page_of_the_same_person_shows_what_one_page_saved()
+    {
+        var saving = OpenPage(Alice);
+        var other = OpenPage(Alice);
+        var bob = OpenPage(Bob);
+        await saving.Session.StartAsync();
+        await other.Session.StartAsync();
+        await bob.Session.StartAsync();
+
+        Assert.True(saving.Settings.SaveTfs(FixedUrl, AlicePat));
+        saving.Settings.TeamName = "TEAM-A";
+
+        await WaitUntilAsync(() => other.Settings.IsConfigured && other.Settings.TeamName == "TEAM-A");
+        Assert.Equal(AlicePat, other.Settings.Tfs.Pat);
+        Assert.False(bob.Settings.IsConfigured);
+        Assert.Equal("", bob.Settings.TeamName);
+    }
+
+    [Fact]
+    public async Task An_open_page_reads_another_pages_save_without_asking_the_domain_again()
+    {
+        (await SignedInAsync(Alice)).TeamName = "TEAM-A";
+        var saving = OpenPage(Alice);
+        var other = OpenPage(Alice);
+        await saving.Session.StartAsync();
+        await other.Session.StartAsync();
+        KeyLock.Unavailable = true;
+
+        saving.Settings.TeamName = "TEAM-B";
+
+        await WaitUntilAsync(() => other.Settings.TeamName == "TEAM-B");
+        Assert.Null(other.Settings.LoadProblem);
+    }
+
+    [Fact]
+    public async Task A_closed_page_stops_hearing_the_persons_saves()
+    {
+        var saving = OpenPage(Alice);
+        var closed = OpenPage(Alice);
+        await saving.Session.StartAsync();
+        await closed.Session.StartAsync();
+
+        closed.Session.Dispose();
+        saving.Settings.TeamName = "TEAM-A";
+        await Task.Delay(TimeSpan.FromMilliseconds(300));
+
+        Assert.Equal("", closed.Settings.TeamName);
+    }
+
+    [Fact]
+    public async Task Saving_waits_while_the_settings_do_not_open_and_Try_again_opens_them()
+    {
+        var saved = await SignedInAsync(Alice);
+        saved.SaveTfs(FixedUrl, AlicePat);
+        saved.TeamName = "TEAM-A";
+        KeyLock.Unavailable = true;
+        var page = OpenPage(Alice);
+        await page.Session.StartAsync();
+        Assert.True(page.Settings.SavingBlocked);
+
+        page.Settings.ReloadFromStore();
+        Assert.True(page.Settings.SavingBlocked);
+        KeyLock.Unavailable = false;
+        page.Settings.ReloadFromStore();
+
+        Assert.False(page.Settings.SavingBlocked);
+        Assert.Null(page.Settings.LoadProblem);
+        Assert.Equal("TEAM-A", page.Settings.TeamName);
+        Assert.True(page.Settings.SavePreferences(new PortableSettings { DefaultRepoId = "repo-1" }));
+        var later = await SignedInAsync(Alice);
+        Assert.Equal(AlicePat, later.Tfs.Pat);
+        Assert.Equal("repo-1", later.DefaultRepoId);
+    }
+
+    /// <summary>Waits for what another page does on its own thread, failing after a few seconds rather than hanging.</summary>
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!condition())
+        {
+            Assert.True(DateTime.UtcNow < deadline, "The other page did not show the save in time.");
+            await Task.Delay(TimeSpan.FromMilliseconds(20));
+        }
+    }
+
+    [Fact]
+    public void The_saved_token_leaves_only_when_asked_and_each_use_is_logged_without_it()
+    {
+        var logger = new MessageRecordingLogger<SettingsService>();
+        var settings = new SettingsService(logger, new MemorySettingsStore(), FixedUrl);
+        settings.LoadFromStore(allowsWindowsSignIn: false);
+        Assert.Equal("", settings.RevealStoredPat(PatReveal.Shown));
+        settings.SaveTfs(FixedUrl, AlicePat);
+
+        Assert.Equal(AlicePat, settings.RevealStoredPat(PatReveal.Shown));
+        Assert.Equal(AlicePat, settings.RevealStoredPat(PatReveal.Copied));
+
+        Assert.True(settings.IsStoredPat($" {AlicePat} "));
+        Assert.False(settings.IsStoredPat(BobPat));
+        Assert.False(settings.IsStoredPat(""));
+        Assert.Equal(2, logger.Entries.Count(e => e.Message.Contains("stored PAT was", StringComparison.Ordinal)));
+        Assert.All(logger.Entries, e => Assert.DoesNotContain(AlicePat, e.AllText, StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Settings_come_back_on_another_DevKit_server_running_as_the_same_account_with_no_key_copied()
     {
         var alice = await SignedInAsync(Alice);
@@ -295,6 +471,9 @@ public sealed class SharedSettingsTests : SharedSettingsScratch
         first.TeamName = "TEAM-A";
         second.DashboardView = DashboardView.List;
 
+        // A failed save here used to come from another page's read holding the file open while this one replaced it.
+        Assert.Null(first.LastSaveError);
+        Assert.Null(second.LastSaveError);
         var later = await SignedInAsync(Alice);
         Assert.Equal("TEAM-A", later.TeamName);
         Assert.Equal(DashboardView.List, later.DashboardView);

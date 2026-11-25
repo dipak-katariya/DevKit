@@ -51,7 +51,14 @@
                         <span class="conn-label">Settings problem</span>
                     </a>
                 }
-                @if (Session.IsReady)
+                @if (Session.IsReady && Settings.SignInRefused)
+                {
+                    <a class="conn-pill err" href="settings" title="@Settings.SignInRefusedReason">
+                        <span class="dot"></span>
+                        <span class="conn-label">@(Settings.Tfs.Auth == TfsAuthMode.Windows ? "Sign-in refused" : "Token refused")</span>
+                    </a>
+                }
+                else if (Session.IsReady)
                 {
                     <div class="conn-pill @(Settings.IsConfigured ? "ok" : "err")">
                         <span class="dot"></span>
@@ -89,6 +96,20 @@
                     </div>
                 </div>
             }
+            else if (Settings.SavingBlocked && RequiresSetup)
+            {
+                @* The settings are there but did not open: asking for them again would only replace them. *@
+                <div class="setup-guard">
+                    <div class="setup-card" role="alert">
+                        <div class="setup-icon"><Icon Inner="@Icons.AlertTriangle" CssClass="ic-xl" /></div>
+                        <h2>Your settings could not be opened</h2>
+                        <p>@Settings.LoadProblem</p>
+                        <button class="btn-primary setup-action" @onclick="RetrySettingsAsync" disabled="@retrying">
+                            @(retrying ? "Trying again..." : "Try again")
+                        </button>
+                    </div>
+                </div>
+            }
             else if (!Settings.IsConfigured && RequiresSetup)
             {
                 <div class="setup-guard">
@@ -104,11 +125,13 @@
             }
             else
             {
-                @Body
+                <CascadingValue Name="StartGuideTour" Value="@startTourHere" IsFixed="true">
+                    @Body
+                </CascadingValue>
             }
         </main>
     </div>
-    @if (ShowTour)
+    @if (tourOpen)
     {
         <GuideTour ShowSignOut="@(Session.User is not null)" OnDone="EndTour" />
     }
@@ -157,16 +180,61 @@
     private bool OnGuide =>
         new Uri(Nav.Uri).AbsolutePath.TrimEnd('/').Equals(ToolCatalog.Guide.Path, StringComparison.OrdinalIgnoreCase);
 
-    // Not while the settings could not be read: the tour could not be marked as seen, so it would come back on every page.
-    private bool ShowTour => Session.IsReady && Settings.LoadProblem is null && !Settings.GuideTourSeen;
+    // The first-visit tour on this page. It is marked as seen in the settings as it opens (TryStartGuideTour), so it shows
+    // once per person, however the page is left.
+    private bool tourOpen;
+
+    private void OpenTourWhenNew()
+    {
+        if (!tourOpen && Session.IsReady && Settings.TryStartGuideTour())
+        {
+            tourOpen = true;
+        }
+    }
+
+    // Handed to the page in this tab alone, so "Take the tour again" opens the tour where it was clicked, never in
+    // another tab of the same person.
+    private Action? startTourHere;
+
+    /// <summary>Opens the tour in this tab at once, as the person asked; it was marked as seen before, so nothing is saved.</summary>
+    private void StartTourHere()
+    {
+        tourOpen = true;
+        StateHasChanged();
+    }
 
     private void EndTour(bool openGuide)
     {
-        Settings.GuideTourSeen = true;
+        tourOpen = false;
         if (openGuide)
         {
             Nav.NavigateTo(ToolCatalog.Guide.Path);
         }
+    }
+
+    private bool retrying;
+
+    /// <summary>Reads the settings again, off the page's thread, as the domain can take a while to answer.</summary>
+    private async Task RetrySettingsAsync()
+    {
+        retrying = true;
+        try
+        {
+            await Task.Run(Settings.ReloadFromStore);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Trying again to open the settings failed");
+            startProblem = "Your settings still could not be opened. Reload the page; if it keeps happening, tell whoever runs DevKit.";
+            return;
+        }
+        finally
+        {
+            retrying = false;
+        }
+
+        // The tour waits while the settings do not open, since its mark could not be kept; now it can.
+        OpenTourWhenNew();
     }
 
     private string SetupHint => Session.IsShared
@@ -175,6 +243,7 @@
 
     protected override void OnInitialized()
     {
+        startTourHere = StartTourHere;
         // The top bar shows the connection and any save problem, so it redraws when Settings saves on another page.
         Settings.Changed += OnSettingsChanged;
         Nav.LocationChanged += OnLocationChanged;
@@ -185,7 +254,7 @@
     }
 
     // Raised on whichever thread saved, which in local mode can be another page's: the redraw goes through this
-    // page's own dispatcher.
+    // page's own dispatcher. The tour is not opened from here: every tab hears this, and the tour belongs to one.
     private void OnSettingsChanged() => _ = InvokeAsync(StateHasChanged);
 
     // A link in the drawer was followed, so the drawer has done its job. Focus goes to the new page's heading
@@ -216,6 +285,12 @@
         if (!Session.IsReady)
         {
             await StartSessionAsync();
+        }
+
+        OpenTourWhenNew();
+        if (tourOpen)
+        {
+            StateHasChanged();
         }
     }
 

@@ -109,7 +109,11 @@ internal sealed class ClientVault
     /// person, or was changed or damaged; and <see cref="IOException"/> when the key cannot be opened now, so that
     /// nothing is saved over settings that may open in a minute.
     /// </summary>
-    public OpenedSettings Open(SignedInUser user, string sealedText)
+    /// <param name="known">
+    /// The person's key as this page already opened it, used when the text carries the same locked key, so reading
+    /// settings again does not ask the domain again.
+    /// </param>
+    public OpenedSettings Open(SignedInUser user, string sealedText, PersonKey? known = null)
     {
         ArgumentNullException.ThrowIfNull(user);
         if (!TrySplit(sealedText, out var parts))
@@ -123,7 +127,9 @@ internal sealed class ClientVault
                 $"The settings were sealed by DevKit running as another Windows account ({parts.Account}); this DevKit runs as {_keyLock.Account}.");
         }
 
-        var key = new PersonKey(_keyLock.Unlock(Base64Url.DecodeFromChars(parts.LockedKey)), parts.LockedKey);
+        var key = known is not null && string.Equals(known.Locked, parts.LockedKey, StringComparison.Ordinal)
+            ? known
+            : new PersonKey(_keyLock.Unlock(Base64Url.DecodeFromChars(parts.LockedKey)), parts.LockedKey);
         if (key.Value.Length != KeyBytes)
         {
             throw new CryptographicException("The key kept with the settings is not a settings key.");

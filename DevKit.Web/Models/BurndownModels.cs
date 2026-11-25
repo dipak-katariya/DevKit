@@ -12,6 +12,9 @@ public class BurndownContribution
     public string ItemType { get; set; } = "";
     public bool IsBug { get; set; }
     public double Delta { get; set; }
+
+    /// <summary>A separate copy, so hours summed into it leave the original change as TFS recorded it.</summary>
+    public BurndownContribution Copy() => (BurndownContribution)MemberwiseClone();
 }
 
 /// <summary>
@@ -54,6 +57,9 @@ public class BurndownRow
     public Dictionary<string, BurndownCell> Cells { get; set; } = new();
     public double TotalRegular { get; set; }
     public double TotalBug { get; set; }
+
+    /// <summary>Working days the member is on leave in TFS, by column key; a column with none is not listed.</summary>
+    public Dictionary<string, int> LeaveDays { get; } = new();
 }
 
 public class BurndownMatrix
@@ -85,4 +91,7 @@ public sealed class BurndownScope
     public DateTime? Today { get; init; }
 
     public IReadOnlyList<DayOfWeek> WorkingDays { get; init; } = CapacityPlanningSettings.DefaultWorkingDays();
+
+    /// <summary>The sprint's team capacity as TFS records it, for the days each member is on leave; null when not read.</summary>
+    public SprintCapacity? Capacity { get; init; }
 }

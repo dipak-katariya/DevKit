@@ -458,6 +458,8 @@ tr:hover > td .sc-apply-one.differs,.sc-apply-one:focus-visible{background:var(-
 .bd-reg-red{color:var(--red-ink);font-weight:600;}
 .bd-reg-green{color:var(--text);font-weight:600;}
 .bd-zero{color:var(--muted);}
+/* A day off with no hours is told apart from a missed day, which stays a plain dot. */
+.bd-leave{color:var(--purple-ink);font-size:var(--fs-meta);font-weight:600;}
 .bd-reg-none{color:var(--muted2);font-weight:600;}
 .bd-bug{display:block;font-size:var(--fs-meta);color:var(--muted2);margin-top:2px;}
 .bd-bug-red{color:var(--red-ink);}

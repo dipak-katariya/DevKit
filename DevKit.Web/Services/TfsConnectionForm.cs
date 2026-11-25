@@ -65,7 +65,8 @@ public static class TfsConnectionForm
             : new Candidate(url, "", "", TfsAuthMode.Windows);
     }
 
-    private static bool IsPlainHttpToAnotherMachine(string url) =>
+    /// <summary>Whether <paramref name="url"/> is plain http to another machine, where anyone on the network can read what is sent.</summary>
+    internal static bool IsPlainHttpToAnotherMachine(string url) =>
         Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttp && !uri.IsLoopback;
 
     public static bool TryValidateUrl(string? raw, out string normalized, out string error)

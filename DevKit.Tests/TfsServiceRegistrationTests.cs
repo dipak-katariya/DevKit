@@ -60,6 +60,22 @@ public sealed class TfsServiceRegistrationTests : IDisposable
         Assert.Same(circuit.ServiceProvider.GetRequiredService<SharedTfsData>(), circuit.ServiceProvider.GetRequiredService<SharedTfsData>());
     }
 
+    // It keeps a person's tag and field lists, so a circuit has its own; it brings its own clock when the app has none.
+    [Fact]
+    public void Update_status_resolves_once_for_each_circuit()
+    {
+        using var tfs = new RecordingTfsHandler();
+        using var provider = Compose(tfs);
+        using var circuit = provider.CreateScope();
+        using var other = provider.CreateScope();
+
+        var service = circuit.ServiceProvider.GetRequiredService<StatusUpdateService>();
+
+        Assert.Same(service, circuit.ServiceProvider.GetRequiredService<StatusUpdateService>());
+        Assert.NotSame(service, other.ServiceProvider.GetRequiredService<StatusUpdateService>());
+        Assert.Same(TimeProvider.System, provider.GetRequiredService<TimeProvider>());
+    }
+
     [Fact]
     public void Every_transport_handler_waits_on_the_one_shared_gate()
     {
